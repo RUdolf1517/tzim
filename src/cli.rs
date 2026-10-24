@@ -26,6 +26,8 @@ pub struct Args {
     pub min_size: u64,
     pub max_size: u64,
     pub max_pixels: u64,
+    pub max_uncompressed: u64,
+    pub max_ratio: u64,
     pub zopfli: bool,
     pub follow_symlinks: bool,
     pub allow_hardlinks: bool,
@@ -35,6 +37,8 @@ pub struct Args {
 
 pub const DEFAULT_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
+pub const DEFAULT_MAX_UNCOMPRESSED: u64 = 8 * 1024 * 1024 * 1024;
+pub const DEFAULT_MAX_RATIO: u64 = 1000;
 
 impl Default for Args {
     fn default() -> Self {
@@ -51,6 +55,8 @@ impl Default for Args {
             min_size: 0,
             max_size: DEFAULT_MAX_SIZE,
             max_pixels: DEFAULT_MAX_PIXELS,
+            max_uncompressed: DEFAULT_MAX_UNCOMPRESSED,
+            max_ratio: DEFAULT_MAX_RATIO,
             zopfli: false,
             follow_symlinks: false,
             allow_hardlinks: false,
@@ -87,6 +93,9 @@ OPTIONS:
         --min-size <BYTES>     skip smaller files (default: 0)
         --max-size <BYTES>     skip larger files (default: 2147483648)
         --max-pixels <N>       skip images with more pixels (default: 100000000)
+        --max-uncompressed <BYTES>
+                               refuse archives that expand beyond this (default: 8589934592)
+        --max-ratio <N>        refuse archives with a ratio above N:1 (default: 1000)
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link
@@ -196,6 +205,8 @@ pub fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command> {
             "--min-size" => out.min_size = parse_u64(&name, &take_value(inline)?)?,
             "--max-size" => out.max_size = parse_u64(&name, &take_value(inline)?)?,
             "--max-pixels" => out.max_pixels = parse_u64(&name, &take_value(inline)?)?,
+            "--max-uncompressed" => out.max_uncompressed = parse_u64(&name, &take_value(inline)?)?,
+            "--max-ratio" => out.max_ratio = parse_u64(&name, &take_value(inline)?)?,
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             _ => return Err(Error::usage(format!("unknown option `{name}`"))),

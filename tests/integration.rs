@@ -473,3 +473,354 @@ fn a_directory_argument_without_recursive_stays_at_the_top_level() {
 fn exists(path: &Path) -> bool {
     path.exists()
 }
+
+// ---------------------------------------------------------------------------
+// ZIP
+// ---------------------------------------------------------------------------
+
+fn compressible(len: usize) -> Vec<u8> {
+    // Repetitive but not trivial: a weak deflate level leaves room for a gain.
+    let mut out = Vec::with_capacity(len);
+    let words = [
+        b"the ".as_slice(),
+        b"quick ".as_slice(),
+        b"brown ".as_slice(),
+        b"fox ".as_slice(),
+        b"jumps ".as_slice(),
+        b"over ".as_slice(),
+        b"the lazy dog ".as_slice(),
+    ];
+    let mut i = 0;
+    while out.len() < len {
+        out.extend_from_slice(words[i % words.len()]);
+        i += 1;
+    }
+    out.truncate(len);
+    out
+}
+
+#[test]
+fn zip_deflate_entries_are_recompressed_and_everything_else_is_preserved() {
+    let ws = Workspace::new("zip-basic");
+    let mut first = ZipEntrySpec::deflated("docs/readme.txt", &compressible(60_000), 1);
+    first.local_extra = vec![0x55, 0x54, 0x05, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05];
+    first.central_extra = vec![0x55, 0x54, 0x05, 0x00, 0x09, 0x08, 0x07, 0x06, 0x05];
+    first.comment = b"entry comment".to_vec();
+
+    let second = ZipEntrySpec::deflated("data/notes.txt", &compressible(20_000), 1);
+    let original = build_zip(&[first, second], b"archive comment");
+    let path = ws.write("bundle.zip", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "bundle.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a smaller archive");
+
+    let before = parse_zip(&original);
+    let after = parse_zip(&optimized);
+    assert_eq!(before.len(), after.len());
+
+    for (a, b) in before.iter().zip(after.iter()) {
+        assert_eq!(a.name, b.name, "names must be preserved");
+        assert_eq!(a.method, b.method, "methods must not change");
+        assert_eq!(a.flags, b.flags, "flags must be preserved");
+        assert_eq!(a.crc, b.crc, "CRC must be preserved");
+        assert_eq!(a.uncomp_size, b.uncomp_size, "uncompressed size must be preserved");
+        assert_eq!(a.local_extra, b.local_extra, "local extra fields must be preserved");
+        assert_eq!(a.central_extra, b.central_extra, "central extra fields must be preserved");
+        assert_eq!(a.comment, b.comment, "entry comments must be preserved");
+        assert_eq!(
+            a.decompressed(&original),
+            b.decompressed(&optimized),
+            "entry payload must be identical"
+        );
+    }
+    assert_eq!(zip_archive_comment(&original), zip_archive_comment(&optimized));
+}
+
+#[test]
+fn zip_stored_entries_stay_stored() {
+    let ws = Workspace::new("zip-store");
+    let stored = ZipEntrySpec::stored("mimetype", b"application/vnd.oasis.opendocument.text");
+    let oned = ZipEntrySpec::deflated("content.xml", &compressible(40_000), 1);
+    let original = build_zip(&[stored, oned], b"");
+    let path = ws.write("doc.odt", &original);
+
+    let (code, _, stderr) = run(&["optimize", "doc.odt"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    let after = parse_zip(&optimized);
+    assert_eq!(after[0].name, b"mimetype");
+    assert_eq!(after[0].method, 0, "the mimetype entry must stay stored");
+    assert_eq!(
+        after[0].decompressed(&optimized),
+        b"application/vnd.oasis.opendocument.text"
+    );
+    assert_eq!(after[1].method, 8);
+    assert!(optimized.len() < original.len());
+}
+
+#[test]
+fn zip_data_descriptor_is_rewritten_consistently() {
+    let ws = Workspace::new("zip-descriptor");
+    let mut spec = ZipEntrySpec::deflated("streamed.bin", &compressible(50_000), 1);
+    spec.descriptor = true;
+    let original = build_zip(&[spec], b"");
+    let path = ws.write("streamed.zip", &original);
+
+    let (code, _, stderr) = run(&["optimize", "streamed.zip"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len());
+
+    let after = parse_zip(&optimized);
+    assert!(after[0].flags & 0x0008 != 0, "bit 3 must stay set");
+    assert_eq!(after[0].crc, crc32fast::hash(&compressible(50_000)));
+    assert_eq!(after[0].decompressed(&optimized), compressible(50_000));
+
+    // The descriptor sits immediately after the data and repeats the sizes.
+    let data_end = after[0].local_offset as usize
+        + 30
+        + after[0].name.len()
+        + after[0].local_extra.len()
+        + after[0].comp_size as usize;
+    assert_eq!(
+        u32::from_le_bytes([
+            optimized[data_end],
+            optimized[data_end + 1],
+            optimized[data_end + 2],
+            optimized[data_end + 3]
+        ]),
+        ZIP_DESCRIPTOR_SIG
+    );
+    let desc_comp = u32::from_le_bytes([
+        optimized[data_end + 8],
+        optimized[data_end + 9],
+        optimized[data_end + 10],
+        optimized[data_end + 11],
+    ]);
+    assert_eq!(desc_comp, after[0].comp_size, "descriptor size must match");
+}
+
+#[test]
+fn zip_non_utf8_names_are_preserved() {
+    let ws = Workspace::new("zip-names");
+    let mut spec = ZipEntrySpec::deflated("placeholder", &compressible(30_000), 1);
+    // A name that is not valid UTF-8, as old archivers produce for non-ASCII paths.
+    spec.name = vec![b'c', b'a', b'f', 0xe9, b'/', b'a', b'.', b't', b'x', b't'];
+    spec.comment = vec![0xff, 0xfe, 0x00];
+    let original = build_zip(&[spec], b"");
+    let path = ws.write("names.zip", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "names.zip", "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    let after = parse_zip(&optimized);
+    assert_eq!(after[0].name, vec![b'c', b'a', b'f', 0xe9, b'/', b'a', b'.', b't', b'x', b't']);
+    assert_eq!(after[0].comment, vec![0xff, 0xfe, 0x00]);
+}
+
+#[test]
+fn signed_jar_is_refused_and_left_untouched() {
+    let ws = Workspace::new("zip-signed");
+    let entries = vec![
+        ZipEntrySpec::deflated("META-INF/MANIFEST.MF", &compressible(2_000), 1),
+        ZipEntrySpec::deflated("META-INF/SIGNER.SF", b"Signature-Version: 1.0", 1),
+        ZipEntrySpec::deflated("META-INF/SIGNER.RSA", &[0u8; 512], 1),
+        ZipEntrySpec::deflated("com/example/App.class", &compressible(20_000), 1),
+    ];
+    let original = build_zip(&entries, b"");
+    let path = ws.write("signed.jar", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "signed.jar"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("signature") || stdout.contains("signed"),
+        "the reason must be reported: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original, "a signed archive must not change");
+}
+
+#[test]
+fn signed_odf_document_is_refused() {
+    let ws = Workspace::new("zip-odf-signed");
+    let entries = vec![
+        ZipEntrySpec::stored("mimetype", b"application/vnd.oasis.opendocument.text"),
+        ZipEntrySpec::deflated("META-INF/documentsignatures.xml", &[b'x'; 100], 1),
+        ZipEntrySpec::deflated("content.xml", &compressible(10_000), 1),
+    ];
+    let original = build_zip(&entries, b"");
+    let path = ws.write("signed.odt", &original);
+
+    let (code, _, stderr) = run(&["optimize", "signed.odt"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn apk_signing_block_is_refused() {
+    let ws = Workspace::new("zip-apk");
+    let archive = build_zip(
+        &[ZipEntrySpec::deflated("classes.dex", &compressible(30_000), 1)],
+        b"",
+    );
+
+    // Insert an APK signing block immediately before the central directory and
+    // move the central directory offset accordingly.
+    let eocd_at = (0..=archive.len() - 22)
+        .rev()
+        .find(|&at| {
+            u32::from_le_bytes([archive[at], archive[at + 1], archive[at + 2], archive[at + 3]])
+                == ZIP_EOCD_SIG
+        })
+        .unwrap();
+    let cd_offset = u32::from_le_bytes([
+        archive[eocd_at + 16],
+        archive[eocd_at + 17],
+        archive[eocd_at + 18],
+        archive[eocd_at + 19],
+    ]) as usize;
+
+    // 8-byte size, 8-byte size, 16-byte magic: the minimum block the detector looks for.
+    let mut block = Vec::new();
+    block.extend_from_slice(&24u64.to_le_bytes());
+    block.extend_from_slice(&24u64.to_le_bytes());
+    block.extend_from_slice(b"APK Sig Block 42");
+
+    let mut rebuilt = archive[..cd_offset].to_vec();
+    rebuilt.extend_from_slice(&block);
+    let new_cd_offset = rebuilt.len() as u32;
+    rebuilt.extend_from_slice(&archive[cd_offset..]);
+    let eocd_pos = rebuilt.len() - (archive.len() - eocd_at);
+    rebuilt[eocd_pos + 16..eocd_pos + 20].copy_from_slice(&new_cd_offset.to_le_bytes());
+
+    let path = ws.write("app.apk", &rebuilt);
+    let (code, stdout, stderr) = run(&["optimize", "app.apk"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("APK") || stdout.contains("signature"),
+        "the reason must be reported: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), rebuilt);
+}
+
+#[test]
+fn zip64_is_refused() {
+    let ws = Workspace::new("zip64");
+    let mut archive = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(10_000), 1)],
+        b"",
+    );
+    // Mark the end record as ZIP64.
+    let eocd = archive.len() - 22;
+    archive[eocd + 10..eocd + 12].copy_from_slice(&0xffffu16.to_le_bytes());
+    let original = archive.clone();
+    let path = ws.write("big.zip", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "big.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("ZIP64"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn encrypted_zip_is_refused() {
+    let ws = Workspace::new("zip-crypt");
+    let archive = build_zip_with_flags(
+        &[ZipEntrySpec::deflated("secret.txt", &compressible(5_000), 1)],
+        b"",
+        0x0001,
+    );
+    let path = ws.write("secret.zip", &archive);
+
+    let (code, stdout, stderr) = run(&["optimize", "secret.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("encrypted"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), archive);
+}
+
+#[test]
+fn truncated_zip_is_refused() {
+    let ws = Workspace::new("zip-truncated");
+    let archive = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(10_000), 1)],
+        b"",
+    );
+    let truncated = archive[..archive.len() - 30].to_vec();
+    let path = ws.write("cut.zip", &truncated);
+
+    let (code, stdout, _) = run(&["optimize", "cut.zip"], &ws.path);
+    assert_ne!(code, 0, "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), truncated);
+}
+
+#[test]
+fn corrupt_entry_crc_is_refused() {
+    let ws = Workspace::new("zip-corrupt");
+    let mut archive = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(20_000), 1)],
+        b"",
+    );
+    // Flip a byte inside the compressed payload.
+    let entry = parse_zip(&archive)[0].clone();
+    let payload_at = entry.local_offset as usize + 30 + entry.name.len() + entry.local_extra.len();
+    archive[payload_at + 10] ^= 0xff;
+    let original = archive.clone();
+    let path = ws.write("broken.zip", &original);
+
+    let (code, stdout, _) = run(&["optimize", "broken.zip"], &ws.path);
+    assert_ne!(code, 0, "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn already_optimal_zip_is_left_alone() {
+    let ws = Workspace::new("zip-optimal");
+    // Level 9 leaves nothing to gain, so the archive must be reported as optimal.
+    let archive = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(20_000), 9)],
+        b"",
+    );
+    let path = ws.write("optimal.zip", &archive);
+
+    let (code, stdout, stderr) = run(&["optimize", "optimal.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("already optimal"),
+        "expected no change: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), archive);
+}
+
+#[test]
+fn zip_bomb_ratio_is_refused() {
+    let ws = Workspace::new("zip-bomb");
+    let archive = build_zip(&[ZipEntrySpec::deflated("zeros.bin", &vec![0u8; 2_000_000], 6)], b"");
+    let path = ws.write("bomb.zip", &archive);
+
+    let (code, stdout, stderr) = run(&["optimize", "bomb.zip", "--max-ratio", "10"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("max-ratio"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), archive);
+}
+
+#[test]
+fn stub_prefixed_archive_is_not_detected_as_zip() {
+    let ws = Workspace::new("zip-stub");
+    let mut archive = b"MZ\x90\x00stub payload".to_vec();
+    archive.extend_from_slice(&build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(10_000), 1)],
+        b"",
+    ));
+    let original = archive.clone();
+    let path = ws.write("installer.exe", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "installer.exe"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("unsupported"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}

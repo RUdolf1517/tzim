@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 pub enum Format {
     Png,
     Gzip,
+    Zip,
 }
 
 impl Format {
@@ -15,6 +16,7 @@ impl Format {
         match self {
             Format::Png => "png",
             Format::Gzip => "gzip",
+            Format::Zip => "zip",
         }
     }
 
@@ -22,6 +24,7 @@ impl Format {
         match self {
             Format::Png => "PNG",
             Format::Gzip => "GZIP",
+            Format::Zip => "ZIP",
         }
     }
 }
@@ -39,6 +42,15 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     }
     if head.len() >= 3 && head[0] == 0x1f && head[1] == 0x8b && head[2] == 0x08 {
         return Some(Format::Gzip);
+    }
+    // A local header (the usual case) or an end-of-central-directory record
+    // (an empty archive). Both start with "PK".
+    if head.len() >= 4
+        && head[0] == b'P'
+        && head[1] == b'K'
+        && ((head[2] == 0x03 && head[3] == 0x04) || (head[2] == 0x05 && head[3] == 0x06))
+    {
+        return Some(Format::Zip);
     }
     None
 }
@@ -205,6 +217,9 @@ mod tests {
     fn detects_png_and_gzip() {
         assert_eq!(detect(&PNG_SIGNATURE), Some(Format::Png));
         assert_eq!(detect(&[0x1f, 0x8b, 0x08, 0x00]), Some(Format::Gzip));
+        assert_eq!(detect(b"PK\x03\x04"), Some(Format::Zip));
+        assert_eq!(detect(b"PK\x05\x06"), Some(Format::Zip));
+        assert_eq!(detect(b"PK\x07\x08"), None);
         assert_eq!(detect(b"hello, world"), None);
         assert_eq!(detect(&[]), None);
         // Truncated signatures are not a match.

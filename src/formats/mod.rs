@@ -9,6 +9,8 @@ use crate::error::{Error, Result};
 pub mod gzip;
 #[cfg(feature = "png")]
 pub mod png;
+#[cfg(feature = "zip")]
+pub mod zip;
 
 /// Options a handler may need. Everything here is explicit: there are no
 /// hidden defaults inside handlers that change what is written.
@@ -16,6 +18,10 @@ pub mod png;
 pub struct Options {
     pub zopfli: bool,
     pub max_pixels: u64,
+    /// Total uncompressed size a ZIP archive may expand to.
+    pub max_uncompressed: u64,
+    /// Maximum uncompressed-to-compressed ratio for a ZIP archive.
+    pub max_ratio: u64,
 }
 
 /// What a handler produced.
@@ -37,6 +43,8 @@ pub fn optimize(format: Format, src: &Path, dst: &mut File, opts: &Options) -> R
         Format::Png => png::optimize(src, dst, opts)?,
         #[cfg(feature = "gzip")]
         Format::Gzip => gzip::optimize(src, dst, opts)?,
+        #[cfg(feature = "zip")]
+        Format::Zip => zip::optimize(src, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -57,6 +65,8 @@ pub fn verify(format: Format, original: &Path, candidate: &Path) -> Result<()> {
         Format::Png => png::verify(original, candidate),
         #[cfg(feature = "gzip")]
         Format::Gzip => gzip::verify(original, candidate),
+        #[cfg(feature = "zip")]
+        Format::Zip => zip::verify(original, candidate),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -81,6 +91,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "gzip",
         "recompress the DEFLATE body",
         "header preserved byte for byte (.gz, .tgz, .svgz)",
+    ));
+    #[cfg(feature = "zip")]
+    rows.push((
+        "ZIP",
+        "recompress DEFLATE entries",
+        "names, extra fields, comments, order and attributes; signed archives refused",
     ));
     rows
 }

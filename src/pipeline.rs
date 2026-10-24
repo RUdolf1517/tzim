@@ -14,6 +14,8 @@ pub struct Config {
     pub dry_run: bool,
     pub zopfli: bool,
     pub max_pixels: u64,
+    pub max_uncompressed: u64,
+    pub max_ratio: u64,
     pub min_size: u64,
     pub max_size: u64,
     pub allow_hardlinks: bool,
@@ -27,6 +29,8 @@ impl Config {
             dry_run: args.dry_run,
             zopfli: args.zopfli,
             max_pixels: args.max_pixels,
+            max_uncompressed: args.max_uncompressed,
+            max_ratio: args.max_ratio,
             min_size: args.min_size,
             max_size: args.max_size,
             allow_hardlinks: args.allow_hardlinks,
@@ -126,6 +130,8 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     let options = Options {
         zopfli: cfg.zopfli,
         max_pixels: cfg.max_pixels,
+        max_uncompressed: cfg.max_uncompressed,
+        max_ratio: cfg.max_ratio,
     };
 
     let cand = {
@@ -177,6 +183,8 @@ mod tests {
             dry_run: false,
             zopfli: false,
             max_pixels: 100_000_000,
+            max_uncompressed: 8 * 1024 * 1024 * 1024,
+            max_ratio: 1000,
             min_size: 0,
             max_size: 2 * 1024 * 1024 * 1024,
             allow_hardlinks: false,

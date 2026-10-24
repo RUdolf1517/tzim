@@ -17,9 +17,10 @@ png = { version = "0.18", optional = true, default-features = false }
 zopfli = { version = "0.8", optional = true, default-features = false, features = ["std"] }
 
 [features]
-default = ["png", "gzip", "zopfli"]
+default = ["png", "gzip", "zip", "zopfli"]
 gzip = ["dep:flate2", "dep:crc32fast"]
 png = ["dep:png", "dep:flate2", "dep:crc32fast"]
+zip = ["dep:flate2", "dep:crc32fast"]
 zopfli = ["dep:zopfli"]
 
 [profile.release]

@@ -5,7 +5,7 @@
 
 #![allow(dead_code)]
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
@@ -238,4 +238,253 @@ pub fn json_file_records(stdout: &str) -> usize {
         .lines()
         .filter(|l| l.contains("\"type\":\"file\""))
         .count()
+}
+
+// ---------------------------------------------------------------------------
+// ZIP fixtures
+// ---------------------------------------------------------------------------
+
+pub const ZIP_LOCAL_SIG: u32 = 0x0403_4b50;
+pub const ZIP_CENTRAL_SIG: u32 = 0x0201_4b50;
+pub const ZIP_EOCD_SIG: u32 = 0x0605_4b50;
+pub const ZIP_DESCRIPTOR_SIG: u32 = 0x0807_4b50;
+
+pub struct ZipEntrySpec {
+    pub name: Vec<u8>,
+    pub data: Vec<u8>,
+    /// 0 = store, 8 = deflate.
+    pub method: u16,
+    /// Deflate level used for the fixture, so a rewrite has room to improve.
+    pub level: u32,
+    /// Sets general purpose bit 3 and writes a data descriptor.
+    pub descriptor: bool,
+    /// Whether the descriptor carries its optional signature.
+    pub descriptor_signature: bool,
+    pub local_extra: Vec<u8>,
+    pub central_extra: Vec<u8>,
+    pub comment: Vec<u8>,
+}
+
+impl ZipEntrySpec {
+    pub fn deflated(name: &str, data: &[u8], level: u32) -> ZipEntrySpec {
+        ZipEntrySpec {
+            name: name.as_bytes().to_vec(),
+            data: data.to_vec(),
+            method: 8,
+            level,
+            descriptor: false,
+            descriptor_signature: true,
+            local_extra: Vec::new(),
+            central_extra: Vec::new(),
+            comment: Vec::new(),
+        }
+    }
+
+    pub fn stored(name: &str, data: &[u8]) -> ZipEntrySpec {
+        ZipEntrySpec {
+            method: 0,
+            ..ZipEntrySpec::deflated(name, data, 0)
+        }
+    }
+}
+
+fn deflate_bytes(data: &[u8], level: u32) -> Vec<u8> {
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(level));
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Builds a ZIP archive. `flags_extra` is OR-ed into every entry's flags, which
+/// lets a test create an "encrypted" archive without a real cipher.
+pub fn build_zip(entries: &[ZipEntrySpec], archive_comment: &[u8]) -> Vec<u8> {
+    build_zip_with_flags(entries, archive_comment, 0)
+}
+
+pub fn build_zip_with_flags(
+    entries: &[ZipEntrySpec],
+    archive_comment: &[u8],
+    flags_extra: u16,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+
+    for spec in entries {
+        let crc = crc32fast::hash(&spec.data);
+        let payload = if spec.method == 8 {
+            deflate_bytes(&spec.data, spec.level)
+        } else {
+            spec.data.clone()
+        };
+
+        let mut flags = flags_extra;
+        if spec.descriptor {
+            flags |= 0x0008;
+        }
+
+        let local_offset = out.len() as u32;
+        out.extend_from_slice(&ZIP_LOCAL_SIG.to_le_bytes());
+        out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        out.extend_from_slice(&flags.to_le_bytes());
+        out.extend_from_slice(&spec.method.to_le_bytes());
+        out.extend_from_slice(&0x6000u16.to_le_bytes()); // time
+        out.extend_from_slice(&0x5a21u16.to_le_bytes()); // date (2025-01-01)
+        out.extend_from_slice(&crc.to_le_bytes());
+        let (stored_comp, stored_uncomp) = if spec.descriptor {
+            (0u32, 0u32)
+        } else {
+            (payload.len() as u32, spec.data.len() as u32)
+        };
+        out.extend_from_slice(&stored_comp.to_le_bytes());
+        out.extend_from_slice(&stored_uncomp.to_le_bytes());
+        out.extend_from_slice(&(spec.name.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(spec.local_extra.len() as u16).to_le_bytes());
+        out.extend_from_slice(&spec.name);
+        out.extend_from_slice(&spec.local_extra);
+        out.extend_from_slice(&payload);
+
+        if spec.descriptor {
+            if spec.descriptor_signature {
+                out.extend_from_slice(&ZIP_DESCRIPTOR_SIG.to_le_bytes());
+            }
+            out.extend_from_slice(&crc.to_le_bytes());
+            out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            out.extend_from_slice(&(spec.data.len() as u32).to_le_bytes());
+        }
+
+        central.extend_from_slice(&ZIP_CENTRAL_SIG.to_le_bytes());
+        central.extend_from_slice(&0x031eu16.to_le_bytes()); // made by: unix, 3.0
+        central.extend_from_slice(&20u16.to_le_bytes());
+        central.extend_from_slice(&flags.to_le_bytes());
+        central.extend_from_slice(&spec.method.to_le_bytes());
+        central.extend_from_slice(&0x6000u16.to_le_bytes());
+        central.extend_from_slice(&0x5a21u16.to_le_bytes());
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(spec.data.len() as u32).to_le_bytes());
+        central.extend_from_slice(&(spec.name.len() as u16).to_le_bytes());
+        central.extend_from_slice(&(spec.central_extra.len() as u16).to_le_bytes());
+        central.extend_from_slice(&(spec.comment.len() as u16).to_le_bytes());
+        central.extend_from_slice(&0u16.to_le_bytes()); // disk start
+        central.extend_from_slice(&0u16.to_le_bytes()); // internal attrs
+        central.extend_from_slice(&0x81a4_0000u32.to_le_bytes()); // -rw-r--r--
+        central.extend_from_slice(&local_offset.to_le_bytes());
+        central.extend_from_slice(&spec.name);
+        central.extend_from_slice(&spec.central_extra);
+        central.extend_from_slice(&spec.comment);
+    }
+
+    let cd_offset = out.len() as u32;
+    let cd_size = central.len() as u32;
+    out.extend_from_slice(&central);
+
+    out.extend_from_slice(&ZIP_EOCD_SIG.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+    out.extend_from_slice(&cd_size.to_le_bytes());
+    out.extend_from_slice(&cd_offset.to_le_bytes());
+    out.extend_from_slice(&(archive_comment.len() as u16).to_le_bytes());
+    out.extend_from_slice(archive_comment);
+    out
+}
+
+#[derive(Debug, Clone)]
+pub struct ParsedZipEntry {
+    pub name: Vec<u8>,
+    pub method: u16,
+    pub flags: u16,
+    pub crc: u32,
+    pub comp_size: u32,
+    pub uncomp_size: u32,
+    pub local_extra: Vec<u8>,
+    pub central_extra: Vec<u8>,
+    pub comment: Vec<u8>,
+    pub local_offset: u32,
+}
+
+fn le16(d: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes([d[at], d[at + 1]])
+}
+
+fn le32(d: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes([d[at], d[at + 1], d[at + 2], d[at + 3]])
+}
+
+impl ParsedZipEntry {
+    /// The stored bytes of this entry, located through the local header.
+    pub fn payload<'a>(&self, archive: &'a [u8]) -> &'a [u8] {
+        let at = self.local_offset as usize;
+        let name_len = le16(archive, at + 26) as usize;
+        let extra_len = le16(archive, at + 28) as usize;
+        let start = at + 30 + name_len + extra_len;
+        &archive[start..start + self.comp_size as usize]
+    }
+
+    pub fn decompressed(&self, archive: &[u8]) -> Vec<u8> {
+        let payload = self.payload(archive);
+        if self.method == 8 {
+            let mut decoder = flate2::read::DeflateDecoder::new(payload);
+            let mut out = Vec::new();
+            decoder.read_to_end(&mut out).unwrap();
+            out
+        } else {
+            payload.to_vec()
+        }
+    }
+}
+
+/// Parses an archive through its central directory, validating what it can.
+pub fn parse_zip(d: &[u8]) -> Vec<ParsedZipEntry> {
+    let eocd = (0..=d.len().saturating_sub(22))
+        .rev()
+        .find(|&at| le32(d, at) == ZIP_EOCD_SIG)
+        .expect("no end-of-central-directory record");
+    let count = le16(d, eocd + 10);
+    let cd_offset = le32(d, eocd + 16) as usize;
+
+    let mut entries = Vec::with_capacity(count as usize);
+    let mut at = cd_offset;
+    for _ in 0..count {
+        assert_eq!(le32(d, at), ZIP_CENTRAL_SIG, "bad central signature");
+        let name_len = le16(d, at + 28) as usize;
+        let extra_len = le16(d, at + 30) as usize;
+        let comment_len = le16(d, at + 32) as usize;
+        let name = d[at + 46..at + 46 + name_len].to_vec();
+        let central_extra = d[at + 46 + name_len..at + 46 + name_len + extra_len].to_vec();
+        let comment = d[at + 46 + name_len + extra_len..at + 46 + name_len + extra_len + comment_len]
+            .to_vec();
+        let local_offset = le32(d, at + 42);
+        let lh = local_offset as usize;
+        assert_eq!(le32(d, lh), ZIP_LOCAL_SIG, "bad local signature");
+        let l_name = le16(d, lh + 26) as usize;
+        let l_extra = le16(d, lh + 28) as usize;
+        let local_extra = d[lh + 30 + l_name..lh + 30 + l_name + l_extra].to_vec();
+
+        entries.push(ParsedZipEntry {
+            name,
+            method: le16(d, at + 10),
+            flags: le16(d, at + 8),
+            crc: le32(d, at + 16),
+            comp_size: le32(d, at + 20),
+            uncomp_size: le32(d, at + 24),
+            local_extra,
+            central_extra,
+            comment,
+            local_offset,
+        });
+        at += 46 + name_len + extra_len + comment_len;
+    }
+    entries
+}
+
+/// The archive comment, as stored in the end-of-central-directory record.
+pub fn zip_archive_comment(d: &[u8]) -> Vec<u8> {
+    let eocd = (0..=d.len().saturating_sub(22))
+        .rev()
+        .find(|&at| le32(d, at) == ZIP_EOCD_SIG)
+        .expect("no end-of-central-directory record");
+    let len = le16(d, eocd + 20) as usize;
+    d[eocd + 22..eocd + 22 + len].to_vec()
 }
