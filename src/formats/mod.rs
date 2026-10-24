@@ -51,10 +51,10 @@ pub fn optimize(format: Format, src: &Path, dst: &mut File, opts: &Options) -> R
 
 /// Checks a candidate against its contract, using decoders that are independent
 /// of the code that wrote it.
-pub fn verify(format: Format, original: &Path, candidate: &Path, opts: &Options) -> Result<()> {
+pub fn verify(format: Format, original: &Path, candidate: &Path) -> Result<()> {
     match format {
         #[cfg(feature = "png")]
-        Format::Png => png::verify(original, candidate, opts),
+        Format::Png => png::verify(original, candidate),
         #[cfg(feature = "gzip")]
         Format::Gzip => gzip::verify(original, candidate),
         #[allow(unreachable_patterns)]
@@ -66,9 +66,9 @@ pub fn verify(format: Format, original: &Path, candidate: &Path, opts: &Options)
 }
 
 /// Static description of what the build supports, for `tzim formats`.
+// The pushes below are `#[cfg]`-gated, so the vector cannot be built as a literal.
+#[allow(clippy::vec_init_then_push)]
 pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
-    // The pushes below are `#[cfg]`-gated, so the vector cannot be built as a literal.
-    #[allow(clippy::vec_init_then_push)]
     let mut rows = Vec::new();
     #[cfg(feature = "png")]
     rows.push((

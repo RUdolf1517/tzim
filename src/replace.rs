@@ -62,11 +62,6 @@ impl TempFile {
             .expect("temporary file handle is available until commit")
     }
 
-    /// Returns the handle to the caller so it can be closed before the rename.
-    pub fn take_file(&mut self) -> Option<File> {
-        self.file.take()
-    }
-
     /// Marks the guard as satisfied; `commit` calls this on success.
     fn disarm(&mut self) {
         self.committed = true;

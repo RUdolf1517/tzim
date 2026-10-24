@@ -6,8 +6,9 @@
 # updated in place (matched by a hidden marker) to keep the thread readable.
 set -uo pipefail
 
-log_file="${1:?usage: ci-report.sh <log-file> <label>}"
-label="${2:?usage: ci-report.sh <log-file> <label>}"
+log_file="${1:?usage: ci-report.sh <log-file> <label> [kind]}"
+label="${2:?usage: ci-report.sh <log-file> <label> [kind]}"
+kind="${3:-failure}"
 
 sha="${GITHUB_SHA:-local}"
 marker="<!-- tzim-ci:${label}:${sha:0:7} -->"
@@ -20,7 +21,11 @@ fi
 body_file="$(mktemp)"
 {
     echo "$marker"
-    echo "### CI failure: \`${label}\`"
+    if [ "$kind" = "report" ]; then
+        echo "### CI report: \`${label}\`"
+    else
+        echo "### CI failure: \`${label}\`"
+    fi
     echo
     echo '```'
     # Bounded: the last 150 lines, each capped, so the comment stays readable.

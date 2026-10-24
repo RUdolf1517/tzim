@@ -147,7 +147,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         ));
     }
 
-    formats::verify(format, path, temp.path(), &options)?;
+    formats::verify(format, path, temp.path())?;
 
     outcome.after = written;
 

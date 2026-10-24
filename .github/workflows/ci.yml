@@ -98,11 +98,19 @@ jobs:
       - name: Report size
         if: steps.size.outcome == 'success'
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
-          echo "static binary: ${bytes} bytes"
-          deps=$(cargo tree --edges normal --prefix none | sort -u | wc -l)
-          echo "dependency lines: ${deps}"
+          {
+            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+            deps=$(cargo tree --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
+            echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
+            echo "normal dependency lines: ${deps}"
+            echo
+            echo "sections:"
+            llvm-size -A target/x86_64-unknown-linux-musl/release/tzim 2>/dev/null | head -12 || true
+          } | tee /tmp/tzim-size-report.txt
+          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size report
 
       - name: Publish failure log
         if: steps.size.outcome == 'failure'

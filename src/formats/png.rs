@@ -19,7 +19,6 @@ use super::{Cand, Options};
 
 pub const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
 const MAX_CHUNK: usize = 0x7fff_ffff;
-const IO_BUFFER: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Header {
@@ -608,7 +607,7 @@ fn open_reader(data: &[u8]) -> Result<PngReader<'_>> {
         .map_err(|e| Error::verify(format!("png: cannot decode: {e}")))
 }
 
-pub fn verify(original: &Path, candidate: &Path, opts: &Options) -> Result<()> {
+pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
     let a = fs::read(original)?;
     let b = fs::read(candidate)?;
 
