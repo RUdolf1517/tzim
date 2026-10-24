@@ -121,12 +121,15 @@ jobs:
               "$(( (mid - start) / 1000000 ))" "$(( (end - mid) / 1000000 ))" \
               "$(( base_size - after ))" >> "$out"
           }
+          # Two runs per variant, the faster one counts: the runner is noisy.
           measure "opt=3" opt3
+          measure "opt=3 (repeat)" opt3b
           measure "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
-          # The other direction: shrink the dependencies, keep this crate fast.
+          measure "opt=s (repeat)" optsb CARGO_PROFILE_RELEASE_OPT_LEVEL=s
           cp Cargo.toml /tmp/Cargo.toml.orig
-          printf '\n[profile.release.package."*"]\nopt-level = "s"\n' >> Cargo.toml
-          measure "opt=3, deps opt=s" depss
+          printf '\n[profile.release.package."*"]\nopt-level = 3\n' >> Cargo.toml
+          measure "opt=s, deps opt=3" optsdeps CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          measure "opt=s, deps opt=3 (repeat)" optsdepsb CARGO_PROFILE_RELEASE_OPT_LEVEL=s
           cp /tmp/Cargo.toml.orig Cargo.toml
           cat "$out"
 
