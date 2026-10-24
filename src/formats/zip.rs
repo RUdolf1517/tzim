@@ -44,7 +44,7 @@ const LOCAL_COMP_OFFSET: usize = 18;
 /// Offset of the compressed-size field inside a central directory record.
 const CENTRAL_COMP_OFFSET: usize = 20;
 /// Offset of the local-header-offset field inside a central directory record.
-const CENTRAL_LOCAL_OFFSET: usize = 40;
+const CENTRAL_LOCAL_OFFSET: usize = 42;
 
 const MAX_ENTRIES: usize = 65_535;
 
@@ -99,6 +99,9 @@ struct Entry<'a> {
     data_offset: usize,
     data_len: usize,
     descriptor: Option<Descriptor>,
+    /// Bytes between this entry's end and the next structure. Only an APK
+    /// signing block is allowed to create one, and it causes a refusal.
+    gap_after: usize,
 }
 
 impl Entry<'_> {
@@ -153,14 +156,14 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
     let comment = &d[eocd_offset + EOCD_LEN..eocd_offset + EOCD_LEN + comment_len];
 
     if disk != 0 || cd_disk != 0 {
-        return Err(Error::parse("zip: multi-disk archives are not supported"));
+        return Err(Error::refused("zip: multi-disk archives are not supported"));
     }
     if entries_total == u16::MAX
         || cd_offset == u32::MAX
         || cd_size == u32::MAX
         || entries_this_disk == u16::MAX
     {
-        return Err(Error::parse(
+        return Err(Error::refused(
             "zip: ZIP64 archives are not supported in this version",
         ));
     }
@@ -212,22 +215,22 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
             return Err(Error::parse("zip: an entry has an empty name"));
         }
         if flags & (FLAG_ENCRYPTED | FLAG_STRONG_ENCRYPTION | FLAG_MASKED_HEADERS) != 0 {
-            return Err(Error::parse(
+            return Err(Error::refused(
                 "zip: encrypted archives are not supported",
             ));
         }
         if method != METHOD_STORE && method != METHOD_DEFLATE {
-            return Err(Error::parse(format!(
+            return Err(Error::refused(format!(
                 "zip: unsupported compression method {method} (only store and deflate)"
             )));
         }
         if comp_size == u32::MAX || uncomp_size == u32::MAX || local_offset == u32::MAX as usize {
-            return Err(Error::parse(
+            return Err(Error::refused(
                 "zip: ZIP64 archives are not supported in this version",
             ));
         }
         if has_zip64_extra(central_extra) {
-            return Err(Error::parse(
+            return Err(Error::refused(
                 "zip: ZIP64 archives are not supported in this version",
             ));
         }
@@ -250,6 +253,7 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
             data_offset: 0,
             data_len: 0,
             descriptor: None,
+            gap_after: 0,
         });
 
         at += total;
@@ -272,7 +276,7 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
     }
     if let Some(&first) = physical.first() {
         if entries[first].local_offset != 0 {
-            return Err(Error::parse(
+            return Err(Error::refused(
                 "zip: data before the first entry (self-extracting stub) is not supported",
             ));
         }
@@ -288,6 +292,17 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
     for i in 0..entries.len() {
         let next = next_after[i];
         fill_local(d, &mut entries[i], next)?;
+    }
+
+    if entries.iter().any(|e| e.gap_after > 0) {
+        if cd_offset as usize >= 16 && &d[cd_offset as usize - 16..cd_offset as usize] == b"APK Sig Block 42" {
+            return Err(Error::refused(
+                "zip: signed APK (APK signing block present) — recompression would invalidate the signature",
+            ));
+        }
+        return Err(Error::parse(
+            "zip: unexpected bytes between an entry and the next structure",
+        ));
     }
 
     Ok(Archive {
@@ -396,11 +411,9 @@ fn fill_local<'a>(d: &'a [u8], e: &mut Entry<'a>, next: usize) -> Result<()> {
                 "zip: local header sizes disagree with the central directory",
             ));
         }
-        if data_end != next {
-            return Err(Error::parse(
-                "zip: unexpected bytes between an entry and the next structure",
-            ));
-        }
+        // A gap is recorded rather than rejected here: the only legitimate one
+        // is an APK signing block, which the caller turns into a refusal.
+        e.gap_after = next - data_end;
         None
     };
 
@@ -583,7 +596,7 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
     let archive = parse_archive(&data)?;
     check_limits(&archive, opts)?;
     if let Some(reason) = deny_reason(&archive, &data) {
-        return Err(Error::parse(reason));
+        return Err(Error::refused(reason));
     }
 
     // Validate every entry's checksum before touching anything: a corrupt

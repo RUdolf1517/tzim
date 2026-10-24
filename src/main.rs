@@ -114,6 +114,7 @@ fn clone_error(err: &error::Error) -> error::Error {
         error::Error::Io(e) => error::Error::Io(std::io::Error::new(e.kind(), e.to_string())),
         error::Error::Parse(m) => error::Error::parse(m.clone()),
         error::Error::Limit(m) => error::Error::limit(m.clone()),
+        error::Error::Refused(m) => error::Error::refused(m.clone()),
         error::Error::Verify(m) => error::Error::verify(m.clone()),
         error::Error::Usage(m) => error::Error::usage(m.clone()),
         error::Error::Internal(m) => error::Error::internal(m.clone()),

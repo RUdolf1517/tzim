@@ -71,7 +71,7 @@ fn parse_header(data: &[u8]) -> Result<(usize, u8)> {
         return Err(Error::parse("gzip: bad magic bytes"));
     }
     if data[2] != 8 {
-        return Err(Error::parse(format!(
+        return Err(Error::refused(format!(
             "gzip: unsupported compression method {}",
             data[2]
         )));
@@ -139,7 +139,7 @@ fn inflate(body: &[u8]) -> Result<(u64, u32)> {
         total += n as u64;
     }
     if decoder.total_in() != body.len() as u64 {
-        return Err(Error::parse(
+        return Err(Error::refused(
             "gzip: trailing data after the member (multi-member files are not supported)",
         ));
     }

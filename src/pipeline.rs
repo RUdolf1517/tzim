@@ -54,7 +54,7 @@ pub fn process(path: &Path, cfg: &Config) -> Outcome {
     let result = run(path, cfg, &mut outcome);
     if let Err(e) = result {
         match e {
-            Error::Limit(message) => {
+            Error::Limit(message) | Error::Refused(message) => {
                 outcome.status = Status::Skipped;
                 outcome.note = Some(message);
             }

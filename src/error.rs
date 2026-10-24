@@ -12,6 +12,10 @@ pub enum Error {
     Parse(String),
     /// A configured limit was exceeded (size, pixels, ratio, ...).
     Limit(String),
+    /// The input is valid but Tzim declines to rewrite it (signed archive,
+    /// ZIP64, encryption, unsupported method). Not a failure: the file is
+    /// reported as skipped and the run still succeeds.
+    Refused(String),
     /// A candidate violated its contract. This is a bug in Tzim.
     Verify(String),
     /// Invalid command line.
@@ -28,6 +32,7 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "{e}"),
             Error::Parse(m) => write!(f, "{m}"),
             Error::Limit(m) => write!(f, "{m}"),
+            Error::Refused(m) => write!(f, "{m}"),
             Error::Verify(m) => write!(f, "verification failed: {m}"),
             Error::Usage(m) => write!(f, "{m}"),
             Error::Internal(m) => write!(f, "internal error: {m}"),
@@ -57,6 +62,7 @@ impl Error {
             Error::Io(_) => "io",
             Error::Parse(_) => "parse",
             Error::Limit(_) => "limit",
+            Error::Refused(_) => "refused",
             Error::Verify(_) => "verify",
             Error::Usage(_) => "usage",
             Error::Internal(_) => "internal",
@@ -79,6 +85,10 @@ impl Error {
 
     pub fn limit(msg: impl Into<String>) -> Self {
         Error::Limit(msg.into())
+    }
+
+    pub fn refused(msg: impl Into<String>) -> Self {
+        Error::Refused(msg.into())
     }
 
     pub fn usage(msg: impl Into<String>) -> Self {
