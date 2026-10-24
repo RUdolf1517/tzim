@@ -1,178 +1,281 @@
-# Tzim
+<div align="center">
 
-**Shrink the file, never the information.**
+# tzim
 
-Tzim is a small, cross-platform command-line tool that makes files smaller using only *provably lossless*
-transformations. It processes individual files, many files, or whole directory trees, and it refuses to
-perform any operation whose safety it cannot verify.
+**צמצום** — *tsimtsum*: contraction, making space
 
-The name comes from the Hebrew צמצום (*tsimtsum*) — contraction, reduction, making space.
+Shrink the file, never the information.  
+One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO/CUR · JPEG.
 
----
+[Install](#install) · [Usage](#usage) · [Formats](#formats) · [Guarantees](#guarantees) · [The name](#the-name)
 
-## Status
+[![license](https://img.shields.io/badge/license-MIT-0b3d91?style=flat-square)](LICENSE)
+[![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-111111?style=flat-square)](#install)
+[![rust](https://img.shields.io/badge/rust-1.88%2B-dea584?style=flat-square)](https://www.rust-lang.org/)
 
-**v0.4 implemented.** PNG, APNG, gzip, the ZIP family, ICO/CUR and — opt-in — baseline JPEG are supported
-and verified, including optional optimization of files stored inside archives (`--nested`). The code is
-tested on Linux, macOS and Windows in CI. Everything else in the table below is *planned*, with the version
-in which it is expected.
-
-- Static Linux binary: **980 KiB** (measured, every runtime feature, musl). See [docs/benchmarks.md](docs/benchmarks.md).
-- 56 unit and 54 integration tests, clippy clean with `-D warnings`.
-- Prebuilt binaries: see [Releases](https://github.com/RUdolf1517/tzim/releases) and [docs/releases.md](docs/releases.md).
-
-See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
-admission criteria a format must meet before it may be listed as supported.
+</div>
 
 ---
 
-## The invariant
+```bash
+tzim optimize photo.png
+tzim optimize ./photos -r
+tzim optimize backup.zip --nested
+tzim optimize scan.jpg --formats jpeg
+tzim optimize . -r --dry-run
+```
 
-> **Tzim never performs an irreversible or lossy transformation.**
+```
+14 files  48.2 MB → 43.7 MB  (-9.3 %)   2 already optimal
+```
 
-This is not a default that can be turned off with a flag. It is a structural property of the design:
+The file gets smaller or it is left alone. There is no third outcome.
 
-- No quality reduction, no resampling, no bit-depth reduction, no frame dropping.
-- **No metadata, comment, attachment or vendor-chunk removal** — not even "safe" metadata. Other tools
-  strip it; Tzim does not.
-- No format conversion (a PNG never becomes a WebP, a TIFF never becomes a PNG).
-- No switching to a lossy algorithm when lossless optimization yields nothing.
-- If the result is not strictly smaller than the input, the input is left untouched and reported as
-  `already_optimal`.
-- If optimization, verification or the write itself fails at any point, the original file is left
-  byte-for-byte unchanged.
+## Install
 
-## What "lossless" means here
+**Binary** (no Rust) into `~/.local/bin`:
 
-Tzim does not use one vague notion of losslessness. Every format declares one guarantee class, and the
-class is verified mechanically before a file is replaced:
+```bash
+curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh | sh
+```
 
-| Class | Meaning | Used by |
-| --- | --- | --- |
-| **G1 — byte-identical** | The output file is identical to the input. | No-op outcomes only: `already_optimal`, `unsupported`, `skipped`, all failures, and every `--dry-run` run. |
-| **G2 — exactly reversible** | The transformation is reversible and the original file can be reconstructed bit-for-bit. | Not used by Tzim. It requires a container format and a second decoding step (the Precomp approach), which conflicts with "output is a normal file of the same type". |
-| **G3 — format-equivalent** | Bytes differ, but every piece of content and every significant property is preserved according to an explicit per-format contract. | All real optimizations in Tzim. |
+On a platform without a published build it falls back to `cargo install --git` instead of guessing a
+binary.
 
-Each G3 contract states exactly what is preserved, what is allowed to change, and how the result is
-verified. See [docs/guarantees.md](docs/guarantees.md).
+**Homebrew** (no Rust). Third-party tap — Homebrew 6+ [tap trust](https://docs.brew.sh/Tap-Trust). A fully
+qualified name trusts only this formula:
 
----
+```bash
+brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim
+brew install RUdolf1517/tzim/tzim
+```
 
-## Formats
+After that, short name:
 
-| Format | Version | Status | Transformation | Guarantee |
-| --- | --- | --- | --- | --- |
-| PNG | v0.1 | **implemented** | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
-| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | **implemented** | Recompress the DEFLATE body; header preserved verbatim | G3 |
-| ZIP and ZIP-based formats (`.zip`, `.jar`, `.apk`, `.docx/.xlsx/.pptx`, `.epub`, `.odt/.ods/.odp`, `.cbz`, `.whl`, `.nupkg`) | v0.2 | **implemented** | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed, ZIP64 and encrypted archives are refused | G3 |
-| ICO / CUR | v0.3 | **implemented** | Optimize embedded PNG images; bitmap entries copied verbatim | G3 |
-| APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
-| Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
-| JPEG | v0.4 | **implemented**, opt-in (`--formats jpeg`) | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
-| TIFF | v0.5+ | research | Recompress Deflate/LZW strips without changing tags | not specified yet |
-| FLAC | v0.5+ | research | Re-encode losslessly, preserving all metadata blocks | not specified yet |
-| PDF, WebP lossless, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
+```bash
+brew trust --formula RUdolf1517/tzim/tzim
+brew install tzim
+```
 
-JPEG is opt-in because it carries the highest risk in the project and typically saves only 1–3 %. Progressive,
-arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason rather than
-approximated; see [the contract](docs/guarantees.md#47-jpeg--v04-opt-in).
+**apt** (Debian/Ubuntu x86_64, no Rust):
 
-Formats that are refused, and the reasoning, are listed in [docs/formats.md](docs/formats.md#5-refused-formats).
-In short: for PDF and modern image/video codecs there is no way to guarantee and verify preservation with
-the reliability this project requires, and for text formats the only available savings come from
-minification, which destroys information.
+```bash
+curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim_amd64.deb
+sudo apt install ./tzim_amd64.deb
+```
 
----
+**dnf** (Fedora/RHEL x86_64, no Rust):
 
-## Installation
+```bash
+curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim.x86_64.rpm
+sudo dnf install ./tzim.x86_64.rpm
+```
 
-```sh
-# from source (requires Rust 1.88 or newer)
-cargo install --path .
+Both packages contain the same statically linked binary and declare no dependency at all.
+
+**winget** (Windows x64). Until the manifest is in the community source, install it from this GitHub repo —
+winget downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
+
+```powershell
+git clone https://github.com/RUdolf1517/tzim
+cd tzim
+winget settings --enable LocalManifestFiles
+winget install --manifest .\packaging\winget\0.4.3
+```
+
+`LocalManifestFiles` is once, as Administrator. After microsoft/winget-pkgs accepts the manifest:
+
+```powershell
+winget install -e --id RUdolf1517.tzim
+```
+
+Zip only (no winget): [Releases](https://github.com/RUdolf1517/tzim/releases/latest) →
+`tzim-x86_64-pc-windows-msvc.zip`, put `tzim.exe` somewhere on `PATH`.
+
+**Cargo** ([Rust 1.88+](https://rustup.rs)):
+
+```bash
+cargo install --git https://github.com/RUdolf1517/tzim
+```
+
+macOS (Apple Silicon), Linux (x86_64, static musl), Windows x64. ARM Linux and Intel macOS build from
+source in one command.
+
+<details>
+<summary>From a checkout</summary>
+
+```bash
+git clone https://github.com/RUdolf1517/tzim
+cd tzim
+cargo build --release            # target/release/tzim
 
 # smallest build: PNG and gzip only, no Zopfli encoder
 cargo build --release --no-default-features --features png,gzip
 
-# static Linux binary, matching the measured 980 KiB artifact
+# static Linux binary, matching the published artifact
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-The tool builds as a single static binary with no C toolchain and no runtime dependencies. Each release
-ships `linux-x86_64` (musl, static), `macos-aarch64` and `windows-x86_64` archives plus `SHA256SUMS`, all
-built and smoke-tested by CI; what is *not* provided is listed in [docs/releases.md](docs/releases.md).
+</details>
+
+### Dependencies
+
+None. No C toolchain, no runtime, no configuration file, no daemon. The Linux binary is statically linked
+against musl and runs on any kernel from 3.2; the whole program links four Rust crates and contains no
+`unsafe` code. It opens no sockets, checks for no updates and sends no telemetry.
 
 ## Usage
 
-```sh
-# one file
-tzim optimize image.png
-
-# several files
-tzim optimize image.png archive.zip document.pdf
-
-# a directory (top level only)
-tzim optimize ./files
-
-# a directory tree
-tzim optimize ./files --recursive
-
-# preview without writing anything
-tzim optimize ./files --recursive --dry-run
-
-# best possible compression, much slower
-tzim optimize image.png --zopfli
-
-# machine-readable output
-tzim optimize ./files --recursive --json
+```bash
+tzim optimize image.png                  # one file, no wrapping directory
+tzim optimize a.png b.zip c.jpg          # several, mixed kinds in one run
+tzim optimize ./files                    # a directory, top level only
+tzim optimize ./files -r                 # the whole tree
+tzim optimize ./files -r --dry-run       # everything except the final rename
+tzim optimize image.png --zopfli         # best ratio, 10-100x slower
+tzim optimize ./files -r --json          # one JSON object per file
 ```
 
-Every path is a full input object: a single file never needs to be wrapped in a directory. Files,
-directories and duplicates may be mixed freely in one invocation.
+Every path is a full input object: a single file never needs to be wrapped in a directory, and files,
+directories and duplicates can be mixed freely in one invocation.
 
-Full CLI reference: [docs/cli.md](docs/cli.md).
+### Scope
+
+```bash
+tzim formats                              # what this build supports
+tzim optimize photo.jpg --formats jpeg    # JPEG is opt-in
+tzim optimize project.zip --nested        # also optimize supported files inside
+tzim optimize ./src --include png --exclude lock
+```
+
+JPEG is off by default and enabled by name, because it is the riskiest handler here and typically saves
+only 1–3 %.
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. Includes files that were already optimal, skipped, unsupported or refused. |
-| `1` | One or more files failed; other files were still processed. |
+| `1` | One or more files failed; the others were still processed. |
 | `2` | Invalid usage; nothing was processed. |
 | `3` | Fatal error; the run could not be completed. |
-| `4` | **Verification failure** — a candidate did not satisfy its contract. The original file was not replaced. This indicates a bug and aborts the run. |
+| `4` | **Verification failure** — a candidate did not satisfy its contract. The original was not replaced, and this means a bug. |
 
----
+<details>
+<summary>Flags</summary>
 
-## What Tzim will never do
+```
+tzim optimize [OPTIONS] <PATH>...
 
-These are permanent non-goals, not unimplemented features:
+  -r, --recursive            descend into directories
+  -n, --dry-run              do all the work, write nothing
+  -j, --jobs <N>             files processed at once (default: min(cores, 4))
+      --json                 newline-delimited JSON on stdout
+  -q, --quiet                suppress per-file output
+      --fail-fast            stop after the first failed file
+      --include <EXT,...>    only files with these extensions
+      --exclude <EXT,...>    skip files with these extensions
+      --min-size / --max-size           size window (default: 0 .. 2 GiB)
+      --max-pixels <N>                  skip larger images
+      --max-uncompressed / --max-ratio  decompression-bomb guards for ZIP
+      --nested               optimize supported files inside archives
+      --max-depth <N>        nesting limit (default: 3)
+      --formats <LIST>       png, gzip, zip, ico, jpeg
+      --zopfli               use the slower, stronger encoder
+      --follow-symlinks      resolve and follow symbolic links
+      --allow-hardlinks      process files with more than one hard link
+      --no-fsync             skip fsync (faster, less durable)
+```
+
+Full reference: [docs/cli.md](docs/cli.md).
+
+</details>
+
+## Guarantees
+
+Tzim does not use one vague notion of losslessness. Every handler declares a guarantee class, and the class
+is checked mechanically before a file is replaced.
+
+| Class | Meaning | Used by |
+| --- | --- | --- |
+| **G1 — byte-identical** | The output is identical to the input. | `already_optimal`, `unsupported`, `skipped`, every failure, every `--dry-run`. |
+| **G2 — exactly reversible** | The original can be reconstructed bit-for-bit. | Not used. It needs a container and a second decoding step, which conflicts with "the output is a normal file of the same type". |
+| **G3 — format-equivalent** | Bytes differ; every piece of content and every significant property is preserved by an explicit per-format contract, and verified. | All real optimizations. |
+
+> **Tzim never performs an irreversible or lossy transformation.**
+
+- No quality, resolution, bit-depth or frame reduction, and no "visually lossless".
+- **No metadata, comment, attachment or vendor-chunk removal** — not even the metadata other tools call
+  safe. EXIF, ICC, `COM`, ZIP extra fields and archive comments survive byte for byte.
+- No format conversion.
+- No fallback to a lossy path when lossless yields nothing.
+- If the result is not strictly smaller, the file is untouched and reported as `already_optimal`.
+- If optimization, verification or the write fails, the original stays byte-for-byte unchanged.
+
+## Formats
+
+| Format | Since | Status | Transformation | Guarantee |
+| --- | --- | --- | --- | --- |
+| PNG | v0.1 | **implemented** | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
+| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | **implemented** | Recompress the DEFLATE body; header preserved verbatim | G3 |
+| ZIP family (`.zip`, `.jar`, `.apk`, `.docx`, `.epub`, `.whl`, …) | v0.2 | **implemented** | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed, ZIP64 and encrypted archives refused | G3 |
+| ICO / CUR | v0.3 | **implemented** | Optimize embedded PNGs; bitmap entries copied verbatim | G3 |
+| APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
+| Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
+| JPEG | v0.4 | **implemented**, opt-in | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
+| TIFF, FLAC | v0.5+ | research | not specified yet — no contract, no claim | — |
+| PDF, WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
+
+Progressive, arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason
+rather than approximated. Why the other formats are refused is in
+[docs/formats.md](docs/formats.md#5-refused-formats).
+
+## What tzim will never do
 
 - Remove EXIF, ICC profiles, comments, thumbnails, vendor chunks, ZIP extra fields or archive comments.
-- Re-encode images, audio or video in a lossy way, or "visually losslessly".
+- Re-encode images, audio or video in a lossy way.
 - Convert a file to another format.
-- Minify HTML, CSS, JavaScript, SVG or XML (that is exactly the kind of data removal this project forbids).
+- Minify HTML, CSS, JavaScript, SVG or XML.
 - Rewrite a file in place, truncate it, or write a larger result.
 - Replace a file that changed on disk while it was being processed.
 - Claim support for a format before its contract exists and its tests pass.
-
----
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [docs/guarantees.md](docs/guarantees.md) | Guarantee classes, per-format contracts, verification methods |
+| [docs/guarantees.md](docs/guarantees.md) | Guarantee classes, per-format contracts, verification |
 | [docs/formats.md](docs/formats.md) | Format matrix, admission criteria, refused formats |
 | [docs/cli.md](docs/cli.md) | Command-line interface, exit codes, JSON schema |
-| [docs/safety.md](docs/safety.md) | File replacement algorithm, atomicity, metadata, failure modes |
+| [docs/safety.md](docs/safety.md) | Replacement algorithm, atomicity, failure modes |
 | [docs/dependencies.md](docs/dependencies.md) | Every dependency and why it exists |
-| [docs/size-budget.md](docs/size-budget.md) | Binary size budget, feature matrix, measurement procedure |
-| [docs/testing.md](docs/testing.md) | Test strategy, fixture corpus, fuzzing, CI |
-| [docs/benchmarks.md](docs/benchmarks.md) | Measured binary size, tests, and what is still unmeasured |
-| [docs/roadmap.md](docs/roadmap.md) | Versions, gates, complexity and risks |
+| [docs/size-budget.md](docs/size-budget.md) | Binary size budget and measurement |
+| [docs/testing.md](docs/testing.md) | Test strategy, real-file corpus, fuzzing, CI |
+| [docs/benchmarks.md](docs/benchmarks.md) | Measured size, tests, corpus run, comparisons |
+| [docs/releases.md](docs/releases.md) | Artifacts, install channels, release process |
+| [docs/roadmap.md](docs/roadmap.md) | Versions, gates, risks |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test and submit changes |
+
+The static Linux binary measures **980 KiB**. The real-file corpus run saves **4.19 %** over 576 files from
+four pinned upstream projects and changes nothing on a second pass. Both numbers, and the comparisons
+against oxipng, optipng and jpegtran, are in [docs/benchmarks.md](docs/benchmarks.md).
+
+## The name
+
+Hebrew **צמצום** (*tsimtsum*): contraction, reduction, making space.
+
+In Lurianic Kabbalah it names the withdrawal that makes room for something else to exist. For a file
+optimizer the meaning is plain: the bytes contract, the information does not.
+
+```bash
+tzim --version
+tzim formats
+```
+
+Written by AI. Directed by [RUdolf1517](https://github.com/RUdolf1517).  
+[rudolfzinovev@protonmail.com](mailto:rudolfzinovev@protonmail.com)
 
 ## License
 
-MIT. See [LICENSE](LICENSE). All dependencies must be compatible with it; see
-[docs/dependencies.md](docs/dependencies.md#5-licence-policy).
+[MIT](LICENSE). See [docs/dependencies.md](docs/dependencies.md#5-licence-policy) for the dependency
+licence policy.
