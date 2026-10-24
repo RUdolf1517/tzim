@@ -9,6 +9,7 @@ pub enum Format {
     Png,
     Gzip,
     Zip,
+    Ico,
 }
 
 impl Format {
@@ -17,6 +18,7 @@ impl Format {
             Format::Png => "png",
             Format::Gzip => "gzip",
             Format::Zip => "zip",
+            Format::Ico => "ico",
         }
     }
 
@@ -25,6 +27,7 @@ impl Format {
             Format::Png => "PNG",
             Format::Gzip => "GZIP",
             Format::Zip => "ZIP",
+            Format::Ico => "ICO",
         }
     }
 }
@@ -42,6 +45,15 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     }
     if head.len() >= 3 && head[0] == 0x1f && head[1] == 0x8b && head[2] == 0x08 {
         return Some(Format::Gzip);
+    }
+    // ICO (type 1) and CUR (type 2) share a 6-byte header. The signature is
+    // weak on its own, so the image count is checked as well.
+    if head.len() >= 6 && head[0] == 0 && head[1] == 0 && (head[2] == 1 || head[2] == 2) && head[3] == 0
+    {
+        let count = u16::from_le_bytes([head[4], head[5]]);
+        if count >= 1 && count <= 256 {
+            return Some(Format::Ico);
+        }
     }
     // A local header (the usual case) or an end-of-central-directory record
     // (an empty archive). Both start with "PK".
@@ -217,6 +229,10 @@ mod tests {
     fn detects_png_and_gzip() {
         assert_eq!(detect(&PNG_SIGNATURE), Some(Format::Png));
         assert_eq!(detect(&[0x1f, 0x8b, 0x08, 0x00]), Some(Format::Gzip));
+        assert_eq!(detect(&[0, 0, 1, 0, 2, 0]), Some(Format::Ico));
+        assert_eq!(detect(&[0, 0, 2, 0, 1, 0]), Some(Format::Ico));
+        assert_eq!(detect(&[0, 0, 1, 0, 0, 0]), None); // zero images
+        assert_eq!(detect(&[0, 0, 3, 0, 1, 0]), None); // unknown type
         assert_eq!(detect(b"PK\x03\x04"), Some(Format::Zip));
         assert_eq!(detect(b"PK\x05\x06"), Some(Format::Zip));
         assert_eq!(detect(b"PK\x07\x08"), None);

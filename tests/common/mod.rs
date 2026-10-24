@@ -117,10 +117,8 @@ pub fn build_png(spec: &PngSpec) -> Vec<u8> {
         out.extend_from_slice(&chunk(&t, data));
     }
     if spec.apng {
-        let mut actl = Vec::new();
-        actl.extend_from_slice(&1u32.to_be_bytes()); // frames
-        actl.extend_from_slice(&0u32.to_be_bytes()); // plays
-        out.extend_from_slice(&chunk(b"acTL", &actl));
+        out.extend_from_slice(&chunk(b"acTL", &actl_payload(1)));
+        out.extend_from_slice(&chunk(b"fcTL", &fctl_payload(0, spec.width, spec.height)));
     }
     out.extend_from_slice(&chunk(b"IDAT", &idat));
     out.extend_from_slice(&chunk(b"IEND", &[]));
@@ -487,4 +485,156 @@ pub fn zip_archive_comment(d: &[u8]) -> Vec<u8> {
         .expect("no end-of-central-directory record");
     let len = le16(d, eocd + 20) as usize;
     d[eocd + 22..eocd + 22 + len].to_vec()
+}
+
+// ---------------------------------------------------------------------------
+// ICO fixtures
+// ---------------------------------------------------------------------------
+
+pub struct IcoEntrySpec {
+    /// Width in pixels (0 means 256, as the format encodes it).
+    pub width: u8,
+    pub height: u8,
+    pub bit_count: u16,
+    pub payload: Vec<u8>,
+}
+
+/// Builds an ICO file: a directory followed by the images, in order.
+pub fn build_ico(kind: u16, entries: &[IcoEntrySpec]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&kind.to_le_bytes());
+    out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+
+    let mut offset = 6 + 16 * entries.len();
+    let mut body = Vec::new();
+    for e in entries {
+        out.push(e.width);
+        out.push(e.height);
+        out.push(0); // palette colours
+        out.push(0); // reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes / hotspot x
+        out.extend_from_slice(&e.bit_count.to_le_bytes()); // bit count / hotspot y
+        out.extend_from_slice(&(e.payload.len() as u32).to_le_bytes());
+        out.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += e.payload.len();
+        body.extend_from_slice(&e.payload);
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
+/// A minimal BMP-in-ICO payload (the header is all that matters to the parser).
+pub fn bmp_icon_payload(size: usize) -> Vec<u8> {
+    let mut data = vec![0x28, 0, 0, 0]; // BITMAPINFOHEADER size
+    data.extend(std::iter::repeat_n(0u8, size.saturating_sub(4)));
+    data
+}
+
+/// Extracts `(directory_entry_bytes, payload)` pairs from an ICO file.
+pub fn parse_ico(data: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    let mut out = Vec::new();
+    for i in 0..count {
+        let at = 6 + i * 16;
+        let record = data[at..at + 16].to_vec();
+        let size = u32::from_le_bytes([record[8], record[9], record[10], record[11]]) as usize;
+        let offset = u32::from_le_bytes([record[12], record[13], record[14], record[15]]) as usize;
+        out.push((record, data[offset..offset + size].to_vec()));
+    }
+    out
+}
+
+fn actl_payload(frames: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&frames.to_be_bytes());
+    data.extend_from_slice(&0u32.to_be_bytes()); // plays: infinite
+    data
+}
+
+fn fctl_payload(sequence: u32, width: u32, height: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&sequence.to_be_bytes());
+    data.extend_from_slice(&width.to_be_bytes());
+    data.extend_from_slice(&height.to_be_bytes());
+    data.extend_from_slice(&0u32.to_be_bytes()); // x offset
+    data.extend_from_slice(&0u32.to_be_bytes()); // y offset
+    data.extend_from_slice(&1u16.to_be_bytes()); // delay numerator
+    data.extend_from_slice(&10u16.to_be_bytes()); // delay denominator
+    data.push(0); // dispose: none
+    data.push(0); // blend: source
+    data
+}
+
+fn frame_stream(width: u32, height: u32, seed: u8, level: u32) -> Vec<u8> {
+    let mut raw = Vec::new();
+    for y in 0..height as usize {
+        raw.push(0u8); // filter: none, which leaves the most for the encoder
+        for x in 0..width as usize {
+            let base = ((x + y + seed as usize) % 64) as u8;
+            raw.extend_from_slice(&[base, base.wrapping_mul(2), seed, 0xff]);
+        }
+    }
+    let mut encoder =
+        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+    encoder.write_all(&raw).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// Builds a valid APNG: `frames` full-size frames. Frame 0 is the default image
+/// (IDAT); later frames are `fcTL` + `fdAT`, and every second frame is split
+/// across two `fdAT` chunks so the re-splitting logic gets exercised.
+pub fn build_apng(width: u32, height: u32, frames: usize, level: u32) -> Vec<u8> {
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+
+    let mut out = PNG_SIGNATURE.to_vec();
+    out.extend_from_slice(&chunk(b"IHDR", &ihdr));
+    out.extend_from_slice(&chunk(b"acTL", &actl_payload(frames as u32)));
+    out.extend_from_slice(&chunk(b"fcTL", &fctl_payload(0, width, height)));
+    out.extend_from_slice(&chunk(b"IDAT", &frame_stream(width, height, 0, level)));
+
+    let mut sequence = 1u32;
+    for index in 1..frames {
+        out.extend_from_slice(&chunk(b"fcTL", &fctl_payload(sequence, width, height)));
+        sequence += 1;
+        let stream = frame_stream(width, height, index as u8, level);
+        if index % 2 == 0 {
+            let half = stream.len() / 2;
+            for piece in [&stream[..half], &stream[half..]] {
+                let mut payload = sequence.to_be_bytes().to_vec();
+                payload.extend_from_slice(piece);
+                out.extend_from_slice(&chunk(b"fdAT", &payload));
+                sequence += 1;
+            }
+        } else {
+            let mut payload = sequence.to_be_bytes().to_vec();
+            payload.extend_from_slice(&stream);
+            out.extend_from_slice(&chunk(b"fdAT", &payload));
+            sequence += 1;
+        }
+    }
+    out.extend_from_slice(&chunk(b"IEND", &[]));
+    out
+}
+
+/// Splits a PNG into `(type, payload)` pairs without validating CRCs.
+pub fn png_chunks_lossy(data: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut pos = 8;
+    while pos + 12 <= data.len() {
+        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        if pos + 12 + len > data.len() {
+            break;
+        }
+        let typ = String::from_utf8_lossy(&data[pos + 4..pos + 8]).into_owned();
+        out.push((typ, data[pos + 8..pos + 8 + len].to_vec()));
+        pos += 12 + len;
+        if out.last().map(|(t, _)| t == "IEND").unwrap_or(false) {
+            break;
+        }
+    }
+    out
 }

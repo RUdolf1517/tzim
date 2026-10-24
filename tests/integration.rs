@@ -824,3 +824,268 @@ fn stub_prefixed_archive_is_not_detected_as_zip() {
     assert!(stdout.contains("unsupported"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
+
+// ---------------------------------------------------------------------------
+// v0.3: APNG, ICO, nested archives
+// ---------------------------------------------------------------------------
+
+#[test]
+fn apng_frames_are_recompressed_and_control_chunks_kept() {
+    let ws = Workspace::new("apng-frames");
+    let original = build_apng(64, 48, 3, 1);
+    let path = ws.write("anim.png", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "anim.png"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a smaller APNG");
+
+    let before = png_chunks(&original).unwrap();
+    let after = png_chunks(&optimized).unwrap();
+
+    // Every control chunk (acTL, fcTL) must be byte-identical and in order.
+    let controls_before: Vec<_> = before.iter().filter(|(t, _)| t != "IDAT" && t != "fdAT").collect();
+    let controls_after: Vec<_> = after.iter().filter(|(t, _)| t != "IDAT" && t != "fdAT").collect();
+    assert_eq!(controls_before, controls_after, "control chunks must be preserved");
+
+    // The number of frame chunks and their sequence numbers must not change.
+    let fdat_before: Vec<_> = before.iter().filter(|(t, _)| t == "fdAT").collect();
+    let fdat_after: Vec<_> = after.iter().filter(|(t, _)| t == "fdAT").collect();
+    assert_eq!(fdat_before.len(), fdat_after.len());
+    for (a, b) in fdat_before.iter().zip(fdat_after.iter()) {
+        assert_eq!(a.1[..4], b.1[..4], "fdAT sequence numbers must be preserved");
+    }
+
+    // Every frame must still decode to the same pixels.
+    let (w1, h1, p1) = decode_pixels(&original).unwrap();
+    let (w2, h2, p2) = decode_pixels(&optimized).unwrap();
+    assert_eq!((w1, h1), (w2, h2));
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn apng_with_a_single_frame_is_optimized() {
+    let ws = Workspace::new("apng-single");
+    let original = build_apng(48, 48, 1, 1);
+    let path = ws.write("single.png", &original);
+
+    let (code, _, stderr) = run(&["optimize", "single.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(png_chunks(&optimized).is_ok());
+    let (_, _, p1) = decode_pixels(&original).unwrap();
+    let (_, _, p2) = decode_pixels(&optimized).unwrap();
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn ico_embedded_pngs_are_optimized_and_bitmaps_preserved() {
+    let ws = Workspace::new("ico-mixed");
+    let png_spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let bitmap = bmp_icon_payload(512);
+    let entries = vec![
+        IcoEntrySpec {
+            width: 64,
+            height: 64,
+            bit_count: 32,
+            payload: build_png(&png_spec),
+        },
+        IcoEntrySpec {
+            width: 16,
+            height: 16,
+            bit_count: 32,
+            payload: bitmap.clone(),
+        },
+    ];
+    let original = build_ico(1, &entries);
+    let path = ws.write("app.ico", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "app.ico"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a smaller icon");
+
+    let before = parse_ico(&original);
+    let after = parse_ico(&optimized);
+    assert_eq!(before.len(), after.len());
+
+    // Directory fields other than size and offset are preserved.
+    assert_eq!(before[0].0[..8], after[0].0[..8]);
+    assert_eq!(before[1].0[..8], after[1].0[..8]);
+
+    // The bitmap entry is untouched; the PNG entry still decodes identically.
+    assert_eq!(after[1].1, bitmap, "bitmap image must be preserved byte for byte");
+    let (_, _, p1) = decode_pixels(&before[0].1).unwrap();
+    let (_, _, p2) = decode_pixels(&after[0].1).unwrap();
+    assert_eq!(p1, p2);
+    assert!(after[0].1.len() < before[0].1.len());
+}
+
+#[test]
+fn ico_with_only_bitmaps_is_already_optimal() {
+    let ws = Workspace::new("ico-bmp-only");
+    let entries = vec![IcoEntrySpec {
+        width: 32,
+        height: 32,
+        bit_count: 32,
+        payload: bmp_icon_payload(1024),
+    }];
+    let original = build_ico(1, &entries);
+    let path = ws.write("plain.ico", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "plain.ico"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("already optimal"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn cursor_files_are_handled_like_icons() {
+    let ws = Workspace::new("cur");
+    let png_spec = PngSpec {
+        width: 32,
+        height: 32,
+        level: 1,
+        ..Default::default()
+    };
+    let entries = vec![IcoEntrySpec {
+        width: 32,
+        height: 32,
+        bit_count: 0,
+        payload: build_png(&png_spec),
+    }];
+    let original = build_ico(2, &entries);
+    let path = ws.write("pointer.cur", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "pointer.cur"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len());
+    assert_eq!(&optimized[2..4], &[2, 0], "cursor type must be preserved");
+}
+
+#[test]
+fn ico_with_a_bad_offsets_is_refused() {
+    let ws = Workspace::new("ico-bad");
+    let mut icon = build_ico(
+        1,
+        &[IcoEntrySpec {
+            width: 32,
+            height: 32,
+            bit_count: 32,
+            payload: bmp_icon_payload(256),
+        }],
+    );
+    // Point the image outside the file.
+    icon[6 + 12..6 + 16].copy_from_slice(&(icon.len() as u32 + 100).to_le_bytes());
+    let original = icon.clone();
+    let path = ws.write("broken.ico", &original);
+
+    let (code, stdout, _) = run(&["optimize", "broken.ico"], &ws.path);
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn nested_optimization_reaches_the_file_inside_the_archive() {
+    let ws = Workspace::new("nested-png");
+    let png_spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let inner_png = build_png(&png_spec);
+    let entries = vec![ZipEntrySpec::deflated("images/logo.png", &inner_png, 1)];
+    let original = build_zip(&entries, b"");
+
+    // Without --nested the stored bytes stay identical.
+    let plain = ws.write("plain.zip", &original);
+    let (code, _, stderr) = run(&["optimize", "plain.zip"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let plain_out = std::fs::read(&plain).unwrap();
+    let plain_entry = parse_zip(&plain_out).remove(0);
+    assert_eq!(
+        plain_entry.decompressed(&plain_out),
+        inner_png,
+        "without --nested the content must not change"
+    );
+
+    // With --nested the PNG inside is optimized: smaller than the plain result.
+    let nested = ws.write("nested.zip", &original);
+    let (code, stdout, stderr) = run(&["optimize", "nested.zip", "--nested"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let nested_out = std::fs::read(&nested).unwrap();
+    assert!(
+        nested_out.len() < plain_out.len(),
+        "--nested must beat recompression alone"
+    );
+
+    let entry = parse_zip(&nested_out).remove(0);
+    let content = entry.decompressed(&nested_out);
+    assert!(content.len() < inner_png.len(), "the embedded PNG must shrink");
+    assert_eq!(entry.crc, crc32fast::hash(&content), "CRC must match the new content");
+    let (_, _, p1) = decode_pixels(&inner_png).unwrap();
+    let (_, _, p2) = decode_pixels(&content).unwrap();
+    assert_eq!(p1, p2, "the embedded image must keep its pixels");
+}
+
+#[test]
+fn nested_depth_limit_is_respected() {
+    let ws = Workspace::new("nested-depth");
+    let png_spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let inner_png = build_png(&png_spec);
+    let inner_zip = build_zip(&[ZipEntrySpec::deflated("img.png", &inner_png, 1)], b"");
+    let outer = build_zip(&[ZipEntrySpec::deflated("inner.zip", &inner_zip, 1)], b"");
+
+    // Depth 1: the outer archive is rewritten, but the inner archive is not.
+    let shallow = ws.write("shallow.zip", &outer);
+    let (code, _, stderr) = run(&["optimize", "shallow.zip", "--nested", "--max-depth", "1"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let shallow_out = std::fs::read(&shallow).unwrap();
+    let inner_after = parse_zip(&shallow_out).remove(0).decompressed(&shallow_out);
+    assert_eq!(
+        inner_after, inner_zip,
+        "at depth 1 the inner archive must be left untouched"
+    );
+
+    // Depth 3: the PNG inside the inner archive is optimized too.
+    let deep = ws.write("deep.zip", &outer);
+    let (code, _, stderr) = run(&["optimize", "deep.zip", "--nested", "--max-depth", "3"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let deep_out = std::fs::read(&deep).unwrap();
+    assert!(deep_out.len() < shallow_out.len(), "deeper nesting should save more");
+    let inner_after = parse_zip(&deep_out).remove(0).decompressed(&deep_out);
+    let png_after = parse_zip(&inner_after).remove(0).decompressed(&inner_after);
+    assert!(png_after.len() < inner_png.len());
+    let (_, _, p1) = decode_pixels(&inner_png).unwrap();
+    let (_, _, p2) = decode_pixels(&png_after).unwrap();
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn nested_does_not_touch_signed_archives() {
+    let ws = Workspace::new("nested-signed");
+    let entries = vec![
+        ZipEntrySpec::deflated("META-INF/MANIFEST.MF", b"Manifest-Version: 1.0\n", 1),
+        ZipEntrySpec::deflated("META-INF/APP.SF", b"Signature-Version: 1.0", 1),
+    ];
+    let original = build_zip(&entries, b"");
+    let path = ws.write("signed.jar", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "signed.jar", "--nested"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}

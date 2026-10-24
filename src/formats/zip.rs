@@ -14,9 +14,7 @@
 //! which is the contract; neither can "confirm itself" on a corrupted output,
 //! because a broken structure fails to parse at all.
 
-use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::Path;
 
 use crate::error::{Error, Result};
 
@@ -39,10 +37,18 @@ const LOCAL_LEN: usize = 30;
 const CENTRAL_LEN: usize = 46;
 const EOCD_LEN: usize = 22;
 
+/// Offset of the CRC-32 field inside a local header.
+const LOCAL_CRC_OFFSET: usize = 14;
 /// Offset of the compressed-size field inside a local header.
 const LOCAL_COMP_OFFSET: usize = 18;
+/// Offset of the uncompressed-size field inside a local header.
+const LOCAL_UNCOMP_OFFSET: usize = 22;
+/// Offset of the CRC-32 field inside a central directory record.
+const CENTRAL_CRC_OFFSET: usize = 16;
 /// Offset of the compressed-size field inside a central directory record.
 const CENTRAL_COMP_OFFSET: usize = 20;
+/// Offset of the uncompressed-size field inside a central directory record.
+const CENTRAL_UNCOMP_OFFSET: usize = 24;
 /// Offset of the local-header-offset field inside a central directory record.
 const CENTRAL_LOCAL_OFFSET: usize = 42;
 
@@ -591,9 +597,8 @@ fn recompress(compressed: &[u8], zopfli: bool) -> Result<(Vec<u8>, u64, u32)> {
 // Handler
 // ---------------------------------------------------------------------------
 
-pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
-    let data = fs::read(src)?;
-    let archive = parse_archive(&data)?;
+pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
+    let archive = parse_archive(data)?;
     check_limits(&archive, opts)?;
     if let Some(reason) = deny_reason(&archive, &data) {
         return Err(Error::refused(reason));
@@ -615,7 +620,7 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
         }
     }
 
-    let rebuilt = rebuild(&data, &archive, opts)?;
+    let rebuilt = rebuild(data, &archive, opts)?;
     match rebuilt {
         Some(out) if out.len() < data.len() => {
             dst.write_all(&out)?;
@@ -626,10 +631,13 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
 }
 
 fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>> {
+    let count = a.entries.len();
     let mut out: Vec<u8> = Vec::with_capacity(d.len());
-    let mut new_offsets = vec![0u32; a.entries.len()];
-    let mut new_comp = vec![0u32; a.entries.len()];
-    let mut shrank = false;
+    let mut new_offsets = vec![0u32; count];
+    let mut new_comp = vec![0u32; count];
+    let mut new_crc = vec![0u32; count];
+    let mut new_uncomp = vec![0u32; count];
+    let mut changed = false;
 
     for &index in &a.physical {
         let e = &a.entries[index];
@@ -638,48 +646,82 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
         new_offsets[index] = offset;
 
         let original = &d[e.data_offset..e.data_offset + e.data_len];
-        let replacement = if e.method == METHOD_DEFLATE {
-            let (bytes, len, crc) = recompress(original, opts.zopfli)?;
-            if len != e.uncomp_size as u64 || crc != e.crc {
-                return Err(Error::parse(format!(
-                    "zip: entry `{}` fails its checksum; the archive is corrupt",
-                    String::from_utf8_lossy(e.name)
-                )));
-            }
-            if bytes.len() < original.len() {
-                Some(bytes)
+        let mut payload: Vec<u8> = original.to_vec();
+        let mut crc = e.crc;
+        let mut uncomp = e.uncomp_size;
+
+        if e.method == METHOD_DEFLATE {
+            // With nesting enabled the entry has to be decompressed anyway, so
+            // the child file inside it can be optimized first.
+            let nested = if opts.nested {
+                match inflate_entry(original, e) {
+                    Ok(child) => nested_child(&child, opts).unwrap_or(None),
+                    Err(_) => None,
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
-        let payload: &[u8] = match &replacement {
-            Some(bytes) => {
-                shrank = true;
-                bytes
+            let compressed = match &nested {
+                Some((child, child_crc, child_len)) => {
+                    let mut encoder = flate2::write::DeflateEncoder::new(
+                        Vec::new(),
+                        flate2::Compression::new(9),
+                    );
+                    encoder.write_all(child)?;
+                    let bytes = encoder.finish()?;
+                    crc = *child_crc;
+                    uncomp = *child_len;
+                    bytes
+                }
+                None => {
+                    let (bytes, len, c) = recompress(original, opts.zopfli)?;
+                    if len != e.uncomp_size as u64 || c != e.crc {
+                        return Err(Error::parse(format!(
+                            "zip: entry `{}` fails its checksum; the archive is corrupt",
+                            String::from_utf8_lossy(e.name)
+                        )));
+                    }
+                    bytes
+                }
+            };
+
+            // Use the new payload only if the entry itself got smaller; otherwise
+            // the entry is kept bit for bit, including its checksum.
+            if compressed.len() < original.len() {
+                payload = compressed;
+            } else {
+                crc = e.crc;
+                uncomp = e.uncomp_size;
             }
-            None => original,
-        };
+        }
+
+        if payload != original || crc != e.crc || uncomp != e.uncomp_size {
+            changed = true;
+        }
+        new_crc[index] = crc;
+        new_uncomp[index] = uncomp;
         new_comp[index] = u32::try_from(payload.len())
             .map_err(|_| Error::limit("zip: entry would exceed 4 GiB"))?;
 
         let mut header = e.local.to_vec();
         if !e.has_descriptor() {
+            header[LOCAL_CRC_OFFSET..LOCAL_CRC_OFFSET + 4].copy_from_slice(&crc.to_le_bytes());
             header[LOCAL_COMP_OFFSET..LOCAL_COMP_OFFSET + 4]
                 .copy_from_slice(&new_comp[index].to_le_bytes());
+            header[LOCAL_UNCOMP_OFFSET..LOCAL_UNCOMP_OFFSET + 4]
+                .copy_from_slice(&uncomp.to_le_bytes());
         }
         out.extend_from_slice(&header);
-        out.extend_from_slice(payload);
+        out.extend_from_slice(&payload);
 
         if let Some(descriptor) = &e.descriptor {
             if descriptor.has_signature {
                 out.extend_from_slice(&DESCRIPTOR_SIG.to_le_bytes());
             }
-            out.extend_from_slice(&e.crc.to_le_bytes());
+            out.extend_from_slice(&crc.to_le_bytes());
             out.extend_from_slice(&new_comp[index].to_le_bytes());
-            out.extend_from_slice(&e.uncomp_size.to_le_bytes());
+            out.extend_from_slice(&uncomp.to_le_bytes());
         }
     }
 
@@ -687,8 +729,12 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
         .map_err(|_| Error::limit("zip: rewritten archive would exceed 4 GiB"))?;
     for (index, e) in a.entries.iter().enumerate() {
         let mut record = e.central.to_vec();
+        record[CENTRAL_CRC_OFFSET..CENTRAL_CRC_OFFSET + 4]
+            .copy_from_slice(&new_crc[index].to_le_bytes());
         record[CENTRAL_COMP_OFFSET..CENTRAL_COMP_OFFSET + 4]
             .copy_from_slice(&new_comp[index].to_le_bytes());
+        record[CENTRAL_UNCOMP_OFFSET..CENTRAL_UNCOMP_OFFSET + 4]
+            .copy_from_slice(&new_uncomp[index].to_le_bytes());
         record[CENTRAL_LOCAL_OFFSET..CENTRAL_LOCAL_OFFSET + 4]
             .copy_from_slice(&new_offsets[index].to_le_bytes());
         out.extend_from_slice(&record);
@@ -701,11 +747,62 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
     eocd[16..20].copy_from_slice(&cd_offset.to_le_bytes());
     out.extend_from_slice(&eocd);
 
-    if shrank {
+    if changed {
         Ok(Some(out))
     } else {
         Ok(None)
     }
+}
+
+/// Decompresses a DEFLATE entry completely and validates its checksum.
+fn inflate_entry(compressed: &[u8], e: &Entry<'_>) -> Result<Vec<u8>> {
+    let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+    let mut out = Vec::with_capacity(e.uncomp_size as usize);
+    decoder.read_to_end(&mut out)?;
+    if out.len() as u64 != e.uncomp_size as u64 || crc32fast::hash(&out) != e.crc {
+        return Err(Error::parse(format!(
+            "zip: entry `{}` fails its checksum; the archive is corrupt",
+            String::from_utf8_lossy(e.name)
+        )));
+    }
+    Ok(out)
+}
+
+/// Optimizes a file stored inside an entry, if its content is a supported format.
+///
+/// Returns the new content with its CRC and length only when the result is
+/// strictly smaller **and** passes the child's own contract. Any other outcome —
+/// including every error — means "keep the original bytes": a nested failure must
+/// never fail the parent archive.
+fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u32)>> {
+    if opts.depth >= opts.max_depth {
+        return Ok(None);
+    }
+    if child.len() as u64 > opts.max_uncompressed {
+        return Ok(None);
+    }
+    let format = match crate::detect::detect(child) {
+        Some(f) => f,
+        None => return Ok(None),
+    };
+    let deeper = Options {
+        depth: opts.depth + 1,
+        ..*opts
+    };
+    let mut candidate = Vec::new();
+    if super::optimize(format, child, &mut candidate, &deeper).is_err() {
+        return Ok(None);
+    }
+    if candidate.is_empty() || candidate.len() >= child.len() {
+        return Ok(None);
+    }
+    if super::verify(format, child, &candidate).is_err() {
+        return Ok(None);
+    }
+    let crc = crc32fast::hash(&candidate);
+    let len = u32::try_from(candidate.len())
+        .map_err(|_| Error::limit("zip: nested entry would exceed 4 GiB"))?;
+    Ok(Some((candidate, crc, len)))
 }
 
 // ---------------------------------------------------------------------------
@@ -731,11 +828,8 @@ fn mask_central(record: &[u8]) -> Vec<u8> {
     copy
 }
 
-pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
-    let a = fs::read(original)?;
-    let b = fs::read(candidate)?;
-
-    let pa = parse_archive(&a).map_err(|e| Error::verify(format!("original: {e}")))?;
+pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
+    let pa = parse_archive(a).map_err(|e| Error::verify(format!("original: {e}")))?;
     let pb = parse_archive(&b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
     if pa.entries.len() != pb.entries.len() {
@@ -759,9 +853,11 @@ pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
             return Err(Error::verify(format!("entry `{label}`: flags changed")));
         }
         if ea.crc != eb.crc || ea.uncomp_size != eb.uncomp_size {
-            return Err(Error::verify(format!(
-                "entry `{label}`: checksum or uncompressed size changed"
-            )));
+            // Only a nested rewrite may change these, and only if the child is a
+            // supported format that got smaller and still satisfies its contract.
+            let data_a = &a[ea.data_offset..ea.data_offset + ea.data_len];
+            let data_b = &b[eb.data_offset..eb.data_offset + eb.data_len];
+            verify_nested_change(data_a, data_b, ea.method, &label)?;
         }
         if ea.version_made_by != eb.version_made_by || ea.version_needed != eb.version_needed {
             return Err(Error::verify(format!("entry `{label}`: version fields changed")));
@@ -788,12 +884,54 @@ pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
             )));
         }
 
-        let data_a = &a[ea.data_offset..ea.data_offset + ea.data_len];
-        let data_b = &b[eb.data_offset..eb.data_offset + eb.data_len];
-        compare_payload(data_a, data_b, ea.method, &label)?;
+        if ea.crc == eb.crc && ea.uncomp_size == eb.uncomp_size {
+            let data_a = &a[ea.data_offset..ea.data_offset + ea.data_len];
+            let data_b = &b[eb.data_offset..eb.data_offset + eb.data_len];
+            compare_payload(data_a, data_b, ea.method, &label)?;
+        }
     }
 
     Ok(())
+}
+
+/// A nested entry's checksum may change only when the content itself is a
+/// supported format that got strictly smaller and still verifies.
+fn verify_nested_change(
+    data_a: &[u8],
+    data_b: &[u8],
+    method: u16,
+    label: &str,
+) -> Result<()> {
+    if method != METHOD_DEFLATE {
+        return Err(Error::verify(format!(
+            "entry `{label}`: checksum changed but the entry is not deflated"
+        )));
+    }
+    let child_a = inflate_raw(data_a).map_err(|e| {
+        Error::verify(format!("entry `{label}`: original content does not inflate: {e}"))
+    })?;
+    let child_b = inflate_raw(data_b).map_err(|e| {
+        Error::verify(format!("entry `{label}`: candidate content does not inflate: {e}"))
+    })?;
+    if child_b.len() >= child_a.len() {
+        return Err(Error::verify(format!(
+            "entry `{label}`: content changed but did not get smaller"
+        )));
+    }
+    let format = crate::detect::detect(&child_a).ok_or_else(|| {
+        Error::verify(format!(
+            "entry `{label}`: content changed but is not a supported format"
+        ))
+    })?;
+    super::verify(format, &child_a, &child_b)
+        .map_err(|e| Error::verify(format!("entry `{label}`: nested content: {e}")))
+}
+
+fn inflate_raw(compressed: &[u8]) -> io::Result<Vec<u8>> {
+    let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out)?;
+    Ok(out)
 }
 
 fn compare_payload(data_a: &[u8], data_b: &[u8], method: u16, label: &str) -> Result<()> {

@@ -20,6 +20,8 @@ pub struct Config {
     pub max_pixels: u64,
     pub max_uncompressed: u64,
     pub max_ratio: u64,
+    pub nested: bool,
+    pub max_depth: u32,
     pub min_size: u64,
     pub max_size: u64,
     pub allow_hardlinks: bool,
@@ -35,6 +37,8 @@ impl Config {
             max_pixels: args.max_pixels,
             max_uncompressed: args.max_uncompressed,
             max_ratio: args.max_ratio,
+            nested: args.nested,
+            max_depth: args.max_depth,
             min_size: args.min_size,
             max_size: args.max_size,
             allow_hardlinks: args.allow_hardlinks,
@@ -136,11 +140,17 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         max_pixels: cfg.max_pixels,
         max_uncompressed: cfg.max_uncompressed,
         max_ratio: cfg.max_ratio,
+        nested: cfg.nested,
+        max_depth: cfg.max_depth,
+        depth: 0,
     };
 
+    // The input is read once: handlers work on bytes, which is also what nested
+    // processing needs. The size limit above bounds this allocation.
+    let input = fs::read(path)?;
     let cand = {
         let file = temp.file();
-        formats::optimize(format, path, file, &options)?
+        formats::optimize(format, &input, file, &options)?
     };
 
     let written = match cand {
@@ -157,7 +167,8 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         ));
     }
 
-    formats::verify(format, path, temp.path())?;
+    let candidate = fs::read(temp.path())?;
+    formats::verify(format, &input, &candidate)?;
 
     outcome.after = written;
 
@@ -189,6 +200,8 @@ mod tests {
             max_pixels: 100_000_000,
             max_uncompressed: 8 * 1024 * 1024 * 1024,
             max_ratio: 1000,
+            nested: false,
+            max_depth: 3,
             min_size: 0,
             max_size: 2 * 1024 * 1024 * 1024,
             allow_hardlinks: false,

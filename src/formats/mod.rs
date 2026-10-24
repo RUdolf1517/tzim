@@ -1,6 +1,4 @@
-use std::fs::File;
 use std::io::Write;
-use std::path::Path;
 
 use crate::detect::Format;
 use crate::error::{Error, Result};
@@ -15,6 +13,7 @@ pub mod zip;
 /// Options a handler may need. Everything here is explicit: there are no
 /// hidden defaults inside handlers that change what is written.
 #[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Options {
     pub zopfli: bool,
     pub max_pixels: u64,
@@ -22,6 +21,12 @@ pub struct Options {
     pub max_uncompressed: u64,
     /// Maximum uncompressed-to-compressed ratio for a ZIP archive.
     pub max_ratio: u64,
+    /// Optimize supported files stored inside archives.
+    pub nested: bool,
+    /// How deep nested processing may go.
+    pub max_depth: u32,
+    /// Current nesting depth; 0 for a file given on the command line.
+    pub depth: u32,
 }
 
 /// What a handler produced.
@@ -37,14 +42,21 @@ pub enum Cand {
 ///
 /// The handler never touches `src`. It must refuse anything it cannot fully
 /// validate rather than produce a best-effort output.
-pub fn optimize(format: Format, src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
+pub fn optimize(
+    format: Format,
+    input: &[u8],
+    dst: &mut dyn Write,
+    opts: &Options,
+) -> Result<Cand> {
     let cand = match format {
         #[cfg(feature = "png")]
-        Format::Png => png::optimize(src, dst, opts)?,
+        Format::Png => png::optimize(input, dst, opts)?,
         #[cfg(feature = "gzip")]
-        Format::Gzip => gzip::optimize(src, dst, opts)?,
+        Format::Gzip => gzip::optimize(input, dst, opts)?,
         #[cfg(feature = "zip")]
-        Format::Zip => zip::optimize(src, dst, opts)?,
+        Format::Zip => zip::optimize(input, dst, opts)?,
+        #[cfg(feature = "png")]
+        Format::Ico => png::optimize_icon(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -59,7 +71,7 @@ pub fn optimize(format: Format, src: &Path, dst: &mut File, opts: &Options) -> R
 
 /// Checks a candidate against its contract, using decoders that are independent
 /// of the code that wrote it.
-pub fn verify(format: Format, original: &Path, candidate: &Path) -> Result<()> {
+pub fn verify(format: Format, original: &[u8], candidate: &[u8]) -> Result<()> {
     match format {
         #[cfg(feature = "png")]
         Format::Png => png::verify(original, candidate),
@@ -67,6 +79,8 @@ pub fn verify(format: Format, original: &Path, candidate: &Path) -> Result<()> {
         Format::Gzip => gzip::verify(original, candidate),
         #[cfg(feature = "zip")]
         Format::Zip => zip::verify(original, candidate),
+        #[cfg(feature = "png")]
+        Format::Ico => png::verify_icon(original, candidate),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -91,6 +105,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "gzip",
         "recompress the DEFLATE body",
         "header preserved byte for byte (.gz, .tgz, .svgz)",
+    ));
+    #[cfg(feature = "png")]
+    rows.push((
+        "ICO/CUR",
+        "optimize embedded PNG images",
+        "directory, entry fields, order and non-PNG images",
     ));
     #[cfg(feature = "zip")]
     rows.push((

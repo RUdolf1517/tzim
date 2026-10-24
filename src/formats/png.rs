@@ -9,9 +9,7 @@
 //! decodes both files with the `png` crate, which is independent of the writer
 //! above, comparing the decoded image bytes.
 
-use std::fs::{self, File};
 use std::io::{self, Cursor, Read, Write};
-use std::path::Path;
 
 use crate::error::{Error, Result};
 
@@ -509,9 +507,15 @@ fn encode<'a>(
 // Handler
 // ---------------------------------------------------------------------------
 
-pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
-    let data = fs::read(src)?;
-    let parsed = parse(&data)?;
+/// Recompresses the default image and, for animated files, every frame.
+///
+/// For `fdAT` runs the chunk count, the chunk order and the sequence numbers are
+/// preserved: the recompressed stream is split back into the same number of
+/// chunks, each keeping the sequence number of the chunk it replaces. If the new
+/// stream is too short to fill them, that frame is left exactly as it was. This
+/// is why `fcTL` payloads can stay byte-identical.
+pub fn optimize(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Cand> {
+    let parsed = parse(input)?;
 
     if parsed.header.pixels() > opts.max_pixels {
         return Err(Error::limit(format!(
@@ -523,8 +527,7 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
 
     let mut best = encode(&parsed.idat, None, opts.zopfli)?;
 
-    // Filter re-selection needs whole, non-interlaced frames. For interlaced and
-    // animated files only the existing filtered stream is recompressed.
+    // Filter re-selection needs whole, non-interlaced frames.
     if parsed.header.interlace == 0 && !parsed.has_actl {
         let candidate = encode(
             &parsed.idat,
@@ -536,53 +539,138 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
         }
     }
 
-    let total = total_len(&parsed, best.len())?;
-    if total >= data.len() as u64 {
+    // One replacement per chunk; `None` means "copy the original chunk".
+    let mut replacements: Vec<Option<Vec<u8>>> = vec![None; parsed.chunks.len()];
+    let idat_positions: Vec<usize> = parsed
+        .chunks
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.typ == *b"IDAT")
+        .map(|(i, _)| i)
+        .collect();
+    if let Some(&first) = idat_positions.first() {
+        replacements[first] = Some(best);
+    }
+    for &position in &idat_positions {
+        if position != idat_positions[0] {
+            replacements[position] = Some(Vec::new());
+        }
+    }
+
+    if parsed.has_actl {
+        for (positions, stream) in frame_runs(&parsed) {
+            let new_stream = match encode(&[&stream], None, opts.zopfli) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            if new_stream.len() >= stream.len() || positions.len() < 2 {
+                continue;
+            }
+            for (slot, piece) in positions.iter().zip(split_evenly(&new_stream, positions.len())) {
+                replacements[*slot] = Some(piece.to_vec());
+            }
+        }
+    }
+
+    let total = total_len(&parsed, &replacements)?;
+    if total >= input.len() as u64 {
         return Ok(Cand::NoGain);
     }
 
-    write_candidate(&parsed, &best, dst)?;
+    write_candidate(&parsed, &replacements, out)?;
     Ok(Cand::Written(total))
 }
 
-fn total_len(parsed: &Parsed<'_>, idat_len: usize) -> Result<u64> {
-    let mut total = SIGNATURE.len() as u64;
-    for chunk in &parsed.chunks {
-        if chunk.typ == *b"IDAT" {
-            continue;
+/// Maximal runs of consecutive `fdAT` chunks, with their concatenated image data
+/// (the leading sequence number of each chunk removed).
+fn frame_runs(parsed: &Parsed<'_>) -> Vec<(Vec<usize>, Vec<u8>)> {
+    let mut runs = Vec::new();
+    let mut current: Vec<usize> = Vec::new();
+
+    for (index, chunk) in parsed.chunks.iter().enumerate() {
+        if chunk.typ == *b"fdAT" {
+            if chunk.data.len() < 4 {
+                current.clear();
+                continue;
+            }
+            current.push(index);
+        } else if !current.is_empty() {
+            let stream = collect_fdat(parsed, &current);
+            runs.push((std::mem::take(&mut current), stream));
         }
-        total += chunk.raw.len() as u64;
     }
-    total += 12 + idat_len as u64;
+    if !current.is_empty() {
+        let stream = collect_fdat(parsed, &current);
+        runs.push((current, stream));
+    }
+    runs.retain(|(positions, stream)| !positions.is_empty() && !stream.is_empty());
+    runs
+}
+
+fn collect_fdat(parsed: &Parsed<'_>, positions: &[usize]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &position in positions {
+        if let Some(data) = parsed.chunks[position].data.get(4..) {
+            out.extend_from_slice(data);
+        }
+    }
+    out
+}
+
+/// Splits `data` into `count` non-empty pieces of near-equal size.
+fn split_evenly(data: &[u8], count: usize) -> Vec<&[u8]> {
+    let base = data.len() / count;
+    let extra = data.len() % count;
+    let mut pieces = Vec::with_capacity(count);
+    let mut at = 0;
+    for i in 0..count {
+        let size = base + usize::from(i < extra);
+        pieces.push(&data[at..at + size]);
+        at += size;
+    }
+    pieces
+}
+
+fn total_len(parsed: &Parsed<'_>, replacements: &[Option<Vec<u8>>]) -> Result<u64> {
+    let mut total = SIGNATURE.len() as u64;
+    for (index, chunk) in parsed.chunks.iter().enumerate() {
+        match &replacements[index] {
+            Some(data) => total += 12 + data.len() as u64,
+            None => total += chunk.raw.len() as u64,
+        }
+    }
     Ok(total)
 }
 
-fn write_candidate(parsed: &Parsed<'_>, idat: &[u8], dst: &mut File) -> Result<()> {
-    if idat.len() > MAX_CHUNK {
-        return Err(Error::internal("png: recompressed image data is too large"));
-    }
-    dst.write_all(&SIGNATURE)?;
-
-    let mut wrote_idat = false;
-    for chunk in &parsed.chunks {
-        if chunk.typ == *b"IDAT" {
-            if !wrote_idat {
-                write_chunk(dst, b"IDAT", idat)?;
-                wrote_idat = true;
+fn write_candidate(
+    parsed: &Parsed<'_>,
+    replacements: &[Option<Vec<u8>>],
+    out: &mut dyn Write,
+) -> Result<()> {
+    out.write_all(&SIGNATURE)?;
+    for (index, chunk) in parsed.chunks.iter().enumerate() {
+        match &replacements[index] {
+            Some(data) => {
+                if data.len() > MAX_CHUNK {
+                    return Err(Error::internal("png: recompressed chunk is too large"));
+                }
+                let mut payload = Vec::with_capacity(data.len() + 4);
+                if chunk.typ == *b"fdAT" {
+                    // Keep the sequence number of the chunk being replaced.
+                    payload.extend_from_slice(&chunk.data[..4]);
+                }
+                payload.extend_from_slice(data);
+                write_chunk(out, &chunk.typ, &payload)?;
             }
-            continue;
+            None => out.write_all(chunk.raw)?,
         }
-        dst.write_all(chunk.raw)?;
-    }
-    if !wrote_idat {
-        return Err(Error::internal("png: no IDAT was written"));
     }
     Ok(())
 }
 
-fn write_chunk(w: &mut impl Write, typ: &[u8; 4], data: &[u8]) -> Result<()> {
-    let len = u32::try_from(data.len())
-        .map_err(|_| Error::internal("png: chunk payload exceeds u32"))?;
+fn write_chunk(w: &mut dyn Write, typ: &[u8; 4], data: &[u8]) -> Result<()> {
+    let len =
+        u32::try_from(data.len()).map_err(|_| Error::internal("png: chunk exceeds u32"))?;
     w.write_all(&len.to_be_bytes())?;
     w.write_all(typ)?;
     w.write_all(data)?;
@@ -607,38 +695,56 @@ fn open_reader(data: &[u8]) -> Result<PngReader<'_>> {
         .map_err(|e| Error::verify(format!("png: cannot decode: {e}")))
 }
 
-pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
-    let a = fs::read(original)?;
-    let b = fs::read(candidate)?;
-
-    let pa = parse(&a).map_err(|e| Error::verify(format!("original: {e}")))?;
-    let pb = parse(&b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+pub fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
+    let pa = parse(original).map_err(|e| Error::verify(format!("original: {e}")))?;
+    let pb = parse(candidate).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
     if pa.header != pb.header {
         return Err(Error::verify("IHDR changed"));
     }
 
-    let kept_a = pa.chunks.iter().filter(|c| c.typ != *b"IDAT");
-    let kept_b = pb.chunks.iter().filter(|c| c.typ != *b"IDAT");
-    for (x, y) in kept_a.zip(kept_b) {
-        if x.typ != y.typ || x.data != y.data {
+    // Everything that is neither IDAT nor fdAT must be byte-identical and in the
+    // same order. That covers PLTE, tRNS, iCCP, text, unknown chunks, acTL and
+    // every fcTL (frame delays, offsets, blend and dispose operations).
+    let kept_a: Vec<_> = pa
+        .chunks
+        .iter()
+        .filter(|c| c.typ != *b"IDAT" && c.typ != *b"fdAT")
+        .collect();
+    let kept_b: Vec<_> = pb
+        .chunks
+        .iter()
+        .filter(|c| c.typ != *b"IDAT" && c.typ != *b"fdAT")
+        .collect();
+    if kept_a.len() != kept_b.len() {
+        return Err(Error::verify("chunk count changed"));
+    }
+    for (x, y) in kept_a.iter().zip(kept_b.iter()) {
+        if x.typ != y.typ || x.raw != y.raw {
             return Err(Error::verify(format!(
                 "chunk `{}` was not preserved",
                 String::from_utf8_lossy(&x.typ)
             )));
         }
     }
-    if pa.chunks.iter().filter(|c| c.typ != *b"IDAT").count()
-        != pb.chunks.iter().filter(|c| c.typ != *b"IDAT").count()
-    {
-        return Err(Error::verify("non-IDAT chunk count changed"));
+
+    // Frame chunks keep their count, their order and their sequence numbers.
+    let fdat_a: Vec<_> = pa.chunks.iter().filter(|c| c.typ == *b"fdAT").collect();
+    let fdat_b: Vec<_> = pb.chunks.iter().filter(|c| c.typ == *b"fdAT").collect();
+    if fdat_a.len() != fdat_b.len() {
+        return Err(Error::verify("fdAT chunk count changed"));
+    }
+    for (x, y) in fdat_a.iter().zip(fdat_b.iter()) {
+        if x.data.len() < 4 || y.data.len() < 4 || x.data[..4] != y.data[..4] {
+            return Err(Error::verify("fdAT sequence number changed"));
+        }
     }
 
-    compare_pixels(&a, &b, pa.header)
+    compare_images(original, candidate, pa.header, pa.has_actl)
 }
 
-fn compare_pixels(a: &[u8], b: &[u8], header: Header) -> Result<()> {
-    if header.interlace == 0 {
+fn compare_images(a: &[u8], b: &[u8], header: Header, animated: bool) -> Result<()> {
+    if header.interlace == 0 && !animated {
         let mut ra = open_reader(a)?;
         let mut rb = open_reader(b)?;
         let row = header.row_bytes();
@@ -666,32 +772,251 @@ fn compare_pixels(a: &[u8], b: &[u8], header: Header) -> Result<()> {
         }
         Ok(())
     } else {
-        let frame_a = decode_frame(a)?;
-        let frame_b = decode_frame(b)?;
-        if frame_a != frame_b {
-            return Err(Error::verify("decoded pixels differ"));
-        }
-        Ok(())
+        compare_frames(a, b)
     }
 }
 
-fn decode_frame(data: &[u8]) -> Result<Vec<u8>> {
-    let cap: usize = 512 * 1024 * 1024;
-    let mut reader = open_reader(data)?;
-    let size = reader
+/// Decodes every frame of both files and compares the frame metadata and the
+/// decoded bytes. Used for interlaced images and for APNG.
+fn compare_frames(a: &[u8], b: &[u8]) -> Result<()> {
+    let mut ra = open_reader(a)?;
+    let mut rb = open_reader(b)?;
+    let size = ra
         .output_buffer_size()
         .ok_or_else(|| Error::limit("png: image is too large to verify"))?;
-    if size > cap {
+    if size > 512 * 1024 * 1024 {
         return Err(Error::limit(
             "png: image is too large to verify within the memory budget",
         ));
     }
-    let mut buffer = vec![0u8; size];
-    let info = reader
-        .next_frame(&mut buffer)
-        .map_err(|e| Error::verify(format!("png: decode failed: {e}")))?;
-    buffer.truncate(info.buffer_size());
-    Ok(buffer)
+    let mut buf_a = vec![0u8; size];
+    let mut buf_b = vec![0u8; size];
+
+    let mut frames = 0usize;
+    loop {
+        let fa = ra.next_frame(&mut buf_a);
+        let fb = rb.next_frame(&mut buf_b);
+        match (fa, fb) {
+            (Ok(ia), Ok(ib)) => {
+                frames += 1;
+                if ia.width != ib.width
+                    || ia.height != ib.height
+                    || ia.line_size != ib.line_size
+                    || ia.color_type != ib.color_type
+                    || ia.bit_depth != ib.bit_depth
+                {
+                    return Err(Error::verify("frame layout differs"));
+                }
+                let n = ia.buffer_size().min(ib.buffer_size());
+                if buf_a[..n] != buf_b[..n] {
+                    return Err(Error::verify(format!("frame {frames} pixels differ")));
+                }
+                if frame_control_debug(&ra) != frame_control_debug(&rb) {
+                    return Err(Error::verify(format!(
+                        "frame {frames} control data differs"
+                    )));
+                }
+            }
+            (Err(_), Err(_)) => break,
+            (Ok(_), Err(e)) => {
+                return Err(Error::verify(format!("candidate stops early: {e}")))
+            }
+            (Err(e), Ok(_)) => {
+                return Err(Error::verify(format!("original stops early: {e}")))
+            }
+        }
+    }
+
+    if frames == 0 {
+        return Err(Error::verify("no frames could be decoded"));
+    }
+    Ok(())
+}
+
+fn frame_control_debug(reader: &PngReader<'_>) -> Option<String> {
+    reader
+        .info()
+        .frame_control
+        .as_ref()
+        .map(|f| format!("{f:?}"))
+}
+
+// ---------------------------------------------------------------------------
+// ICO / CUR
+// ---------------------------------------------------------------------------
+
+const ICO_HEADER: usize = 6;
+const ICO_ENTRY: usize = 16;
+
+/// Extracts the embedded images of an icon file.
+struct Icon<'a> {
+    kind: u16,
+    header: &'a [u8],
+    entries: Vec<IconEntry<'a>>,
+}
+
+struct IconEntry<'a> {
+    /// The complete 16-byte directory entry.
+    record: &'a [u8],
+    payload: &'a [u8],
+    offset: u32,
+}
+
+fn parse_icon(data: &[u8]) -> Result<Icon<'_>> {
+    if data.len() < ICO_HEADER {
+        return Err(Error::parse("ico: file is too short"));
+    }
+    let reserved = u16::from_le_bytes([data[0], data[1]]);
+    let kind = u16::from_le_bytes([data[2], data[3]]);
+    let count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    if reserved != 0 {
+        return Err(Error::parse("ico: reserved field is not zero"));
+    }
+    if kind != 1 && kind != 2 {
+        return Err(Error::parse("ico: not an icon or cursor file"));
+    }
+    if count == 0 || count > 256 {
+        return Err(Error::parse("ico: implausible image count"));
+    }
+    let directory_end = ICO_HEADER + count * ICO_ENTRY;
+    if data.len() < directory_end {
+        return Err(Error::parse("ico: truncated directory"));
+    }
+
+    let mut entries = Vec::with_capacity(count);
+    let mut ranges: Vec<(usize, usize)> = Vec::with_capacity(count);
+    for i in 0..count {
+        let at = ICO_HEADER + i * ICO_ENTRY;
+        let record = &data[at..at + ICO_ENTRY];
+        let size = u32::from_le_bytes([record[8], record[9], record[10], record[11]]) as usize;
+        let offset = u32::from_le_bytes([record[12], record[13], record[14], record[15]]);
+        let start = offset as usize;
+        let end = start
+            .checked_add(size)
+            .ok_or_else(|| Error::parse("ico: image extent overflows"))?;
+        if size == 0 || end > data.len() || start < directory_end {
+            return Err(Error::parse("ico: image lies outside the file"));
+        }
+        ranges.push((start, end));
+        entries.push(IconEntry {
+            record,
+            payload: &data[start..end],
+            offset,
+        });
+    }
+
+    // Images must not overlap, and every byte of the file must belong to one of
+    // them: an unreferenced tail would be silently lost by a rewrite.
+    ranges.sort_by_key(|r| r.0);
+    let mut covered = directory_end;
+    for (start, end) in &ranges {
+        if *start != covered {
+            return Err(Error::parse(
+                "ico: images overlap or the file has unreferenced data",
+            ));
+        }
+        covered = *end;
+    }
+    if covered != data.len() {
+        return Err(Error::parse(
+            "ico: trailing data after the last image is not supported",
+        ));
+    }
+
+    Ok(Icon {
+        kind,
+        header: &data[..directory_end],
+        entries,
+    })
+}
+
+pub fn optimize_icon(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Cand> {
+    let icon = parse_icon(input)?;
+
+    // Optimize every embedded PNG; non-PNG (DIB) images are copied verbatim.
+    let mut payloads: Vec<Vec<u8>> = Vec::with_capacity(icon.entries.len());
+    for entry in &icon.entries {
+        if let Some(bytes) = optimize_embedded_png(entry.payload, opts)? {
+            payloads.push(bytes);
+        } else {
+            payloads.push(entry.payload.to_vec());
+        }
+    }
+    if payloads.len() == icon.entries.len()
+        && payloads
+            .iter()
+            .zip(icon.entries.iter())
+            .all(|(new, old)| new.len() == old.payload.len())
+    {
+        return Ok(Cand::NoGain);
+    }
+
+    // Header stays as it was; only the size and offset fields of each directory
+    // entry change, because the images moved.
+    let mut directory = icon.header.to_vec();
+    let mut body = Vec::new();
+    let mut cursor = directory.len();
+    for (index, entry) in icon.entries.iter().enumerate() {
+        let payload = &payloads[index];
+        let at = ICO_HEADER + index * ICO_ENTRY;
+        directory[at + 8..at + 12].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        directory[at + 12..at + 16].copy_from_slice(&(cursor as u32).to_le_bytes());
+        cursor += payload.len();
+        body.extend_from_slice(payload);
+    }
+
+    let total = (directory.len() + body.len()) as u64;
+    if total >= input.len() as u64 {
+        return Ok(Cand::NoGain);
+    }
+
+    out.write_all(&directory)?;
+    out.write_all(&body)?;
+    let _ = (icon.kind, icon.entries.iter().map(|e| e.offset).count());
+    Ok(Cand::Written(total))
+}
+
+/// Returns the optimized bytes of an embedded PNG, or `None` if the payload is
+/// not a PNG or gained nothing.
+fn optimize_embedded_png(payload: &[u8], opts: &Options) -> Result<Option<Vec<u8>>> {
+    if payload.len() < SIGNATURE.len() || payload[..SIGNATURE.len()] != SIGNATURE {
+        return Ok(None);
+    }
+    let mut candidate = Vec::new();
+    match optimize(payload, &mut candidate, opts)? {
+        Cand::Written(_) if candidate.len() < payload.len() => Ok(Some(candidate)),
+        _ => Ok(None),
+    }
+}
+
+pub fn verify_icon(original: &[u8], candidate: &[u8]) -> Result<()> {
+    let a = parse_icon(original).map_err(|e| Error::verify(format!("original: {e}")))?;
+    let b = parse_icon(candidate).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+
+    if a.kind != b.kind {
+        return Err(Error::verify("icon type changed"));
+    }
+    if a.entries.len() != b.entries.len() {
+        return Err(Error::verify("image count changed"));
+    }
+    for (index, (ea, eb)) in a.entries.iter().zip(b.entries.iter()).enumerate() {
+        // Everything except the size and offset fields must be identical.
+        if ea.record[..8] != eb.record[..8] {
+            return Err(Error::verify(format!(
+                "image {index}: directory fields changed"
+            )));
+        }
+        let is_png = ea.payload.len() >= SIGNATURE.len() && ea.payload[..SIGNATURE.len()] == SIGNATURE;
+        if is_png {
+            verify(ea.payload, eb.payload)
+                .map_err(|e| Error::verify(format!("image {index}: {e}")))?;
+        } else if ea.payload != eb.payload {
+            return Err(Error::verify(format!(
+                "image {index}: bitmap payload changed"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

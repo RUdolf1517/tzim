@@ -5,9 +5,7 @@
 //! `FHCRC`, `XFL` and `OS` survive exactly as they were, including non-UTF-8
 //! names. Only the DEFLATE body is rewritten.
 
-use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::Path;
 
 use crate::error::{Error, Result};
 
@@ -174,9 +172,8 @@ fn recompress(body: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     Ok(encoder.finish()?)
 }
 
-pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
-    let data = fs::read(src)?;
-    let info = inspect(&data)?;
+pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
+    let info = inspect(data)?;
 
     let body = &data[info.header_len..data.len() - TRAILER];
     let mut best = recompress(body, false)?;
@@ -200,10 +197,7 @@ pub fn optimize(src: &Path, dst: &mut File, opts: &Options) -> Result<Cand> {
     Ok(Cand::Written(total))
 }
 
-pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
-    let a = fs::read(original)?;
-    let b = fs::read(candidate)?;
-
+pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
     let info_a = inspect(&a).map_err(|e| Error::verify(format!("original: {e}")))?;
     let info_b = inspect(&b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
