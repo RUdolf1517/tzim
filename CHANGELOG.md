@@ -7,6 +7,32 @@ All notable changes to this project are documented here. The format follows
 The v0.1 code is complete and tested in CI, but no release artifacts have been published yet. Planned
 releases are described in [docs/roadmap.md](docs/roadmap.md).
 
+## [0.3.0] - unreleased
+
+### Added
+
+- **APNG.** Every frame is recompressed. The recompressed stream is split back into the same number of
+  `fdAT` chunks, each keeping its original sequence number, so `fcTL` payloads and the animation sequence
+  stay byte-identical; a frame that cannot fill its chunks is left untouched. Verification decodes and
+  compares every frame, including the frame control data.
+- **ICO/CUR.** Embedded PNG images are optimized; bitmap entries are copied byte for byte. The directory is
+  parsed strictly: overlapping images, images outside the file, and unreferenced trailing data are refused.
+  Only the size and offset fields of moved images change.
+- **`--nested`** (off by default) with **`--max-depth`** (default 3): supported files stored inside ZIP
+  entries are optimized, verified against their own contract, and used only when the entry gets smaller.
+  A failing or unprofitable child keeps the original bytes and never fails the parent archive.
+- ZIP verification accepts a changed entry CRC and uncompressed size only for a verified nested rewrite;
+  this is the single documented exception to the preservation rule, and it is spelled out in
+  `docs/guarantees.md` §4.6.
+- 9 integration tests for APNG, ICO/CUR, nested archives and the depth limit; new fixture builders for
+  APNG frames and ICO files.
+
+### Changed
+
+- Handlers now take bytes rather than paths, so the pipeline reads each file once and nested processing is
+  possible without a second read.
+- Measured static binary size: 904 KiB (+36 KiB over v0.2, still no new dependencies).
+
 ## [0.2.0] - unreleased
 
 ### Added

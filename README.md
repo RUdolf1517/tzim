@@ -12,12 +12,12 @@ The name comes from the Hebrew צמצום (*tsimtsum*) — contraction, reductio
 
 ## Status
 
-**v0.2 implemented.** PNG, gzip and the ZIP family are supported and verified; the code is tested on Linux,
-macOS and Windows in CI. Everything else in the table below is *planned*, with the version in which it is
-expected.
+**v0.3 implemented.** PNG, APNG, gzip, the ZIP family and ICO/CUR are supported and verified, including
+optional optimization of files stored inside archives (`--nested`). The code is tested on Linux, macOS and
+Windows in CI. Everything else in the table below is *planned*, with the version in which it is expected.
 
-- Static Linux binary: **868 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
-- 46 unit and 35 integration tests, clippy clean with `-D warnings`.
+- Static Linux binary: **904 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
+- 46 unit and 44 integration tests, clippy clean with `-D warnings`.
 - No release artifacts have been published yet; build from source (below).
 
 See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
@@ -64,9 +64,9 @@ verified. See [docs/guarantees.md](docs/guarantees.md).
 | PNG | v0.1 | **implemented** | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
 | gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | **implemented** | Recompress the DEFLATE body; header preserved verbatim | G3 |
 | ZIP and ZIP-based formats (`.zip`, `.jar`, `.apk`, `.docx/.xlsx/.pptx`, `.epub`, `.odt/.ods/.odp`, `.cbz`, `.whl`, `.nupkg`) | v0.2 | **implemented** | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed, ZIP64 and encrypted archives are refused | G3 |
-| ICO / CUR | v0.3 | planned | Optimize embedded PNG images | G3 |
-| APNG | v0.3 | planned | Recompress animation frames | G3 |
-| Nested containers | v0.3 | planned | Optimize supported files inside ZIP archives (opt-in) | G3 |
+| ICO / CUR | v0.3 | **implemented** | Optimize embedded PNG images; bitmap entries copied verbatim | G3 |
+| APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
+| Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
 | JPEG | v0.4 | planned, opt-in | Entropy (Huffman) optimization only; DCT coefficients untouched | G3 |
 | TIFF | v0.5+ | research | Recompress Deflate/LZW strips without changing tags | not specified yet |
 | FLAC | v0.5+ | research | Re-encode losslessly, preserving all metadata blocks | not specified yet |

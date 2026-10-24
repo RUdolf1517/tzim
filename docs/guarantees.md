@@ -252,8 +252,17 @@ structure is copied and only the fields that must change are patched.
 **Preserved:** the ICONDIR header, entry count and every directory-entry field except the byte size and
 offset of recompressed entries; every non-PNG entry verbatim; entry order.
 
-**Verification:** directory fields and order compared; each embedded PNG verified under the PNG contract
-and decoded, with pixel bytes compared; embedded BMP/DIB entries compared byte for byte.
+**Preserved:** the 6-byte directory header, the image count, the entry order, and every directory-entry field
+except the byte size and offset of images that moved; every non-PNG (bitmap) entry byte for byte; the icon
+type (icon vs cursor, which also carries hotspot coordinates in two entry fields).
+
+**Verification:** the candidate is re-parsed strictly; the first eight bytes of every directory entry
+(everything except size and offset) are compared; each embedded PNG is verified under the PNG contract; each
+bitmap payload is compared byte for byte.
+
+**Refused:** images that overlap, point outside the file, start inside the directory, or leave unreferenced
+bytes at the end of the file. An ICO with no PNG entry produces no candidate and is reported as
+`already_optimal`.
 
 **Refused:** malformed directories, entries pointing outside the file, embedded PNGs failing the PNG
 contract.
@@ -267,13 +276,24 @@ contract.
 **Transformation.** Recompress the default image and every animation frame.
 
 **Preserved:** `acTL` and all `fcTL` payloads verbatim (frame count, loop count, delays, blend and dispose
-operations, dimensions, offsets); chunk order; every non-image chunk; the IDAT/fdAT split boundaries.
+operations, dimensions, offsets); chunk order; every non-image chunk; **the number of `fdAT` chunks and their
+sequence numbers**.
+
+**Mechanism.** A frame's data is the concatenation of its `fdAT` payloads (minus the 4-byte sequence
+number). That stream is recompressed and split back into exactly the same number of chunks, each keeping the
+sequence number of the chunk it replaces, so `fcTL` payloads and the animation's sequencing stay
+byte-identical. If the recompressed stream is too short to fill the original chunks, that frame is left
+unchanged.
 
 **Verification:** decode every frame of both files independently and compare frame metadata and pixel bytes;
 compare all control chunks byte for byte.
 
 **Refused:** malformed frame sequences (`fcTL`/`fdAT` counts inconsistent with `acTL`), frames whose data
 does not decode.
+
+**Verification:** the candidate is re-parsed, every non-`IDAT`/`fdAT` chunk is compared byte for byte, the
+`fdAT` count and sequence numbers are compared, and every frame is decoded from both files and compared for
+pixels and for its control data (size, offsets, delay, dispose and blend operations).
 
 **Verification IDs:** `T-APNG-01` … `T-APNG-05`.
 
@@ -286,6 +306,19 @@ does not decode.
 **Contract:** the parent contract must hold **and** every optimized child must independently satisfy its own
 contract. A child that fails verification is stored unmodified in the parent's output; the parent is still
 accepted only if it passes its own verification.
+
+**Consequence for the parent contract.** When a child really is rewritten, the entry's CRC-32 and
+uncompressed size necessarily change. This is the one documented exception to "uncompressed size and CRC-32
+of every entry are preserved" (§4.3). The parent verification therefore accepts a changed checksum **only**
+when all of the following hold:
+
+1. the entry's decompressed content is a format Tzim supports (detected by content);
+2. the new content is strictly smaller than the old content;
+3. the new content passes that format's own contract verification;
+4. every other field of the entry is unchanged.
+
+For all other entries the original rule applies unchanged, and an archive with no optimized child must come
+out with identical CRCs.
 
 **Limits:** `--max-depth` (default 3) and the parent's `--max-uncompressed` budget apply to the whole tree.
 

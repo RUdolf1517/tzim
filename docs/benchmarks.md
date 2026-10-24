@@ -11,17 +11,23 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | `92baf7e` |
+| Commit | `3c5e291` |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release --all-features` (PNG + gzip + ZIP + Zopfli) |
+| Profile | `--release --all-features` (PNG, APNG, gzip, ZIP, ICO/CUR, Zopfli) |
 | Features in the binary | all |
-| **Size** | **889 696 bytes (868 KiB)** |
+| **Size** | **926 560 bytes (904 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Provisional budget for this profile | 2 000 KiB |
-| Headroom | 1 160 KiB |
+| Provisional budget for this profile | 2 200 KiB |
+| Headroom | 1 296 KiB |
 
-Growth from v0.1 to v0.2 (adding the ZIP family): **+36 864 bytes (+36 KiB)**, with no new dependency
-lines — the ZIP rewriter uses only the DEFLATE codec and CRC-32 that were already present.
+Growth by version, with no new dependency lines at any step (every handler reuses the DEFLATE codec,
+CRC-32 and the PNG decoder that v0.1 introduced):
+
+| Version | Contents added | Binary |
+| --- | --- | --- |
+| v0.1 | PNG, gzip | 832 KiB |
+| v0.2 | ZIP family | 868 KiB (+36 KiB) |
+| v0.3 | APNG frames, ICO/CUR, nested archives | 904 KiB (+36 KiB) |
 
 The binary is statically linked, contains no C code, and requires no runtime beyond the OS.
 
@@ -41,8 +47,8 @@ order of magnitude while carrying an independent verification decoder.
 | Metric | Value |
 | --- | --- |
 | Unit tests | 46 |
-| Integration tests (real binary, real files) | 35 (33 on Windows, where two tests are Unix-only) |
-| Platforms | Linux, macOS, Windows — all green at `92baf7e` |
+| Integration tests (real binary, real files) | 44 (42 on Windows, where two tests are Unix-only) |
+| Platforms | Linux, macOS, Windows — all green at `3c5e291` |
 | Clippy | `-D warnings`, clean |
 | Exit codes covered by tests | 0, 1, 2 (4 is covered by a unit test on an injected verification error) |
 

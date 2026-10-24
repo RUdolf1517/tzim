@@ -88,6 +88,10 @@ with no new dependency lines.
 - `--nested` (off by default), `--max-depth`, `--formats`.
 - Composition rules: a failing child is stored unmodified; the parent still has to verify.
 
+**Status:** implemented. APNG frames are recompressed without changing chunk counts or sequence numbers;
+ICO/CUR reuses the PNG engine and copies bitmap entries verbatim; `--nested` optimizes supported files inside
+ZIP entries with a depth limit, and a child failure can never fail the parent. 9 new integration tests.
+
 **Gate**
 
 - `T-ICO-*`, `T-APNG-*`, `T-NEST-*` pass;
