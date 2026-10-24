@@ -126,11 +126,10 @@ healed = sorted(set(listed) - failed_names)
 if healed:
     print(f"::warning::{len(healed)} allowlisted file(s) did not fail, e.g. {healed[0]}; the list can be tightened")
 
-changed_again = [
-    r for r in files2
-    if r.get("status") not in ("already_optimal", "unsupported", "skipped")
-    and not allowed(os.path.basename(r["path"]))
-]
+# A file that is still corrupt on the second pass fails again; that is not a
+# change on disk, it is the same refusal. Only a file that is rewritten twice
+# means the result is not a fixed point.
+changed_again = [r for r in files2 if r.get("status") in ("optimized", "would_optimize")]
 if changed_again:
     problem(f"{len(changed_again)} file(s) changed on the second pass, e.g. {changed_again[0]['path']}")
 
@@ -141,7 +140,7 @@ if m1 != m2:
 
 statuses = collections.Counter(r.get("status") for r in files1)
 formats = collections.Counter(r.get("format") or "unknown" for r in files1 if r.get("status") == "optimized")
-by_source = collections.Counter(os.path.basename(r["path"]).split("-", 1)[0] for r in files1)
+kinds = collections.Counter(os.path.basename(os.path.dirname(r["path"])) for r in files1)
 
 before, after = summary1.get("before", 0), summary1.get("after", 0)
 saved = summary1.get("saved", 0)
@@ -166,8 +165,16 @@ lines.append("")
 lines.append("Optimized files, by format: " +
              ", ".join(f"{name} {count}" for name, count in sorted(formats.items())))
 lines.append("")
-lines.append("By source: " + ", ".join(f"{name} {count}" for name, count in sorted(by_source.items())))
+lines.append("By container: " + ", ".join(f"{name} {count}" for name, count in sorted(kinds.items())))
 lines.append("")
+if failed:
+    lines.append("### Files that failed")
+    lines.append("")
+    for record in sorted(failed, key=lambda r: r["path"]):
+        err = record.get("error") or {}
+        mark = "" if record in unexpected else " _(allowlisted)_"
+        lines.append(f"- `{os.path.basename(record['path'])}` — {err.get('kind')}{mark}")
+    lines.append("")
 if unexpected:
     lines.append("### Unexpected failures")
     for record in unexpected:

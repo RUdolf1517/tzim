@@ -37,7 +37,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
-        run: cargo build --release --all-features
+        run: cargo build --release
 
       - name: Run the corpus
         id: run

@@ -38,7 +38,7 @@ jobs:
           cargo install oxipng --locked
 
       - name: Build Tzim
-        run: cargo build --release --all-features
+        run: cargo build --release
 
       - name: Measure
         id: measure

@@ -90,7 +90,9 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo build --release --target x86_64-unknown-linux-musl --all-features 2>&1 | tee /tmp/tzim-size.log
+          # Default features only, which is what a release ships: `--all-features`
+          # would compile the fuzz entry points into the measured binary.
+          cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/tzim-size.log
           ls -l target/x86_64-unknown-linux-musl/release/tzim
           file target/x86_64-unknown-linux-musl/release/tzim
           stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim
