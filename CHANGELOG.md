@@ -33,6 +33,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   zeroing a timestamp removes metadata without removing bytes. A larger candidate is still refused under
   every flag.
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.6.0/` are pinned to the published v0.6.0 artifacts and their
+  SHA-256, copied from the release notes after the build.
+
 ### Documentation
 
 - [guarantees](docs/guarantees.md) now names the **verification level** of every format: an independent
