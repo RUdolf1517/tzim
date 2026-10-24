@@ -27,6 +27,14 @@ fn main() -> ExitCode {
             print_formats();
             ExitCode::from(0)
         }
+        Ok(Command::Info) => {
+            print_info();
+            ExitCode::from(0)
+        }
+        Ok(Command::CheckDeps) => {
+            print_check_deps();
+            ExitCode::from(0)
+        }
         Ok(Command::Optimize(args)) => match run_optimize(&args) {
             Ok(code) => ExitCode::from(code as u8),
             Err(e) => {
@@ -40,6 +48,58 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// The format names this build can handle, in the order `--list-formats` prints
+/// them, so the short line and the long table never disagree.
+fn format_names() -> String {
+    let names: Vec<&str> = formats::supported().iter().map(|row| row.0).collect();
+    if names.is_empty() {
+        "none compiled in".to_string()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// `-i`, `--info`: what this is, what it promises, and where it lives. No
+/// environment probing, no colours, no pager — the same text on every platform.
+fn print_info() {
+    println!("tzim {} — shrink the file, never the information", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("A lossless file optimizer. It makes a file smaller only when it can");
+    println!("verify that nothing else changed, and leaves every file it cannot");
+    println!("improve byte for byte alone: no metadata removal, no re-encoding by");
+    println!("loss, no format conversion.");
+    println!();
+    println!("Formats in this build: {}", format_names());
+    println!("JPEG is opt-in: name it with `--formats jpeg`.");
+    println!();
+    println!("Guarantees:");
+    println!("  G1  byte-identical, wherever nothing was written");
+    println!("  G3  format-equivalent, with a per-format contract checked before");
+    println!("      the original is replaced");
+    println!();
+    println!("No external programs, no configuration file, no network, no telemetry.");
+    println!();
+    println!("Homepage  https://github.com/RUdolf1517/tzim");
+    println!("Docs      https://github.com/RUdolf1517/tzim/blob/main/docs/cli.md");
+    println!("License   MIT");
+    println!("Author    RUdolf1517 <rudolfzinovev@protonmail.com>");
+    println!();
+    println!("Try `tzim photo.png`, `tzim --list-formats` or `tzim --check-deps`.");
+}
+
+/// `--check-deps`: the flag exists for parity with tools that need ffmpeg and
+/// friends, and answers honestly. Tzim shells out to nothing, so the list is
+/// empty and the exit code is 0 — a script can call it unconditionally.
+fn print_check_deps() {
+    println!("tzim needs no external programs at run time.");
+    println!();
+    println!("  binary     static, no C library, no shell-outs, no network");
+    println!("  formats    {}", format_names());
+    println!("  optional   --zopfli is compiled in, not an external encoder");
+    println!();
+    println!("Nothing to install. `tzim --list-formats` lists the handlers in this build.");
 }
 
 fn print_formats() {

@@ -9,6 +9,45 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.5.0] - 2026-10-24 — the file is the command
+
+### Changed — breaking
+
+- **No more subcommand.** `tzim optimize <PATH>` becomes `tzim <PATH>`; the path is the whole command, and
+  files, directories and duplicates may still be mixed in one run. The old spelling keeps working — a
+  leading `optimize` is stripped before parsing — and so does `tzim formats`, but neither is documented
+  outside this entry. Scripts written against 0.1–0.4 do not need editing.
+- **`--help` no longer lists verbs.** The usage block is
+  `tzim [OPTIONS] <PATH>...` plus the four information commands, and a new `INFORMATION:` section groups
+  them.
+
+### Added
+
+- **`-i` / `--info`**: version, the promise in four lines, the formats in this build, G1/G3, homepage,
+  docs, licence and contact address, printed from the same tables `--list-formats` uses and exiting `0`
+  without touching a single path.
+- **`--list-formats`**: the `formats` verb as a flag, so every non-processing action has the same shape.
+- **`--check-deps`**: states that there are no external programs at run time, and what the binary is
+  statically linked against. It exists because tools that wrap ffmpeg and friends have taught people to
+  ask; the honest answer is short.
+
+### Packaging
+
+- **Intel macOS artifact** (`tzim-x86_64-apple-darwin.tar.gz`). The crate is pure Rust, so it cross-compiles
+  on the same Apple silicon runner; `install.sh` and `docs/releases.md` pick it up.
+- The release smoke test accepts both `--list-formats` and the older `formats`, so tags before 0.5 still
+  pass it.
+- `Formula/tzim.rb` stays pinned to v0.4.3 until the v0.5.0 assets exist; it is updated in the follow-up
+  release PR, together with the winget manifest for 0.5.0. A formula never carries a hash for a file that
+  has not been built.
+
+### Documentation
+
+- `README.md` rewritten around the new shape: contents table, one section per install channel,
+  `tzim --check-deps` output, the full flag list in a `<details>`, the three guarantees as a table, the
+  format matrix, and a "what tzim will never do" list. Every example is `tzim <path>`.
+- `docs/cli.md` documents the path-first grammar, the information commands and their exit codes.
+
 ## [0.4.3] - 2026-10-24 — checksums where they can be read
 
 ### Added

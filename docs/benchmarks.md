@@ -153,11 +153,11 @@ tool and the README says so.
 
 | Measurement | Why it is missing | Planned |
 | --- | --- | --- |
-| Windows and macOS binary sizes | the artifact is built and smoke-tested on both, but only the Linux musl bytes are recorded | v0.5 |
-| Regression tracking across releases | the corpus is stable and gated, but nothing plots the trend over time | v0.5 |
+| Windows and macOS binary sizes | the artifact is built and smoke-tested on both, but only the Linux musl bytes are recorded | backlog |
+| Regression tracking across releases | the corpus is stable and gated, but nothing plots the trend over time | backlog |
 | A ratio comparison on files above 200 KiB | `oxipng -o max` takes minutes per megabyte; the timed run is capped | not planned |
-| Peak RSS for ZIP and ICO separately | the benchmark measures per tool, not per handler | v0.5 |
-| JPEG ratio on baseline-only input | `jpegtran` also re-optimizes progressive files, which Tzim refuses, so the published row mixes scope with encoder quality | v0.5 |
+| Peak RSS for ZIP and ICO separately | the benchmark measures per tool, not per handler | backlog |
+| JPEG ratio on baseline-only input | `jpegtran` also re-optimizes progressive files, which Tzim refuses, so the published row mixes scope with encoder quality | backlog |
 
 Everything else that used to be listed here is now measured: ratio per format on a fixed corpus, wall clock
 single-job and parallel, peak RSS, and the corpus itself as a stable target.

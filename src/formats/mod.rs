@@ -180,7 +180,7 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8]) -> Result<()> {
     }
 }
 
-/// Static description of what the build supports, for `tzim formats`.
+/// Static description of what the build supports, for `tzim --list-formats`.
 // The pushes below are `#[cfg]`-gated, so the vector cannot be built as a literal.
 #[allow(clippy::vec_init_then_push)]
 pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {

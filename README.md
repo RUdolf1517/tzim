@@ -7,7 +7,7 @@
 Shrink the file, never the information.  
 One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO/CUR · JPEG.
 
-[Install](#install) · [Usage](#usage) · [Formats](#formats) · [Guarantees](#guarantees) · [The name](#the-name)
+[Install](#install) · [Usage](#usage) · [Information](#information) · [Guarantees](#guarantees) · [Formats](#formats) · [Docs](#documentation) · [Name](#the-name)
 
 [![license](https://img.shields.io/badge/license-MIT-0b3d91?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-111111?style=flat-square)](#install)
@@ -18,59 +18,67 @@ One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO
 ---
 
 ```bash
-tzim optimize photo.png
-tzim optimize ./photos -r
-tzim optimize backup.zip --nested
-tzim optimize scan.jpg --formats jpeg
-tzim optimize . -r --dry-run
+tzim photo.png
+tzim ./photos -r
+tzim backup.zip --nested
+tzim scan.jpg --formats jpeg
+tzim . -r --dry-run
 ```
 
 ```
 14 files  48.2 MB → 43.7 MB  (-9.3 %)   2 already optimal
 ```
 
-The file gets smaller or it is left alone. There is no third outcome.
+Path first. No subcommand, no output file, no format to choose: the file is the argument, and the only
+question is whether it can be made smaller without changing what it says. If it cannot, it is left alone.
+
+## Contents
+
+| | | |
+| --- | --- | --- |
+| [Install](#install) — [binary](#binary-no-rust) · [Homebrew](#homebrew) · [apt](#debian--ubuntu) · [dnf](#fedora--rhel) · [winget](#windows) · [cargo](#cargo) | [Usage](#usage) — [exit codes](#exit-codes) · [flags](#flags) | [Information](#information) — `-i`, `--list-formats`, `--check-deps` |
+| [Guarantees](#guarantees) | [Formats](#formats) | [What it will never do](#what-tzim-will-never-do) |
+| [Documentation](#documentation) | [The name](#the-name) | [License](#license) |
 
 ## Install
 
-**Binary** (no Rust) into `~/.local/bin`:
+### Binary (no Rust)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh | sh
 ```
 
-On a platform without a published build it falls back to `cargo install --git` instead of guessing a
-binary.
+`tzim` lands in `~/.local/bin`. On a platform without a published build the script falls back to
+`cargo install --git` instead of guessing a binary. `TZIM_VERSION`, `TZIM_INSTALL_DIR`, `TZIM_REPO` and
+`TZIM_BRANCH` override what it does.
 
-**Homebrew** (no Rust). Third-party tap — Homebrew 6+ [tap trust](https://docs.brew.sh/Tap-Trust).
+### Homebrew
 
-```bash
-brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim
-brew install RUdolf1517/tzim/tzim
-```
-
-`RUdolf1517/tzim/tzim` is `user/tap/formula`. A trailing slash (`brew install RUdolf1517/tzim/`) names
-no formula and fails with *No available formula or cask with the name "rudolf1517/tzim/"*.
-
-Only two platforms have a published build: macOS on Apple silicon and Linux x86_64. On an Intel Mac or
-ARM Linux the formula has no URL, and `brew install` cannot help — use the script above or
-`cargo install --git` there.
-
-After that, short name:
+Third-party tap — Homebrew 6+ [tap trust](https://docs.brew.sh/Tap-Trust). One line on purpose: a copy of a
+two-line block can lose the formula name at the end, and the command then fails with
+*No available formula or cask with the name "rudolf1517/tzim/"*.
 
 ```bash
-brew trust --formula RUdolf1517/tzim/tzim
-brew install tzim
+brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim && brew install RUdolf1517/tzim/tzim
 ```
 
-**apt** (Debian/Ubuntu x86_64, no Rust):
+`RUdolf1517/tzim/tzim` is `user/tap/formula`; the last segment is required. Short name afterwards:
+
+```bash
+brew trust --formula RUdolf1517/tzim/tzim && brew install tzim
+```
+
+macOS on Apple silicon and Intel, and Linux x86_64. The tap builds nothing — it unpacks the release, so the
+bytes are the ones in `SHA256SUMS`.
+
+### Debian / Ubuntu
 
 ```bash
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim_amd64.deb
 sudo apt install ./tzim_amd64.deb
 ```
 
-**dnf** (Fedora/RHEL x86_64, no Rust):
+### Fedora / RHEL
 
 ```bash
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim.x86_64.rpm
@@ -79,36 +87,31 @@ sudo dnf install ./tzim.x86_64.rpm
 
 Both packages contain the same statically linked binary and declare no dependency at all.
 
-**winget** (Windows x64). Until the manifest is in the community source, install it from this GitHub repo —
-winget downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
+### Windows
+
+winget, x64. Until the manifest is in the community source, install it from this repository — winget
+downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
 
 ```powershell
 git clone https://github.com/RUdolf1517/tzim
 cd tzim
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.4.3
+winget install --manifest .\packaging\winget\0.5.0
 ```
 
 `LocalManifestFiles` is once, as Administrator. After microsoft/winget-pkgs accepts the manifest:
+`winget install -e --id RUdolf1517.tzim`.
 
-```powershell
-winget install -e --id RUdolf1517.tzim
-```
-
-Zip only (no winget): [Releases](https://github.com/RUdolf1517/tzim/releases/latest) →
+Zip only: [Releases](https://github.com/RUdolf1517/tzim/releases/latest) →
 `tzim-x86_64-pc-windows-msvc.zip`, put `tzim.exe` somewhere on `PATH`.
 
-**Cargo** ([Rust 1.88+](https://rustup.rs)):
+### Cargo
 
 ```bash
-cargo install --git https://github.com/RUdolf1517/tzim
+cargo install --git https://github.com/RUdolf1517/tzim      # Rust 1.88+
 ```
 
-macOS (Apple Silicon), Linux (x86_64, static musl), Windows x64. ARM Linux and Intel macOS build from
-source in one command.
-
-<details>
-<summary>From a checkout</summary>
+### From a checkout
 
 ```bash
 git clone https://github.com/RUdolf1517/tzim
@@ -122,37 +125,42 @@ cargo build --release --no-default-features --features png,gzip
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-</details>
-
 ### Dependencies
 
-None. No C toolchain, no runtime, no configuration file, no daemon. The Linux binary is statically linked
-against musl and runs on any kernel from 3.2; the whole program links four Rust crates and contains no
-`unsafe` code. It opens no sockets, checks for no updates and sends no telemetry.
+None, and `--check-deps` says so rather than leaving you to guess:
+
+```
+$ tzim --check-deps
+tzim needs no external programs at run time.
+
+  binary     static, no C library, no shell-outs, no network
+  formats    PNG, gzip, ICO/CUR, JPEG, ZIP
+  optional   --zopfli is compiled in, not an external encoder
+
+Nothing to install. `tzim --list-formats` lists the handlers in this build.
+```
+
+There is no C toolchain, no runtime, no configuration file and no daemon. The Linux binary is statically
+linked against musl and runs on any kernel from 3.2; the whole program links four Rust crates and contains
+no `unsafe` code. It opens no sockets, checks for no updates and sends no telemetry.
 
 ## Usage
 
 ```bash
-tzim optimize image.png                  # one file, no wrapping directory
-tzim optimize a.png b.zip c.jpg          # several, mixed kinds in one run
-tzim optimize ./files                    # a directory, top level only
-tzim optimize ./files -r                 # the whole tree
-tzim optimize ./files -r --dry-run       # everything except the final rename
-tzim optimize image.png --zopfli         # best ratio, 10-100x slower
-tzim optimize ./files -r --json          # one JSON object per file
+tzim image.png                           # one file, no wrapping directory
+tzim a.png b.zip c.jpg                   # several, mixed kinds in one run
+tzim ./files                             # a directory, top level only
+tzim ./files -r                          # the whole tree
+tzim ./files -r --dry-run                # everything except the final rename
+tzim image.png --zopfli                  # best ratio, 10-100x slower
+tzim ./files -r --json                   # one JSON object per file
+tzim backup.zip --nested                 # also optimize supported files inside
+tzim photo.jpg --formats jpeg            # JPEG is opt-in
+tzim -- -weird-name.png                  # a path that starts with a dash
 ```
 
 Every path is a full input object: a single file never needs to be wrapped in a directory, and files,
 directories and duplicates can be mixed freely in one invocation.
-
-### Scope
-
-```bash
-tzim formats                              # what this build supports
-tzim optimize photo.jpg --formats jpeg    # JPEG is opt-in
-tzim optimize project.zip --nested        # also optimize supported files inside
-tzim optimize ./src --include png --exclude lock
-```
 
 JPEG is off by default and enabled by name, because it is the riskiest handler here and typically saves
 only 1–3 %.
@@ -167,11 +175,13 @@ only 1–3 %.
 | `3` | Fatal error; the run could not be completed. |
 | `4` | **Verification failure** — a candidate did not satisfy its contract. The original was not replaced, and this means a bug. |
 
-<details>
-<summary>Flags</summary>
+### Flags
+
+<details open>
+<summary>Every option</summary>
 
 ```
-tzim optimize [OPTIONS] <PATH>...
+tzim [OPTIONS] <PATH>...
 
   -r, --recursive            descend into directories
   -n, --dry-run              do all the work, write nothing
@@ -191,11 +201,37 @@ tzim optimize [OPTIONS] <PATH>...
       --follow-symlinks      resolve and follow symbolic links
       --allow-hardlinks      process files with more than one hard link
       --no-fsync             skip fsync (faster, less durable)
+
+  -i, --info                 what this program is: version, promise, links
+      --list-formats         the handlers compiled into this build
+      --check-deps           external programs needed at run time (none)
+  -h, --help                 the full text
+  -V, --version              the version, one line
 ```
 
 Full reference: [docs/cli.md](docs/cli.md).
 
 </details>
+
+## Information
+
+```bash
+tzim -i                # name, version, promise, formats, links, licence, contact
+tzim --list-formats    # the handlers in this build, and what each one preserves
+tzim --check-deps      # external programs needed at run time — none
+tzim --version         # one line
+```
+
+`-i` is the honest answer to "what is this and what does it promise", printed from the same tables the
+documentation is checked against:
+
+```
+$ tzim -i
+tzim 0.5.0 — shrink the file, never the information
+...
+Formats in this build: PNG, gzip, ICO/CUR, JPEG, ZIP
+...
+```
 
 ## Guarantees
 
@@ -229,7 +265,7 @@ is checked mechanically before a file is replaced.
 | APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
 | Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
 | JPEG | v0.4 | **implemented**, opt-in | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
-| TIFF, FLAC | v0.5+ | research | not specified yet — no contract, no claim | — |
+| TIFF, FLAC | v0.6+ | research | not specified yet — no contract, no claim | — |
 | PDF, WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
 
 Progressive, arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason
@@ -275,7 +311,7 @@ optimizer the meaning is plain: the bytes contract, the information does not.
 
 ```bash
 tzim --version
-tzim formats
+tzim --info
 ```
 
 Written by AI. Directed by [RUdolf1517](https://github.com/RUdolf1517).  

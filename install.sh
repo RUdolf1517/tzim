@@ -30,11 +30,16 @@ arch=$(uname -m)
 case "$os/$arch" in
   Linux/x86_64|Linux/amd64)   target=x86_64-unknown-linux-musl; ext=tar.gz ;;
   Darwin/arm64|Darwin/aarch64) target=aarch64-apple-darwin;      ext=tar.gz ;;
-  Linux/aarch64|Linux/arm64|Darwin/x86_64)
+  Darwin/x86_64|Darwin/amd64)  target=x86_64-apple-darwin;       ext=tar.gz ;;
+  Linux/aarch64|Linux/arm64)
     target=""
     say "no prebuilt binary for $os/$arch — will build from source"
     ;;
-  *) err "unsupported platform: $os/$arch (build from source with cargo)" ;;
+  *)
+    target=""
+    say "no prebuilt binary for $os/$arch — will build from source"
+    ;;
+
 esac
 
 download() {

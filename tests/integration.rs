@@ -19,7 +19,7 @@ fn png_is_optimized_and_pixels_are_identical() {
     let original = build_png(&spec);
     let path = ws.write("photo.png", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "photo.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["photo.png"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -50,7 +50,7 @@ fn png_ancillary_and_private_chunks_are_preserved() {
     };
     let original = build_png(&spec);
     let path = ws.write("img.png", &original);
-    let (code, _, stderr) = run(&["optimize", "img.png"], &ws.path);
+    let (code, _, stderr) = run(&["img.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -74,7 +74,7 @@ fn dry_run_does_not_modify_anything() {
     let original = build_png(&spec);
     let path = ws.write("photo.png", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "photo.png", "--dry-run"], &ws.path);
+    let (code, stdout, stderr) = run(&["photo.png", "--dry-run"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("dry run"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original, "file must be untouched");
@@ -100,11 +100,11 @@ fn second_run_is_a_no_op() {
     let original = build_png(&spec);
     let path = ws.write("photo.png", &original);
 
-    let (code, _, stderr) = run(&["optimize", "photo.png"], &ws.path);
+    let (code, _, stderr) = run(&["photo.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let once = std::fs::read(&path).unwrap();
 
-    let (code, stdout, stderr) = run(&["optimize", "photo.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["photo.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert!(
         stdout.contains("already optimal") || stdout.contains("optimized"),
@@ -128,7 +128,7 @@ fn corrupt_png_is_refused_and_left_untouched() {
     original[len - 30] ^= 0xff;
     let path = ws.write("broken.png", &original);
 
-    let (code, stdout, _stderr) = run(&["optimize", "broken.png"], &ws.path);
+    let (code, stdout, _stderr) = run(&["broken.png"], &ws.path);
     assert_eq!(code, 1, "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original, "corrupt input must be untouched");
 }
@@ -140,7 +140,7 @@ fn gzip_header_is_preserved_byte_for_byte() {
     let original = build_gzip(&payload, Some(b"original-name.txt"), Some(b"XYZZ"), 0x04, 1);
     let path = ws.write("data.gz", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "data.gz"], &ws.path);
+    let (code, stdout, stderr) = run(&["data.gz"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -160,7 +160,7 @@ fn gzip_payload_is_unchanged() {
     let original = build_gzip(&payload, None, None, 0, 1);
     let path = ws.write("blob.gz", &original);
 
-    let (code, _, stderr) = run(&["optimize", "blob.gz"], &ws.path);
+    let (code, _, stderr) = run(&["blob.gz"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -178,7 +178,7 @@ fn unsupported_files_are_reported_and_untouched() {
     let content = b"just text, no format here";
     let path = ws.write("notes.txt", content);
 
-    let (code, stdout, stderr) = run(&["optimize", "notes.txt"], &ws.path);
+    let (code, stdout, stderr) = run(&["notes.txt"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("unsupported"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), content);
@@ -197,7 +197,7 @@ fn directory_is_processed_recursively() {
     ws.write("nested/deeper/inner.png", &build_png(&spec));
     ws.write("nested/ignore.txt", b"text");
 
-    let (code, stdout, stderr) = run(&["optimize", ".", "--recursive", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(&[".", "--recursive", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let records = json_file_records(&stdout);
@@ -217,7 +217,7 @@ fn duplicates_are_processed_once() {
     };
     ws.write("a.png", &build_png(&spec));
 
-    let (code, stdout, stderr) = run(&["optimize", "a.png", "./a.png", ".", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(&["a.png", "./a.png", ".", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(json_file_records(&stdout), 1, "duplicate paths must collapse: {stdout}");
 }
@@ -235,7 +235,7 @@ fn unicode_and_space_filenames_work() {
     let name = "иконка 🌀 (копия).png";
     let path = ws.write(name, &original);
 
-    let (code, stdout, stderr) = run(&["optimize", name], &ws.path);
+    let (code, stdout, stderr) = run(&[name], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let optimized = std::fs::read(&path).unwrap();
     assert!(optimized.len() <= original.len());
@@ -254,7 +254,7 @@ fn json_output_has_one_record_per_file_and_a_summary() {
     ws.write("a.png", &build_png(&spec));
     ws.write("b.txt", b"text");
 
-    let (code, stdout, stderr) = run(&["optimize", ".", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(&[".", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(json_file_records(&stdout), 2, "{stdout}");
     assert!(stdout.contains("\"type\":\"summary\""), "{stdout}");
@@ -285,7 +285,7 @@ fn missing_path_fails_but_others_continue() {
     ws.write("good.png", &build_png(&spec));
 
     let (code, stdout, stderr) =
-        run(&["optimize", "does-not-exist.png", "good.png"], &ws.path);
+        run(&["does-not-exist.png", "good.png"], &ws.path);
     assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("failed"), "{stdout}");
     assert!(stdout.contains("optimized"), "{stdout}");
@@ -304,7 +304,7 @@ fn apng_control_chunks_are_untouched() {
     let original = build_png(&spec);
     let path = ws.write("anim.png", &original);
 
-    let (code, _, stderr) = run(&["optimize", "anim.png"], &ws.path);
+    let (code, _, stderr) = run(&["anim.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -324,10 +324,10 @@ fn apng_control_chunks_are_untouched() {
 #[test]
 fn usage_errors_exit_with_two() {
     let ws = Workspace::new("usage");
-    let (code, _, stderr) = run(&["optimize", "--nope"], &ws.path);
+    let (code, _, stderr) = run(&["--nope"], &ws.path);
     assert_eq!(code, 2, "{stderr}");
 
-    let (code, _, _) = run(&["optimize"], &ws.path);
+    let (code, _, _) = run(&[], &ws.path);
     assert_eq!(code, 2);
 }
 
@@ -336,7 +336,9 @@ fn help_and_version_succeed() {
     let ws = Workspace::new("help");
     let (code, stdout, _) = run(&["--help"], &ws.path);
     assert_eq!(code, 0);
-    assert!(stdout.contains("tzim optimize"));
+    assert!(stdout.contains("tzim [OPTIONS] <PATH>..."), "{stdout}");
+    assert!(stdout.contains("--list-formats"), "{stdout}");
+    assert!(stdout.contains("--check-deps"), "{stdout}");
 
     let (code, stdout, _) = run(&["--version"], &ws.path);
     assert_eq!(code, 0);
@@ -345,6 +347,52 @@ fn help_and_version_succeed() {
     let (code, stdout, _) = run(&["formats"], &ws.path);
     assert_eq!(code, 0);
     assert!(stdout.contains("PNG"));
+
+    let (code, stdout, _) = run(&["--list-formats"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("PNG"), "{stdout}");
+}
+
+#[test]
+fn info_answers_without_touching_anything() {
+    let ws = Workspace::new("info");
+    for flag in ["-i", "--info"] {
+        let (code, stdout, stderr) = run(&[flag], &ws.path);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("tzim "), "{stdout}");
+        assert!(stdout.contains("G3"), "{stdout}");
+        assert!(stdout.contains("MIT"), "{stdout}");
+        assert!(stdout.contains("protonmail"), "{stdout}");
+        assert!(stdout.contains("PNG"), "{stdout}");
+    }
+}
+
+#[test]
+fn check_deps_reports_that_nothing_is_needed() {
+    let ws = Workspace::new("deps");
+    let (code, stdout, stderr) = run(&["--check-deps"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("needs no external programs"), "{stdout}");
+    assert!(stdout.contains("PNG"), "{stdout}");
+}
+
+#[test]
+fn a_bare_path_is_a_complete_input_and_the_old_verb_still_works() {
+    let ws = Workspace::new("bare-path");
+    let spec = PngSpec {
+        width: 24,
+        height: 24,
+        level: 1,
+        ..Default::default()
+    };
+    let photo = ws.write("photo.png", &build_png(&spec));
+    let (code, _, stderr) = run(&["photo.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(std::fs::metadata(&photo).unwrap().len() > 0);
+
+    // The 0.1-0.4 spelling is accepted so that older scripts keep working.
+    let (code, _, stderr) = run(&["optimize", "photo.png", "--dry-run"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
 }
 
 #[test]
@@ -362,7 +410,7 @@ fn include_and_exclude_filters() {
     let png_before = std::fs::read(&png).unwrap();
     let gz_before = std::fs::read(&gz).unwrap();
 
-    let (code, _, stderr) = run(&["optimize", ".", "--include", "gz"], &ws.path);
+    let (code, _, stderr) = run(&[".", "--include", "gz"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(std::fs::read(&png).unwrap(), png_before, "png must be filtered out");
     assert_ne!(std::fs::read(&gz).unwrap(), gz_before, "gz must be processed");
@@ -385,7 +433,7 @@ fn read_only_file_is_skipped() {
     perms.set_mode(0o444);
     std::fs::set_permissions(&path, perms).unwrap();
 
-    let (code, stdout, stderr) = run(&["optimize", "locked.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["locked.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let mut perms = std::fs::metadata(&path).unwrap().permissions();
@@ -414,7 +462,7 @@ fn permissions_and_mtime_survive_the_replacement() {
     std::fs::set_permissions(&path, perms).unwrap();
     let before = std::fs::metadata(&path).unwrap();
 
-    let (code, _, stderr) = run(&["optimize", "attrs.png"], &ws.path);
+    let (code, _, stderr) = run(&["attrs.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let after = std::fs::metadata(&path).unwrap();
@@ -442,7 +490,7 @@ fn symlinks_are_not_followed_by_default() {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let before = std::fs::read(&target).unwrap();
-        let (code, stdout, stderr) = run(&["optimize", "link.png"], &ws.path);
+        let (code, stdout, stderr) = run(&["link.png"], &ws.path);
         assert_eq!(code, 0, "{stderr}");
         assert_eq!(std::fs::read(&target).unwrap(), before, "target must be untouched");
         assert!(
@@ -464,7 +512,7 @@ fn a_directory_argument_without_recursive_stays_at_the_top_level() {
     ws.write("outer.png", &build_png(&spec));
     ws.write("inner/inner.png", &build_png(&spec));
 
-    let (code, stdout, stderr) = run(&["optimize", ".", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(&[".", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(json_file_records(&stdout), 1, "{stdout}");
 }
@@ -511,7 +559,7 @@ fn zip_deflate_entries_are_recompressed_and_everything_else_is_preserved() {
     let original = build_zip(&[first, second], b"archive comment");
     let path = ws.write("bundle.zip", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "bundle.zip"], &ws.path);
+    let (code, stdout, stderr) = run(&["bundle.zip"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -547,7 +595,7 @@ fn zip_stored_entries_stay_stored() {
     let original = build_zip(&[stored, oned], b"");
     let path = ws.write("doc.odt", &original);
 
-    let (code, _, stderr) = run(&["optimize", "doc.odt"], &ws.path);
+    let (code, _, stderr) = run(&["doc.odt"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -570,7 +618,7 @@ fn zip_data_descriptor_is_rewritten_consistently() {
     let original = build_zip(&[spec], b"");
     let path = ws.write("streamed.zip", &original);
 
-    let (code, _, stderr) = run(&["optimize", "streamed.zip"], &ws.path);
+    let (code, _, stderr) = run(&["streamed.zip"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -615,7 +663,7 @@ fn zip_non_utf8_names_are_preserved() {
     let original = build_zip(&[spec], b"");
     let path = ws.write("names.zip", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "names.zip", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(&["names.zip", "--json"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -636,7 +684,7 @@ fn signed_jar_is_refused_and_left_untouched() {
     let original = build_zip(&entries, b"");
     let path = ws.write("signed.jar", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "signed.jar"], &ws.path);
+    let (code, stdout, stderr) = run(&["signed.jar"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("signature") || stdout.contains("signed"),
@@ -656,7 +704,7 @@ fn signed_odf_document_is_refused() {
     let original = build_zip(&entries, b"");
     let path = ws.write("signed.odt", &original);
 
-    let (code, _, stderr) = run(&["optimize", "signed.odt"], &ws.path);
+    let (code, _, stderr) = run(&["signed.odt"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
@@ -699,7 +747,7 @@ fn apk_signing_block_is_refused() {
     rebuilt[eocd_pos + 16..eocd_pos + 20].copy_from_slice(&new_cd_offset.to_le_bytes());
 
     let path = ws.write("app.apk", &rebuilt);
-    let (code, stdout, stderr) = run(&["optimize", "app.apk"], &ws.path);
+    let (code, stdout, stderr) = run(&["app.apk"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("APK") || stdout.contains("signature"),
@@ -721,7 +769,7 @@ fn zip64_is_refused() {
     let original = archive.clone();
     let path = ws.write("big.zip", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "big.zip"], &ws.path);
+    let (code, stdout, stderr) = run(&["big.zip"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("ZIP64"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -737,7 +785,7 @@ fn encrypted_zip_is_refused() {
     );
     let path = ws.write("secret.zip", &archive);
 
-    let (code, stdout, stderr) = run(&["optimize", "secret.zip"], &ws.path);
+    let (code, stdout, stderr) = run(&["secret.zip"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("encrypted"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), archive);
@@ -753,7 +801,7 @@ fn truncated_zip_is_refused() {
     let truncated = archive[..archive.len() - 30].to_vec();
     let path = ws.write("cut.zip", &truncated);
 
-    let (code, stdout, _) = run(&["optimize", "cut.zip"], &ws.path);
+    let (code, stdout, _) = run(&["cut.zip"], &ws.path);
     assert_ne!(code, 0, "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), truncated);
 }
@@ -772,7 +820,7 @@ fn corrupt_entry_crc_is_refused() {
     let original = archive.clone();
     let path = ws.write("broken.zip", &original);
 
-    let (code, stdout, _) = run(&["optimize", "broken.zip"], &ws.path);
+    let (code, stdout, _) = run(&["broken.zip"], &ws.path);
     assert_ne!(code, 0, "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
@@ -787,7 +835,7 @@ fn already_optimal_zip_is_left_alone() {
     );
     let path = ws.write("optimal.zip", &archive);
 
-    let (code, stdout, stderr) = run(&["optimize", "optimal.zip"], &ws.path);
+    let (code, stdout, stderr) = run(&["optimal.zip"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("already optimal"),
@@ -802,7 +850,7 @@ fn zip_bomb_ratio_is_refused() {
     let archive = build_zip(&[ZipEntrySpec::deflated("zeros.bin", &vec![0u8; 2_000_000], 6)], b"");
     let path = ws.write("bomb.zip", &archive);
 
-    let (code, stdout, stderr) = run(&["optimize", "bomb.zip", "--max-ratio", "10"], &ws.path);
+    let (code, stdout, stderr) = run(&["bomb.zip", "--max-ratio", "10"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("max-ratio"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), archive);
@@ -819,7 +867,7 @@ fn stub_prefixed_archive_is_not_detected_as_zip() {
     let original = archive.clone();
     let path = ws.write("installer.exe", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "installer.exe"], &ws.path);
+    let (code, stdout, stderr) = run(&["installer.exe"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("unsupported"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -835,7 +883,7 @@ fn apng_frames_are_recompressed_and_control_chunks_kept() {
     let original = build_apng(64, 48, 3, 1);
     let path = ws.write("anim.png", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "anim.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["anim.png"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -870,7 +918,7 @@ fn apng_with_a_single_frame_is_optimized() {
     let original = build_apng(48, 48, 1, 1);
     let path = ws.write("single.png", &original);
 
-    let (code, _, stderr) = run(&["optimize", "single.png"], &ws.path);
+    let (code, _, stderr) = run(&["single.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let optimized = std::fs::read(&path).unwrap();
     assert!(png_chunks(&optimized).is_ok());
@@ -906,7 +954,7 @@ fn ico_embedded_pngs_are_optimized_and_bitmaps_preserved() {
     let original = build_ico(1, &entries);
     let path = ws.write("app.ico", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "app.ico"], &ws.path);
+    let (code, stdout, stderr) = run(&["app.ico"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
@@ -940,7 +988,7 @@ fn ico_with_only_bitmaps_is_already_optimal() {
     let original = build_ico(1, &entries);
     let path = ws.write("plain.ico", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "plain.ico"], &ws.path);
+    let (code, stdout, stderr) = run(&["plain.ico"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("already optimal"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -964,7 +1012,7 @@ fn cursor_files_are_handled_like_icons() {
     let original = build_ico(2, &entries);
     let path = ws.write("pointer.cur", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "pointer.cur"], &ws.path);
+    let (code, stdout, stderr) = run(&["pointer.cur"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let optimized = std::fs::read(&path).unwrap();
     assert!(optimized.len() < original.len());
@@ -989,7 +1037,7 @@ fn ico_with_a_bad_offsets_is_refused() {
     let original = icon.clone();
     let path = ws.write("broken.ico", &original);
 
-    let (code, stdout, _) = run(&["optimize", "broken.ico"], &ws.path);
+    let (code, stdout, _) = run(&["broken.ico"], &ws.path);
     assert_eq!(code, 1, "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
@@ -1009,7 +1057,7 @@ fn nested_optimization_reaches_the_file_inside_the_archive() {
 
     // Without --nested the stored bytes stay identical.
     let plain = ws.write("plain.zip", &original);
-    let (code, _, stderr) = run(&["optimize", "plain.zip"], &ws.path);
+    let (code, _, stderr) = run(&["plain.zip"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let plain_out = std::fs::read(&plain).unwrap();
     let plain_entry = parse_zip(&plain_out).remove(0);
@@ -1021,7 +1069,7 @@ fn nested_optimization_reaches_the_file_inside_the_archive() {
 
     // With --nested the PNG inside is optimized: smaller than the plain result.
     let nested = ws.write("nested.zip", &original);
-    let (code, stdout, stderr) = run(&["optimize", "nested.zip", "--nested"], &ws.path);
+    let (code, stdout, stderr) = run(&["nested.zip", "--nested"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let nested_out = std::fs::read(&nested).unwrap();
     assert!(
@@ -1053,7 +1101,7 @@ fn nested_depth_limit_is_respected() {
 
     // Depth 1: the outer archive is rewritten, but the inner archive is not.
     let shallow = ws.write("shallow.zip", &outer);
-    let (code, _, stderr) = run(&["optimize", "shallow.zip", "--nested", "--max-depth", "1"], &ws.path);
+    let (code, _, stderr) = run(&["shallow.zip", "--nested", "--max-depth", "1"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let shallow_out = std::fs::read(&shallow).unwrap();
     let inner_after = parse_zip(&shallow_out).remove(0).decompressed(&shallow_out);
@@ -1064,7 +1112,7 @@ fn nested_depth_limit_is_respected() {
 
     // Depth 3: the PNG inside the inner archive is optimized too.
     let deep = ws.write("deep.zip", &outer);
-    let (code, _, stderr) = run(&["optimize", "deep.zip", "--nested", "--max-depth", "3"], &ws.path);
+    let (code, _, stderr) = run(&["deep.zip", "--nested", "--max-depth", "3"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let deep_out = std::fs::read(&deep).unwrap();
     assert!(deep_out.len() < shallow_out.len(), "deeper nesting should save more");
@@ -1086,7 +1134,7 @@ fn nested_does_not_touch_signed_archives() {
     let original = build_zip(&entries, b"");
     let path = ws.write("signed.jar", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "signed.jar", "--nested"], &ws.path);
+    let (code, stdout, stderr) = run(&["signed.jar", "--nested"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
@@ -1105,7 +1153,7 @@ fn jpeg_baseline_is_optimized_and_then_stable() {
     let original = build_jpeg(64, 48, 3);
     let path = ws.write("photo.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "photo.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let after = std::fs::read(&path).unwrap();
@@ -1121,7 +1169,7 @@ fn jpeg_baseline_is_optimized_and_then_stable() {
     assert_eq!(&after[after.len() - 2..], &[0xff, 0xd9]);
 
     // The tables were the only wasteful thing, so a second run has nothing left.
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "photo.jpg"], &ws.path);
     assert_eq!(code, 0, "stderr={stderr}");
     assert!(stdout.contains("already optimal"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), after);
@@ -1133,7 +1181,7 @@ fn jpeg_is_inert_without_the_formats_flag() {
     let original = build_jpeg(32, 32, 1);
     let path = ws.write("photo.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "photo.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["photo.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("skipped"), "{stdout}");
     assert!(stdout.contains("not enabled"), "{stdout}");
@@ -1146,7 +1194,7 @@ fn jpeg_progressive_is_skipped() {
     let original = jpeg_with_sof_marker(&build_jpeg(32, 32, 3), 0xc2);
     let path = ws.write("progressive.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "progressive.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "progressive.jpg"], &ws.path);
     assert_eq!(code, 0, "a refusal is not a failure: {stdout} {stderr}");
     assert!(stdout.contains("baseline"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1158,7 +1206,7 @@ fn jpeg_arithmetic_is_skipped() {
     let original = jpeg_with_sof_marker(&build_jpeg(32, 32, 3), 0xc9);
     let path = ws.write("arithmetic.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "arithmetic.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "arithmetic.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("SOF9") || stdout.contains("arithmetic"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1170,7 +1218,7 @@ fn jpeg_twelve_bit_is_skipped() {
     let original = jpeg_with_precision(&build_jpeg(32, 32, 1), 12);
     let path = ws.write("twelve.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "twelve.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "twelve.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("12-bit"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1183,7 +1231,7 @@ fn jpeg_truncated_file_fails_and_is_untouched() {
     let original = full[..full.len() / 2].to_vec();
     let path = ws.write("broken.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "broken.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "broken.jpg"], &ws.path);
     assert_eq!(code, 1, "a corrupt file is a failure: {stdout} {stderr}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
@@ -1194,11 +1242,11 @@ fn jpeg_grayscale_is_optimized() {
     let original = build_jpeg(48, 40, 1);
     let path = ws.write("gray.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "gray.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "gray.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(std::fs::read(&path).unwrap().len() < original.len());
 
-    let (code, stdout, _) = run(&["optimize", "--formats", "jpeg", "gray.jpg"], &ws.path);
+    let (code, stdout, _) = run(&["--formats", "jpeg", "gray.jpg"], &ws.path);
     assert_eq!(code, 0);
     assert!(stdout.contains("already optimal"), "{stdout}");
 }
@@ -1210,7 +1258,7 @@ fn jpeg_trailing_bytes_after_eoi_are_preserved() {
     let original = build_jpeg_with_trailing(32, 32, 3, trailing);
     let path = ws.write("trailing.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "trailing.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "trailing.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let after = std::fs::read(&path).unwrap();
     assert!(after.len() < original.len());
@@ -1229,7 +1277,7 @@ fn formats_flag_restricts_other_formats_too() {
     let original = build_png(&spec);
     let path = ws.write("photo.png", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "photo.png"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("skipped"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
@@ -1241,7 +1289,7 @@ fn jpeg_restart_intervals_are_preserved() {
     let original = build_jpeg_with_restart(64, 64, 3, 3);
     let path = ws.write("restart.jpg", &original);
 
-    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "restart.jpg"], &ws.path);
+    let (code, stdout, stderr) = run(&["--formats", "jpeg", "restart.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let after = std::fs::read(&path).unwrap();
     assert!(after.len() < original.len());
@@ -1253,7 +1301,7 @@ fn jpeg_restart_intervals_are_preserved() {
         "restart markers lost"
     );
 
-    let (code, stdout, _) = run(&["optimize", "--formats", "jpeg", "restart.jpg"], &ws.path);
+    let (code, stdout, _) = run(&["--formats", "jpeg", "restart.jpg"], &ws.path);
     assert_eq!(code, 0);
     assert!(stdout.contains("already optimal"), "{stdout}");
 }

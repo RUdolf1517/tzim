@@ -7,11 +7,21 @@ daemon, no stdin/stdout streaming, and no colour output. Everything is decided b
 files on disk, so a command that worked yesterday behaves the same today.
 
 ```
-tzim optimize [OPTIONS] <PATH>...
-tzim formats
+tzim [OPTIONS] <PATH>...
+tzim --list-formats
+tzim --info
+tzim --check-deps
 tzim --help
 tzim --version
 ```
+
+**Paths come first.** There is no verb: `tzim photo.png` optimizes one file, `tzim ./photos -r` optimizes a
+tree. A path is never mistaken for a command, so a file called `optimize` needs no special handling beyond
+the usual `--` when it starts with a dash.
+
+The 0.1–0.4 spelling `tzim optimize <PATH>...` is still accepted, so scripts and notes written against the
+older releases keep working; it is no longer documented anywhere else. `tzim formats` likewise survives as
+an alias of `--list-formats`.
 
 ---
 
@@ -92,6 +102,11 @@ reproducible and diffable.
 | `--allow-root-ownership-change` | off | when running as root, allow replacing files owned by another user (ownership becomes root; see [safety](safety.md#8-privileges)) |
 | `--no-fsync` | off | skip `fsync` of the candidate and its directory (faster, less durable) |
 | `--` | — | end of options; required for paths beginning with `-` |
+| `-i, --info` | — | print what the program is: version, promise, formats, links, licence, contact; exits `0` without touching any path |
+| `--list-formats` | — | print the handlers compiled into this build and what each one preserves; exits `0` |
+| `--check-deps` | — | print the external programs needed at run time, which is none, and exit `0` |
+| `-h, --help` | — | the full text of §2; exits `0` |
+| `-V, --version` | — | one line, `tzim <version>`; exits `0` |
 
 `--include` and `--exclude` take extension lists (`png,gz`), not glob patterns. Globs are deliberately not
 implemented: shell globbing already exists, and a second pattern language is a second set of edge cases.
@@ -218,19 +233,19 @@ Limits produce `skipped`, never `failed`: hitting a configured bound is not an e
 
 ```sh
 # preview a whole tree, exact numbers, nothing written
-tzim optimize ~/Pictures --recursive --dry-run
+tzim ~/Pictures --recursive --dry-run
 
 # aggressive PNG optimization, two jobs
-tzim optimize *.png --zopfli --jobs 2
+tzim *.png --zopfli --jobs 2
 
 # CI check: never modify, fail if any file was reported failed
-tzim optimize assets --recursive --dry-run --json > report.ndjson
+tzim assets --recursive --dry-run --json > report.ndjson
 
 # exactly the archive types you care about
-tzim optimize . --recursive --include zip,jar,whl
+tzim . --recursive --include zip,jar,whl
 
 # files with spaces and non-ASCII names need only normal shell quoting
-tzim optimize "Photo 2024 (копия).png" "иконки/логотип.svgz"
+tzim "Photo 2024 (копия).png" "иконки/логотип.svgz"
 ```
 
 ---

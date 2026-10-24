@@ -38,6 +38,11 @@ jobs:
           - name: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
+          # Cross-compiled on the same Apple silicon runner: the crate is pure
+          # Rust, so there is no C toolchain to satisfy.
+          - name: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -66,7 +71,8 @@ jobs:
           bin="target/${{ matrix.target }}/release/tzim"
           if [ -f "${bin}.exe" ]; then bin="${bin}.exe"; fi
           "$bin" --version
-          "$bin" formats
+          # Tags before 0.5 only know the `formats` verb.
+          "$bin" --list-formats || "$bin" formats
 
       - name: Package
         shell: bash

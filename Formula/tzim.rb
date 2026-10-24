@@ -43,7 +43,7 @@ class Tzim < Formula
   def caveats
     <<~EOS
       Formats: PNG, APNG, gzip, the ZIP family, ICO/CUR, and baseline JPEG.
-      JPEG is opt-in: tzim optimize photo.jpg --formats jpeg
+      JPEG is opt-in: tzim photo.jpg --formats jpeg
 
       No runtime dependencies. The binary is statically linked and opens no sockets.
       Run `tzim formats` to see what this build supports.

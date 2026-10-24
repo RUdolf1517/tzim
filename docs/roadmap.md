@@ -133,7 +133,23 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 **Risk:** **high** — this is the most bug-prone codec in the project.
 
-### v0.5+ — research queue
+### v0.5 — the interface, corrected — **implemented**
+
+**What shipped**
+
+- The path is the command: `tzim photo.png`, `tzim ./photos -r`, `tzim . -r --dry-run`. The `optimize` verb
+  is accepted and silently stripped for 0.1–0.4 compatibility, so no script breaks, but nothing documents
+  it any more.
+- `-i` / `--info`, `--list-formats` and `--check-deps`: information without a path, exit `0`, no side
+  effects. `--check-deps` answers "none" — the binary shells out to nothing.
+- The README and `docs/cli.md` were rebuilt around that shape, with install channels, dependency
+  expectations and the guarantees in one place.
+
+**Why it is a release and not a patch**: removing a subcommand is observable, so the minor version moves.
+No handler changed, no byte of output changed, and every guarantee in the tables is the same object it
+was in 0.4.3.
+
+### v0.6+ — research queue
 
 Each of these requires a contract written *before* implementation:
 
