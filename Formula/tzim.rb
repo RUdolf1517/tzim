@@ -49,8 +49,7 @@ class Tzim < Formula
       Formats: PNG, APNG, gzip, the ZIP family, ICO/CUR, and baseline JPEG.
       JPEG is opt-in: tzim photo.jpg --formats jpeg
 
-      Paths come first: tzim photo.png. The old `tzim optimize <path>` still
-      works, and `tzim -i` answers what this build is.
+      Paths come first: tzim photo.png. `tzim -i` answers what this build is.
 
       No runtime dependencies. The binary is statically linked and opens no sockets.
       Run `tzim --list-formats` to see what this build supports.
