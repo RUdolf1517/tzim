@@ -74,8 +74,8 @@ jobs:
         run: exit 1
 
   profile:
-    # Temporary: measures profile variants and the biggest symbols so that a
-    # size change is a measurement, not a guess. Removed before merge.
+    # Temporary: compares -O3 with -Os on size and on the real corpus, so that a
+    # profile change is a measurement rather than a guess. Removed before merge.
     name: profile experiments
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -87,134 +87,42 @@ jobs:
       - name: Install musl tooling
         run: sudo apt-get update && sudo apt-get install -y musl-tools binutils
 
-      - name: Variants
+      - name: Measure
         shell: bash
         run: |
           set -o pipefail
           out=/tmp/tzim-profile.txt
-          printf '| variant | bytes | KiB | vs baseline |\n| --- | --- | --- | --- |\n' > "$out"
-          base=0
-          build() {
-            local name="$1"; shift
-            env "$@" cargo build --release --target x86_64-unknown-linux-musl -q 2>&1 | tail -3
-            local bytes
-            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
-            [ "$base" = 0 ] && base=$bytes
-            printf '| %s | %s | %s | %+d |\n' "$name" "$bytes" "$((bytes / 1024))" "$((bytes - base))" >> "$out"
-          }
-          build baseline
-          build "opt=s" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
-          build "opt=2" CARGO_PROFILE_RELEASE_OPT_LEVEL=2
-          build "opt=s, force-unwind-tables=no" CARGO_PROFILE_RELEASE_OPT_LEVEL=s "RUSTFLAGS=-C force-unwind-tables=no"
-          build "baseline, force-unwind-tables=no" "RUSTFLAGS=-C force-unwind-tables=no"
-
-          # Dependencies keep -O3 while this crate shrinks for size.
-          cp Cargo.toml /tmp/Cargo.toml.orig
-          printf '\n[profile.release.package."*"]\nopt-level = 3\n' >> Cargo.toml
-          build "opt=s, deps opt=3" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
-          cp /tmp/Cargo.toml.orig Cargo.toml
-          cat "$out"
-
-      - name: Where the bytes are
-        shell: bash
-        run: |
-          set -o pipefail
-          out=/tmp/tzim-profile.txt
-          CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --target x86_64-unknown-linux-musl -q
-          cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-unstripped
-          nm -C -S -t d /tmp/tzim-unstripped > /tmp/tzim-nm.txt 2>/dev/null || true
-          {
-            echo
-            echo "### bytes of code by crate"
-            echo '```'
-            awk '$2 ~ /^[0-9]+$/ && $3 ~ /^[a-zA-Z]$/ {
-                   name = $4
-                   cat = "other"
-                   if (name ~ /gimli/ || name ~ /addr2line/ || name ~ /unwind/ || name ~ /backtrace/) cat = "gimli/addr2line/unwind"
-                   else if (name ~ /miniz_oxide/) cat = "miniz_oxide"
-                   else if (name ~ /zopfli/) cat = "zopfli"
-                   else if (name ~ /fdeflate/) cat = "fdeflate"
-                   else if (name ~ /^png::/ || name ~ /<png::/) cat = "png"
-                   else if (name ~ /flate2/) cat = "flate2"
-                   else if (name ~ /tzim/) cat = "tzim"
-                   else if (name ~ /core::fmt/) cat = "core::fmt"
-                   else if (name ~ /std::/) cat = "std"
-                   total[cat] += $2
-                 }
-                 END { for (c in total) printf "%-26s %8d  %6d KiB\n", c, total[c], total[c] / 1024 }' /tmp/tzim-nm.txt | sort -k2 -n -r
-            echo '```'
-            echo
-            echo "### strings that only a panic printer needs"
-            echo '```'
-            for needle in gimli addr2line "RUST_BACKTRACE" "note: run with"; do
-              printf '%-16s %s\n' "$needle" "$(strings -a /tmp/tzim-unstripped | grep -c -- "$needle" || true)"
-            done
-            echo '```'
-            echo
-            echo "### section sizes"
-            echo '```'
-            size -A /tmp/tzim-unstripped | head -12
-            echo '```'
-          } >> "$out"
-          cat "$out"
-
-      - name: Speed on real files
-        shell: bash
-        run: |
-          set -o pipefail
-          out=/tmp/tzim-speed.txt
           bash .github/scripts/corpus-fetch.sh "$RUNNER_TEMP/corpus-work" > /dev/null
           corpus="$RUNNER_TEMP/corpus-work/corpus"
-          printf '| build | PNG corpus | JPEG corpus | saved bytes |\n| --- | --- | --- | --- |\n' > "$out"
-          speed() {
+          base_size=$(du -sb "$corpus" | cut -f1)
+          {
+            echo "| build | bytes | KiB | PNG corpus | JPEG corpus | bytes written |"
+            echo "| --- | --- | --- | --- | --- | --- |"
+          } > "$out"
+          measure() {
             local name="$1" slug="$2"; shift 2
             env "$@" cargo build --release --target x86_64-unknown-linux-musl -q
-            cp target/x86_64-unknown-linux-musl/release/tzim "/tmp/tzim-$slug"
-            local start mid end png jpeg saved
-            # One untimed pass first: the page cache should not decide this.
-            rm -rf /tmp/speed-warm && cp -r "$corpus" /tmp/speed-warm
-            "/tmp/tzim-$slug" -r --formats png --jobs 1 /tmp/speed-warm/images > /dev/null 2>&1 || true
-            rm -rf /tmp/speed-a && cp -r "$corpus" /tmp/speed-a
+            local bin="/tmp/tzim-$slug"
+            cp target/x86_64-unknown-linux-musl/release/tzim "$bin"
+            local bytes start mid end after
+            bytes=$(stat -c '%s' "$bin")
+            # One untimed pass so the page cache does not decide the result.
+            rm -rf /tmp/warm && cp -r "$corpus" /tmp/warm
+            "$bin" -r --formats png --jobs 1 /tmp/warm/images > /dev/null 2>&1 || true
+            rm -rf /tmp/run && cp -r "$corpus" /tmp/run
             start=$(date +%s%N)
-            "/tmp/tzim-$slug" -r --formats png --jobs 1 /tmp/speed-a/images > /dev/null 2>&1 || true
+            "$bin" -r --formats png --jobs 1 /tmp/run/images > /dev/null 2>&1 || true
             mid=$(date +%s%N)
-            rm -rf /tmp/speed-b && cp -r "$corpus" /tmp/speed-b
-            "/tmp/tzim-$slug" -r --formats jpeg --jobs 1 /tmp/speed-b/images > /dev/null 2>&1 || true
+            "$bin" -r --formats jpeg --jobs 1 /tmp/run/images > /dev/null 2>&1 || true
             end=$(date +%s%N)
-            saved=$(du -sb "$corpus" | cut -f1)
-            saved=$(( saved - $(du -sb /tmp/speed-a | cut -f1) - $(du -sb /tmp/speed-b | cut -f1) ))
-            printf '| %s | %s ms | %s ms | %s |\n' "$name" "$(( (mid - start) / 1000000 ))" "$(( (end - mid) / 1000000 ))" "$saved" >> "$out"
+            after=$(du -sb /tmp/run | cut -f1)
+            printf '| %s | %s | %s | %s ms | %s ms | %s |\n' \
+              "$name" "$bytes" "$((bytes / 1024))" \
+              "$(( (mid - start) / 1000000 ))" "$(( (end - mid) / 1000000 ))" \
+              "$(( base_size - after ))" >> "$out"
           }
-          speed "opt=3 (baseline)" opt3
-          speed "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
-          cat "$out" >> /tmp/tzim-profile.txt
-          cat "$out"
-
-      - name: Does a hello world pay for the same backtrace code
-        shell: bash
-        run: |
-          set -o pipefail
-          out=/tmp/tzim-profile.txt
-          mkdir -p /tmp/hello/src
-          cd /tmp/hello
-          printf '[package]\nname = "hello"\nversion = "0.1.0"\nedition = "2021"\n\n[profile.release]\nopt-level = 3\nlto = "fat"\ncodegen-units = 1\npanic = "abort"\nstrip = "none"\n' > Cargo.toml
-          printf 'fn main() { println!("hi"); }\n' > src/main.rs
-          cargo build --release --target x86_64-unknown-linux-musl -q
-          hello=target/x86_64-unknown-linux-musl/release/hello
-          {
-            echo
-            echo "### hello world, same profile"
-            echo '```'
-            printf 'size        %s bytes\n' "$(stat -c '%s' "$hello")"
-            printf 'gimli syms  %s\n' "$(nm -C "$hello" 2>/dev/null | grep -c gimli || true)"
-            printf 'unwind syms %s\n' "$(nm -C "$hello" 2>/dev/null | grep -cE 'libunwind|addr2line' || true)"
-            echo '```'
-            echo
-            echo "### panic machinery in tzim"
-            echo '```'
-            nm -C /tmp/tzim-unstripped | grep -E "rust_panic_with_hook|default_hook|Backtrace::capture|begin_panic_handler|rust_begin_unwind|rust_eh_personality|panic_abort" | head -20 || true
-            echo '```'
-          } >> "$out"
+          measure "opt=3" opt3
+          measure "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
           cat "$out"
 
       - name: Report
