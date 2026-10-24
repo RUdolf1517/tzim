@@ -198,8 +198,8 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
 }
 
 pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
-    let info_a = inspect(&a).map_err(|e| Error::verify(format!("original: {e}")))?;
-    let info_b = inspect(&b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+    let info_a = inspect(a).map_err(|e| Error::verify(format!("original: {e}")))?;
+    let info_b = inspect(b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
     if a[..info_a.header_len] != b[..info_b.header_len] {
         return Err(Error::verify("gzip header was not preserved"));

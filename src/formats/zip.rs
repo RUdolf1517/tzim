@@ -600,7 +600,7 @@ fn recompress(compressed: &[u8], zopfli: bool) -> Result<(Vec<u8>, u64, u32)> {
 pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
     let archive = parse_archive(data)?;
     check_limits(&archive, opts)?;
-    if let Some(reason) = deny_reason(&archive, &data) {
+    if let Some(reason) = deny_reason(&archive, data) {
         return Err(Error::refused(reason));
     }
 
@@ -811,26 +811,39 @@ fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u3
 
 /// Zeroes the fields a rewrite is allowed to change, so the rest can be compared
 /// byte for byte.
-fn mask_local(header: &[u8]) -> Vec<u8> {
+/// Masks the fields a rewrite may change. `checksum` is set when a nested
+/// rewrite legitimately replaced the content, which also changes the stored CRC
+/// and the uncompressed size.
+fn mask_local(header: &[u8], checksum: bool) -> Vec<u8> {
     let mut copy = header.to_vec();
     if copy.len() >= LOCAL_COMP_OFFSET + 4 {
         copy[LOCAL_COMP_OFFSET..LOCAL_COMP_OFFSET + 4].fill(0);
     }
+    if checksum {
+        if copy.len() >= LOCAL_UNCOMP_OFFSET + 4 {
+            copy[LOCAL_CRC_OFFSET..LOCAL_CRC_OFFSET + 4].fill(0);
+            copy[LOCAL_UNCOMP_OFFSET..LOCAL_UNCOMP_OFFSET + 4].fill(0);
+        }
+    }
     copy
 }
 
-fn mask_central(record: &[u8]) -> Vec<u8> {
+fn mask_central(record: &[u8], checksum: bool) -> Vec<u8> {
     let mut copy = record.to_vec();
     if copy.len() >= CENTRAL_LOCAL_OFFSET + 4 {
         copy[CENTRAL_COMP_OFFSET..CENTRAL_COMP_OFFSET + 4].fill(0);
         copy[CENTRAL_LOCAL_OFFSET..CENTRAL_LOCAL_OFFSET + 4].fill(0);
+    }
+    if checksum && copy.len() >= CENTRAL_UNCOMP_OFFSET + 4 {
+        copy[CENTRAL_CRC_OFFSET..CENTRAL_CRC_OFFSET + 4].fill(0);
+        copy[CENTRAL_UNCOMP_OFFSET..CENTRAL_UNCOMP_OFFSET + 4].fill(0);
     }
     copy
 }
 
 pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
     let pa = parse_archive(a).map_err(|e| Error::verify(format!("original: {e}")))?;
-    let pb = parse_archive(&b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+    let pb = parse_archive(b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
     if pa.entries.len() != pb.entries.len() {
         return Err(Error::verify("entry count changed"));
@@ -868,12 +881,13 @@ pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
         if ea.comment != eb.comment {
             return Err(Error::verify(format!("entry `{label}`: comment changed")));
         }
-        if mask_local(ea.local) != mask_local(eb.local) {
+        let checksum_changed = ea.crc != eb.crc || ea.uncomp_size != eb.uncomp_size;
+        if mask_local(ea.local, checksum_changed) != mask_local(eb.local, checksum_changed) {
             return Err(Error::verify(format!(
                 "entry `{label}`: local header changed outside the allowed fields"
             )));
         }
-        if mask_central(ea.central) != mask_central(eb.central) {
+        if mask_central(ea.central, checksum_changed) != mask_central(eb.central, checksum_changed) {
             return Err(Error::verify(format!(
                 "entry `{label}`: central directory record changed outside the allowed fields"
             )));
@@ -1008,7 +1022,7 @@ mod tests {
     fn masking_keeps_preserved_bytes() {
         let mut local = vec![0u8; LOCAL_LEN];
         local[LOCAL_COMP_OFFSET] = 0xaa;
-        let masked = mask_local(&local);
+        let masked = mask_local(&local, false);
         assert_eq!(masked[LOCAL_COMP_OFFSET], 0);
         assert_eq!(local[LOCAL_COMP_OFFSET], 0xaa);
     }

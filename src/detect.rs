@@ -51,7 +51,7 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     if head.len() >= 6 && head[0] == 0 && head[1] == 0 && (head[2] == 1 || head[2] == 2) && head[3] == 0
     {
         let count = u16::from_le_bytes([head[4], head[5]]);
-        if count >= 1 && count <= 256 {
+        if (1..=256).contains(&count) {
             return Some(Format::Ico);
         }
     }
