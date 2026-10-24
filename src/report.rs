@@ -172,11 +172,6 @@ pub fn print_human(
                 .to_string();
             let detail = match o.status {
                 Status::Optimized | Status::WouldOptimize => {
-                    let pct = if o.before == 0 {
-                        0.0
-                    } else {
-                        100.0 * (o.before as f64 - o.after as f64) / o.before as f64
-                    };
                     let mut suffix = String::new();
                     if o.status == Status::WouldOptimize {
                         suffix.push_str("  (dry run)");
@@ -186,7 +181,26 @@ pub fn print_human(
                         // of the input's metadata, so it is named on every line.
                         suffix.push_str("  (metadata stripped)");
                     }
-                    format!("{} -> {}  {:+.1}%{suffix}", size(o.before), size(o.after), -pct)
+                    // A gain is printed as a negative number, exactly as the old
+                    // float formatting did, including "-0.0" when nothing moved.
+                    let (sign, tenths) = match o.before {
+                        0 => ('-', 0),
+                        _ if o.after <= o.before => (
+                            '-',
+                            round_half_even((o.before - o.after) as u128 * 1000, o.before as u128),
+                        ),
+                        _ => (
+                            '+',
+                            round_half_even((o.after - o.before) as u128 * 1000, o.before as u128),
+                        ),
+                    };
+                    format!(
+                        "{} -> {}  {sign}{}.{}%{suffix}",
+                        size(o.before),
+                        size(o.after),
+                        tenths / 10,
+                        tenths % 10
+                    )
                 }
                 _ => match (&o.note, &o.error) {
                     (_, Some(e)) if o.status == Status::Failed => format!("failed: {e}"),
@@ -199,8 +213,9 @@ pub fn print_human(
     }
 
     let action = if dry_run { "would optimize" } else { "optimized" };
+    let hundredths = (summary.elapsed.as_micros() + 5_000) / 10_000;
     println!(
-        "Summary: {} files, {} {action}, {} saved, {} already optimal, {} unsupported, {} skipped, {} failed, {:.2} s",
+        "Summary: {} files, {} {action}, {} saved, {} already optimal, {} unsupported, {} skipped, {} failed, {}.{:02} s",
         summary.files,
         summary.optimized + summary.would_optimize,
         size(summary.before.saturating_sub(summary.after)),
@@ -208,7 +223,8 @@ pub fn print_human(
         summary.unsupported,
         summary.skipped,
         summary.failed,
-        summary.elapsed.as_secs_f64()
+        hundredths / 100,
+        hundredths % 100
     );
 }
 
@@ -280,19 +296,42 @@ fn display_width(s: &str) -> usize {
     s.chars().count()
 }
 
-/// Human-readable binary size with one decimal.
+/// Human-readable binary size with two decimals.
+///
+/// The arithmetic is integer on purpose. `{:.2}` on an `f64` pulls the float
+/// formatter into the binary — it is larger than all of the rest of the
+/// reporting code — and the numbers here are exact in integers: the divisor is
+/// a power of two, so the quotient has no representation error and
+/// half-to-even rounding reproduces `{:.2}` digit for digit.
 pub fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     if bytes < 1024 {
         return format!("{bytes} B");
     }
-    let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
+    let mut scale = 1024u64;
+    while bytes / scale >= 1024 && unit + 2 < UNITS.len() {
+        scale *= 1024;
         unit += 1;
     }
-    format!("{value:.2} {}", UNITS[unit])
+    let hundredths = round_half_even(bytes as u128 * 100, scale as u128);
+    format!(
+        "{}.{:02} {}",
+        hundredths / 100,
+        hundredths % 100,
+        UNITS[unit]
+    )
+}
+
+/// `value / divisor`, rounded to nearest with ties to even.
+fn round_half_even(value: u128, divisor: u128) -> u128 {
+    let quotient = value / divisor;
+    let twice = (value % divisor) * 2;
+    if twice > divisor || (twice == divisor && quotient % 2 == 1) {
+        quotient + 1
+    } else {
+        quotient
+    }
 }
 
 pub fn push_json_string(out: &mut String, value: &str) {

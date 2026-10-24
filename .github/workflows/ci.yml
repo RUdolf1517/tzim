@@ -158,6 +158,33 @@ jobs:
           } >> "$out"
           cat "$out"
 
+      - name: Does a hello world pay for the same backtrace code
+        shell: bash
+        run: |
+          set -o pipefail
+          out=/tmp/tzim-profile.txt
+          mkdir -p /tmp/hello/src
+          cd /tmp/hello
+          printf '[package]\nname = "hello"\nversion = "0.1.0"\nedition = "2021"\n\n[profile.release]\nopt-level = 3\nlto = "fat"\ncodegen-units = 1\npanic = "abort"\nstrip = "none"\n' > Cargo.toml
+          printf 'fn main() { println!("hi"); }\n' > src/main.rs
+          cargo build --release --target x86_64-unknown-linux-musl -q
+          hello=target/x86_64-unknown-linux-musl/release/hello
+          {
+            echo
+            echo "### hello world, same profile"
+            echo '```'
+            printf 'size        %s bytes\n' "$(stat -c '%s' "$hello")"
+            printf 'gimli syms  %s\n' "$(nm -C "$hello" 2>/dev/null | grep -c gimli || true)"
+            printf 'unwind syms %s\n' "$(nm -C "$hello" 2>/dev/null | grep -cE 'libunwind|addr2line' || true)"
+            echo '```'
+            echo
+            echo "### panic machinery in tzim"
+            echo '```'
+            nm -C /tmp/tzim-unstripped | grep -E "rust_panic_with_hook|default_hook|Backtrace::capture|begin_panic_handler|rust_begin_unwind|rust_eh_personality|panic_abort" | head -20 || true
+            echo '```'
+          } >> "$out"
+          cat "$out"
+
       - name: Report
         if: always()
         shell: bash
