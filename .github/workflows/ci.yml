@@ -73,6 +73,78 @@ jobs:
         shell: bash
         run: exit 1
 
+  profile:
+    # Temporary: measures profile variants and the biggest symbols so that a
+    # size change is a measurement, not a guess. Removed before merge.
+    name: profile experiments
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tooling
+        run: sudo apt-get update && sudo apt-get install -y musl-tools binutils
+
+      - name: Variants
+        shell: bash
+        run: |
+          set -o pipefail
+          out=/tmp/tzim-profile.txt
+          printf '| variant | bytes | KiB | vs baseline |\n| --- | --- | --- | --- |\n' > "$out"
+          base=0
+          build() {
+            local name="$1"; shift
+            env "$@" cargo build --release --target x86_64-unknown-linux-musl -q 2>&1 | tail -3
+            local bytes
+            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+            [ "$base" = 0 ] && base=$bytes
+            printf '| %s | %s | %s | %+d |\n' "$name" "$bytes" "$((bytes / 1024))" "$((bytes - base))" >> "$out"
+          }
+          build baseline
+          build "strip=true" CARGO_PROFILE_RELEASE_STRIP=true
+          build "opt-level=s" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          build "opt-level=z" CARGO_PROFILE_RELEASE_OPT_LEVEL=z
+          build "opt=s, lto=thin" CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_LTO=thin
+          build "opt=s, cgu=16" CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+          build "baseline, lto=off" CARGO_PROFILE_RELEASE_LTO=off
+          build "baseline, gc-sections" "RUSTFLAGS=-C link-arg=-Wl,--gc-sections -C link-arg=-Wl,--strip-all"
+          cat "$out"
+
+      - name: Biggest symbols
+        shell: bash
+        run: |
+          set -o pipefail
+          out=/tmp/tzim-profile.txt
+          CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --target x86_64-unknown-linux-musl -q
+          cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-unstripped
+          {
+            echo
+            echo "### crates linked"
+            echo '```'
+            nm -C /tmp/tzim-unstripped | grep -oE "(miniz_oxide|zlib_rs|fdeflate|flate2|zopfli|png|simd_adler32|adler32)::" | sort | uniq -c | sort -rn || true
+            echo '```'
+            echo
+            echo "### top 30 symbols by size"
+            echo '```'
+            nm -C -S --size-sort /tmp/tzim-unstripped 2>/dev/null | tail -30 || true
+            echo '```'
+            echo
+            echo "### flate2 backend features"
+            echo '```'
+            cargo tree -e features -p flate2 -i flate2 2>/dev/null | head -20 || true
+            echo '```'
+          } >> "$out"
+          cat "$out"
+
+      - name: Report
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-profile.txt profile report
+
   size:
     name: binary size
     runs-on: ubuntu-latest
