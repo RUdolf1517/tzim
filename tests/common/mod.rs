@@ -800,6 +800,11 @@ fn build_jpeg_with(
     for plane in &planes {
         let mut predict = 0i32;
         for block in 0..blocks {
+            // Restart intervals reset the DC predictor, which changes the
+            // categories that occur; the statistics must model that.
+            if restart_interval > 0 && block > 0 && block % restart_interval as usize == 0 {
+                predict = 0;
+            }
             let base = block * 64;
             let difference = plane[base] as i32 - predict;
             predict = plane[base] as i32;
