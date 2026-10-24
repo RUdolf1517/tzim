@@ -312,7 +312,7 @@ fn has_zip64_extra(extra: &[u8]) -> bool {
     false
 }
 
-fn fill_local(d: &[u8], e: &mut Entry<'_>, next: usize) -> Result<()> {
+fn fill_local<'a>(d: &'a [u8], e: &mut Entry<'a>, next: usize) -> Result<()> {
     let at = e.local_offset;
     if read_u32(d, at)? != LOCAL_SIG {
         return Err(Error::parse(
@@ -814,8 +814,9 @@ fn read_fully(reader: &mut impl Read, buf: &mut [u8]) -> Result<usize> {
     let mut filled = 0;
     while filled < buf.len() {
         match reader.read(&mut buf[filled..]) {
-            0 => break,
-            n => filled += n,
+            Ok(0) => break,
+            Ok(n) => filled += n,
+            Err(e) => return Err(Error::Io(e)),
         }
     }
     Ok(filled)
