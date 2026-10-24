@@ -34,10 +34,16 @@ rm -rf "$work"
 bash "$repo_root/.github/scripts/corpus-fetch.sh" "$work"
 
 # One set per format, so every tool is measured against files it can handle.
-mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/run"
+mkdir -p "$work/sets/png" "$work/sets/png-small" "$work/sets/jpeg" "$work/run"
 find "$work/corpus/images" -type f -iname '*.png' -size "-${max_bytes}c" -exec cp {} "$work/sets/png/" \;
 find "$work/corpus/images" -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/jpeg/" \;
+# Zopfli is 10-100x slower than zlib by design; on the full set the row would
+# dominate the job's runtime and prove nothing extra. It is measured on the
+# smallest 120 files instead, and the table says so.
+find "$work/corpus/images" -type f -iname '*.png' -size -32768c -print0 \
+    | sort -z | head -z -n 120 | xargs -0 -r -I '{}' cp '{}' "$work/sets/png-small/"
 echo "png set:  $(find "$work/sets/png" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
+echo "small png set: $(find "$work/sets/png-small" -type f | wc -l) files under 32 KiB"
 echo "jpeg set: $(find "$work/sets/jpeg" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 
 results="$work/results.tsv"
@@ -127,7 +133,7 @@ jpegtran_optimize() {
 echo "== png =="
 measure tzim png tzim_png
 measure tzim-jobs png tzim_png_parallel
-measure tzim-zopfli png tzim_png_zopfli
+measure tzim-zopfli png-small tzim_png_zopfli
 measure oxipng png oxipng_max
 measure optipng png optipng_o7
 
@@ -191,6 +197,10 @@ out.append("Files larger than 200 KiB are excluded from the timed comparison, be
 out.append("`oxipng -o max` needs minutes per megabyte. Copies of the same files per tool.")
 out.append("")
 out += table("PNG", "png")
+out.append("Zopfli costs 10-100x the time of zlib, so it is measured on the smallest 120 PNG files")
+out.append("instead of the whole set:")
+out.append("")
+out += table("PNG with --zopfli", "png-small")
 out += table("JPEG", "jpeg")
 text = "\n".join(out)
 print(text)
