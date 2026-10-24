@@ -1414,7 +1414,8 @@ fn inflate_member(data: &[u8]) -> (Vec<u8>, u32) {
     let mut decoder = flate2::read::DeflateDecoder::new(body);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out).unwrap();
-    (out, crc32fast::hash(&out))
+    let crc = crc32fast::hash(&out);
+    (out, crc)
 }
 
 #[test]
