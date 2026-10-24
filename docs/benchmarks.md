@@ -11,14 +11,14 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | `77b3750` (v0.5.0) |
+| Commit | v0.6.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
 | Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **1 004 384 bytes (980 KiB)** |
+| **Size** | **1 012 576 bytes (988 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Provisional budget for this profile | 2 200 KiB |
-| Headroom | 1 196 KiB |
+| Budget for this profile | 1 140 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
+| Headroom | 152 KiB |
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -36,6 +36,7 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.4 | baseline JPEG entropy codec (opt-in) | 976 KiB (+72 KiB) |
 | v0.4.1 | library split so the parsers can be fuzzed; no new code paths | 980 KiB (+4 KiB) |
 | v0.5.0 | path-first command line, `-i`, `--list-formats`, `--check-deps` | 980 KiB (+0) |
+| v0.6.0 | `--strip-metadata`, one feature per handler | 988 KiB (+8 KiB) |
 
 The last row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
