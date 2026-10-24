@@ -158,6 +158,37 @@ jobs:
           } >> "$out"
           cat "$out"
 
+      - name: Speed on real files
+        shell: bash
+        run: |
+          set -o pipefail
+          out=/tmp/tzim-speed.txt
+          bash .github/scripts/corpus-fetch.sh "$RUNNER_TEMP/corpus-work" > /dev/null
+          corpus="$RUNNER_TEMP/corpus-work/corpus"
+          printf '| build | PNG corpus | JPEG corpus | saved bytes |\n| --- | --- | --- | --- |\n' > "$out"
+          speed() {
+            local name="$1" slug="$2"; shift 2
+            env "$@" cargo build --release --target x86_64-unknown-linux-musl -q
+            cp target/x86_64-unknown-linux-musl/release/tzim "/tmp/tzim-$slug"
+            local start mid end png jpeg saved
+            # One untimed pass first: the page cache should not decide this.
+            rm -rf /tmp/speed-warm && cp -r "$corpus" /tmp/speed-warm
+            "/tmp/tzim-$slug" -r --formats png --jobs 1 /tmp/speed-warm/images > /dev/null 2>&1 || true
+            rm -rf /tmp/speed-a && cp -r "$corpus" /tmp/speed-a
+            start=$(date +%s%N)
+            "/tmp/tzim-$slug" -r --formats png --jobs 1 /tmp/speed-a/images > /dev/null 2>&1 || true
+            mid=$(date +%s%N)
+            rm -rf /tmp/speed-b && cp -r "$corpus" /tmp/speed-b
+            "/tmp/tzim-$slug" -r --formats jpeg --jobs 1 /tmp/speed-b/images > /dev/null 2>&1 || true
+            end=$(date +%s%N)
+            saved=$(du -sb "$corpus" | cut -f1)
+            saved=$(( saved - $(du -sb /tmp/speed-a | cut -f1) - $(du -sb /tmp/speed-b | cut -f1) ))
+            printf '| %s | %s ms | %s ms | %s |\n' "$name" "$(( (mid - start) / 1000000 ))" "$(( (end - mid) / 1000000 ))" "$saved" >> "$out"
+          }
+          speed "opt=3 (baseline)" opt3
+          speed "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          cat "$out"
+
       - name: Does a hello world pay for the same backtrace code
         shell: bash
         run: |
