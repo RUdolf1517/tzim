@@ -11,7 +11,7 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | `4fe47f9` |
+| Commit | `77b3750` (v0.5.0) |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
 | Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
@@ -35,6 +35,7 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.3 | APNG frames, ICO/CUR, nested archives | 904 KiB (+36 KiB) |
 | v0.4 | baseline JPEG entropy codec (opt-in) | 976 KiB (+72 KiB) |
 | v0.4.1 | library split so the parsers can be fuzzed; no new code paths | 980 KiB (+4 KiB) |
+| v0.5.0 | path-first command line, `-i`, `--list-formats`, `--check-deps` | 980 KiB (+0) |
 
 The last row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
@@ -93,7 +94,10 @@ already compressed well, and leaving them alone is the contract working, not the
 ### 3.2 Against the established tools
 
 The same corpus through Tzim and the reference tools, one machine (4 cores), copies of the same files, CI
-job `bench`, commit `0a454f0`. The binary measured is 0.4.0; the 0.4.1 binary is the same code. Reference
+job `bench`, commit `0a454f0`. The binary measured is 0.4.0. No handler has changed since: 0.4.1 split the
+crate, 0.4.2 changed packaging, 0.4.3 changed where the checksums are written, and 0.5.0 changed the command
+line. The rows below therefore describe the bytes that 0.5.0 writes, and the measurements are left as they
+were taken rather than re-taken to look fresh. Reference
 tools: oxipng 10.2.1, OptiPNG 0.7.8, jpegtran from libjpeg-turbo 2.1.5. The timed comparison is capped at
 files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte; the ratio for the whole corpus
 is the table in §3.1.
