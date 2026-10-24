@@ -92,11 +92,44 @@ already compressed well, and leaving them alone is the contract working, not the
 
 ### 3.2 Against the established tools
 
-Below is the same corpus through Tzim and the reference tools, one machine, copies of the same files. The
-timed comparison is capped at files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte;
-the ratio for the whole corpus is the table above.
+The same corpus through Tzim and the reference tools, one machine (4 cores), copies of the same files, CI
+job `bench`, commit `0a454f0`. The binary measured is 0.4.0; the 0.4.1 binary is the same code. Reference
+tools: oxipng 10.2.1, OptiPNG 0.7.8, jpegtran from libjpeg-turbo 2.1.5. The timed comparison is capped at
+files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte; the ratio for the whole corpus
+is the table in §3.1.
 
-PLACEHOLDER_BENCH
+**PNG** — 3 603 182 bytes in files of 200 KiB or less:
+
+| Tool | Wall clock | Peak RSS | Bytes after | Saved |
+| --- | --- | --- | --- | --- |
+| tzim (`--jobs 1`) | 3.4 s | 4 MiB | 3 328 364 | 274 818 (7.63 %) |
+| tzim (default jobs) | 1.2 s | 7 MiB | 3 328 364 | 274 818 (7.63 %) |
+| tzim `--zopfli` (`--jobs 1`) | 11 min 21 s | 43 MiB | 3 059 467 | 543 715 (15.09 %) |
+| oxipng `-o max --strip none` | 32.9 s | 80 MiB | 2 637 461 | 965 721 (26.80 %) |
+| optipng `-o7 -preserve` | 2 min 1 s | 16 MiB | 2 817 142 | 786 040 (21.82 %) |
+
+**JPEG** — 1 399 119 bytes:
+
+| Tool | Wall clock | Peak RSS | Bytes after | Saved |
+| --- | --- | --- | --- | --- |
+| tzim (`--jobs 1`) | 0.11 s | 5 MiB | 1 369 032 | 30 087 (2.15 %) |
+| jpegtran `-copy all -optimize` | 0.22 s | 13 MiB | 1 308 075 | 91 044 (6.51 %) |
+
+What the numbers say, without softening either half:
+
+- **On PNG, `oxipng -o max` wins and this project does not pretend otherwise.** It tries many filter
+  strategies and deflate settings per image; Tzim tries a smaller set. In exchange Tzim is roughly ten times
+  faster single-threaded, uses a twentieth of the memory, and handles four formats instead of one.
+- **`--zopfli` closes a little over half of that gap — 15.09 % against oxipng's 26.80 % — and costs 200×
+  the time of Tzim's own default** on the same files. That is why it is opt-in: it is a different tool with
+  the same contract, not the default.
+- **The JPEG row is not like-for-like.** `jpegtran` re-optimizes progressive files, which Tzim refuses by
+  contract, and it re-serialises markers, which Tzim copies byte for byte. Part of the 4.4-point difference
+  is that difference in scope, not a weaker encoder; this run does not separate the two. Splitting it is
+  listed as an open measurement in §4 rather than explained away here.
+- These files are heavily skewed towards `pngsuite`, which is deliberately poorly compressed in places. That
+  is why Tzim saves 7.63 % here and 4.19 % on the whole corpus: same code, different input. Both numbers are
+  published because either one alone would mislead.
 
 ### 3.3 Older spot measurements
 
@@ -124,6 +157,7 @@ tool and the README says so.
 | Regression tracking across releases | the corpus is stable and gated, but nothing plots the trend over time | v0.5 |
 | A ratio comparison on files above 200 KiB | `oxipng -o max` takes minutes per megabyte; the timed run is capped | not planned |
 | Peak RSS for ZIP and ICO separately | the benchmark measures per tool, not per handler | v0.5 |
+| JPEG ratio on baseline-only input | `jpegtran` also re-optimizes progressive files, which Tzim refuses, so the published row mixes scope with encoder quality | v0.5 |
 
 Everything else that used to be listed here is now measured: ratio per format on a fixed corpus, wall clock
 single-job and parallel, peak RSS, and the corpus itself as a stable target.
