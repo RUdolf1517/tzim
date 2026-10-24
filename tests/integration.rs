@@ -1392,6 +1392,8 @@ fn strip_metadata_clears_the_gzip_header_and_keeps_the_payload() {
 
 /// Inflates a single-member gzip file, returning the payload and its CRC.
 fn inflate_member(data: &[u8]) -> (Vec<u8>, u32) {
+    use std::io::Read;
+
     // The fixtures used here have no FEXTRA/FNAME/FCOMMENT after stripping, but
     // the original may have them, so walk the header flags the slow way.
     let flags = data[3];
