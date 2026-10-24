@@ -5,7 +5,7 @@
 **צמצום** — *tsimtsum*: contraction, making space
 
 Shrink the file, never the information.  
-One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO/CUR · JPEG.
+One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO/CUR · JPEG · TIFF.
 
 [Install](#install) · [Usage](#usage) · [Information](#information) · [Guarantees](#guarantees) · [Metadata](#metadata) · [Formats](#formats) · [Docs](#documentation) · [Name](#the-name)
 
