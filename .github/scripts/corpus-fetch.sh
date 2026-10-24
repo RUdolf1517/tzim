@@ -49,7 +49,8 @@ copy_into() {
     while IFS= read -r -d '' f; do
         rel="${f#"$root"/}"
         cp "$f" "$corpus/images/$tag-${rel//\//_}"
-    done < <(find "$dir" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \) -print0 | sort -z)
+    done < <(find "$dir" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
+        -o -iname '*.tif' -o -iname '*.tiff' \) -print0 | sort -z)
 }
 
 echo "== assembling =="

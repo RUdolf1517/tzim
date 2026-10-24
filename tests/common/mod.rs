@@ -1028,6 +1028,13 @@ fn tiff_w32(out: &mut [u8], at: usize, value: u32, big: bool) {
     out[at..at + 4].copy_from_slice(&bytes);
 }
 
+/// A zlib stream, which is what a Deflate TIFF strip is (raw DEFLATE is not).
+fn tiff_zlib(data: &[u8], level: u32) -> Vec<u8> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
 fn tiff_numbers(values: &[u32], typ: u16, big: bool) -> Vec<u8> {
     let mut out = Vec::new();
     for value in values {
@@ -1083,7 +1090,7 @@ pub fn build_tiff(spec: &TiffSpec) -> Vec<u8> {
         strips = spec.strips.clone();
     }
     if spec.compression != 1 {
-        strips = strips.iter().map(|s| deflate_bytes(s, 9)).collect();
+        strips = strips.iter().map(|s| tiff_zlib(s, 9)).collect();
     }
 
     let mut entries = vec![
