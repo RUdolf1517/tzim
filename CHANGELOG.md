@@ -9,6 +9,29 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.4.2] - 2026-10-24 — install from a package manager
+
+### Added
+
+- **`install.sh`**: `curl -fsSL .../main/install.sh | sh` takes the prebuilt binary for the platform into
+  `~/.local/bin`, and falls back to `cargo install --git` where no build is published. `TZIM_REPO`,
+  `TZIM_VERSION`, `TZIM_INSTALL_DIR` and `TZIM_BRANCH` override its choices.
+- **Debian and Fedora packages**: `tzim_amd64.deb` and `tzim.x86_64.rpm`, built by
+  `packaging/linux-packages.sh` from the same static musl tarball, with no runtime dependency declared.
+- **Homebrew formula** (`Formula/tzim.rb`) for a third-party tap, and a **winget manifest**
+  (`packaging/winget/`) for Windows x64.
+
+### Changed
+
+- Release assets are named after the Rust target triple and **carry no version**
+  (`tzim-x86_64-unknown-linux-musl.tar.gz` instead of `tzim-v0.4.1-linux-x86_64.tar.gz`), so
+  `releases/latest/download/<asset>` is a stable URL for the installers.
+- The release workflow now also builds the two Linux packages and folds them into `SHA256SUMS`.
+
+### Fixed
+
+- Nothing user-visible. The binary content is unchanged from 0.4.1.
+
 ## [0.4.1] - 2026-10-24 — the evidence behind the claims, no functional change
 
 ### Added

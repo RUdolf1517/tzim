@@ -3,6 +3,10 @@ name: release
 # Builds the shipped artifacts. Triggered when a release is published, so the
 # release notes can be written first; the binaries are attached to it a few
 # minutes later. Nothing here is built by hand.
+#
+# Asset names are the Rust target triples and carry no version, which is what
+# makes https://github.com/<repo>/releases/latest/download/<asset> a stable URL
+# for install.sh. The .deb and .rpm are built here from the same tarball.
 
 on:
   release:
@@ -23,6 +27,7 @@ jobs:
   build:
     name: build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -67,8 +72,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="${{ inputs.tag || github.event.release.tag_name }}"
-          name="tzim-${tag}-${{ matrix.name }}"
+          # Stable, version-less names: releases/latest/download/<name> resolves
+          # for every release, which is what install.sh and the formula use.
+          name="tzim-${{ matrix.target }}"
           bin="target/${{ matrix.target }}/release/tzim"
           mkdir -p dist
 
@@ -76,11 +82,13 @@ jobs:
             cp "${bin}.exe" dist/tzim.exe
             (cd dist && 7z a "../${name}.zip" tzim.exe > /dev/null)
             asset="${name}.zip"
+            rm -rf dist
           else
             cp "$bin" dist/tzim
             chmod +x dist/tzim
             (cd dist && tar czf "../${name}.tar.gz" tzim)
             asset="${name}.tar.gz"
+            rm -rf dist
           fi
 
           echo "Built ${asset} ($(stat -c %s "$asset" 2>/dev/null || stat -f %z "$asset") bytes)"
@@ -97,10 +105,18 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Linux packages
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: bash packaging/linux-packages.sh "${TAG#v}" artifacts
 
       - name: Checksums
         run: |
