@@ -103,37 +103,57 @@ jobs:
             printf '| %s | %s | %s | %+d |\n' "$name" "$bytes" "$((bytes / 1024))" "$((bytes - base))" >> "$out"
           }
           build baseline
-          build "strip=true" CARGO_PROFILE_RELEASE_STRIP=true
-          build "opt-level=s" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
-          build "opt-level=z" CARGO_PROFILE_RELEASE_OPT_LEVEL=z
-          build "opt=s, lto=thin" CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_LTO=thin
-          build "opt=s, cgu=16" CARGO_PROFILE_RELEASE_OPT_LEVEL=s CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
-          build "baseline, lto=off" CARGO_PROFILE_RELEASE_LTO=off
-          build "baseline, gc-sections" "RUSTFLAGS=-C link-arg=-Wl,--gc-sections -C link-arg=-Wl,--strip-all"
+          build "opt=s" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          build "opt=2" CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+          build "opt=s, force-unwind-tables=no" CARGO_PROFILE_RELEASE_OPT_LEVEL=s "RUSTFLAGS=-C force-unwind-tables=no"
+          build "baseline, force-unwind-tables=no" "RUSTFLAGS=-C force-unwind-tables=no"
+
+          # Dependencies keep -O3 while this crate shrinks for size.
+          cp Cargo.toml /tmp/Cargo.toml.orig
+          printf '\n[profile.release.package."*"]\nopt-level = 3\n' >> Cargo.toml
+          build "opt=s, deps opt=3" CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          cp /tmp/Cargo.toml.orig Cargo.toml
           cat "$out"
 
-      - name: Biggest symbols
+      - name: Where the bytes are
         shell: bash
         run: |
           set -o pipefail
           out=/tmp/tzim-profile.txt
           CARGO_PROFILE_RELEASE_STRIP=none cargo build --release --target x86_64-unknown-linux-musl -q
           cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-unstripped
+          nm -C -S -t d /tmp/tzim-unstripped > /tmp/tzim-nm.txt 2>/dev/null || true
           {
             echo
-            echo "### crates linked"
+            echo "### bytes of code by crate"
             echo '```'
-            nm -C /tmp/tzim-unstripped | grep -oE "(miniz_oxide|zlib_rs|fdeflate|flate2|zopfli|png|simd_adler32|adler32)::" | sort | uniq -c | sort -rn || true
+            awk '$2 ~ /^[0-9]+$/ && $3 ~ /^[a-zA-Z]$/ {
+                   name = $4
+                   cat = "other"
+                   if (name ~ /gimli/ || name ~ /addr2line/ || name ~ /unwind/ || name ~ /backtrace/) cat = "gimli/addr2line/unwind"
+                   else if (name ~ /miniz_oxide/) cat = "miniz_oxide"
+                   else if (name ~ /zopfli/) cat = "zopfli"
+                   else if (name ~ /fdeflate/) cat = "fdeflate"
+                   else if (name ~ /^png::/ || name ~ /<png::/) cat = "png"
+                   else if (name ~ /flate2/) cat = "flate2"
+                   else if (name ~ /tzim/) cat = "tzim"
+                   else if (name ~ /core::fmt/) cat = "core::fmt"
+                   else if (name ~ /std::/) cat = "std"
+                   total[cat] += $2
+                 }
+                 END { for (c in total) printf "%-26s %8d  %6d KiB\n", c, total[c], total[c] / 1024 }' /tmp/tzim-nm.txt | sort -k2 -n -r
             echo '```'
             echo
-            echo "### top 30 symbols by size"
+            echo "### strings that only a panic printer needs"
             echo '```'
-            nm -C -S --size-sort /tmp/tzim-unstripped 2>/dev/null | tail -30 || true
+            for needle in gimli addr2line "RUST_BACKTRACE" "note: run with"; do
+              printf '%-16s %s\n' "$needle" "$(strings -a /tmp/tzim-unstripped | grep -c -- "$needle" || true)"
+            done
             echo '```'
             echo
-            echo "### flate2 backend features"
+            echo "### section sizes"
             echo '```'
-            cargo tree -e features -p flate2 -i flate2 2>/dev/null | head -20 || true
+            size -A /tmp/tzim-unstripped | head -12
             echo '```'
           } >> "$out"
           cat "$out"
