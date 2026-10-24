@@ -11,14 +11,14 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.6.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Commit | v0.7.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
+| Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **1 012 576 bytes (988 KiB)** |
+| **Size** | **1 049 440 bytes (1 024 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Budget for this profile | 1 140 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 152 KiB |
+| Budget for this profile | 1 178 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
+| Headroom | 154 KiB |
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -37,9 +37,11 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.4.1 | library split so the parsers can be fuzzed; no new code paths | 980 KiB (+4 KiB) |
 | v0.5.0 | path-first command line, `-i`, `--list-formats`, `--check-deps` | 980 KiB (+0) |
 | v0.6.0 | `--strip-metadata`, one feature per handler | 988 KiB (+8 KiB) |
+| v0.7.0 | classic TIFF: strips, tags, rebuild-then-verify | 1 024 KiB (+36 KiB) |
 
-The last row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
+The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
+The v0.7.0 row is the TIFF handler: a parser, a rebuild and a verifier, and still no new dependency.
 
 The binary is statically linked, contains no C code, and requires no runtime beyond the OS.
 
@@ -71,23 +73,25 @@ order of magnitude while carrying an independent verification decoder.
 ### 3.1 The real-file corpus
 
 Four pinned upstream archives, assembled by `.github/scripts/corpus-fetch.sh` (URLs and checksums in
-[testing.md](testing.md#real-file-corpus)), 572 images plus 4 containers built from them with `gzip -9` and
-`zip -9`. CI job `corpus`, one pass over the tree, run `40119891574`.
+[testing.md](testing.md#real-file-corpus)), 690 images — PNG, JPEG and, since v0.7.0, TIFF — plus 4
+containers built from them with `gzip -9` and `zip -9`. CI job `corpus`, one pass over the tree.
 
 | Metric | Value |
 | --- | --- |
-| Files | 576 |
-| Optimized | 398 |
+| Files | 694 |
+| Optimized | 437 |
 | Already optimal | 156 |
 | Unsupported | 0 |
-| Refused (progressive/arithmetic/12-bit JPEG, by contract) | 8 |
-| Failed (corrupt upstream fixtures, see allowlist) | 14 |
-| Bytes before | 9 048 514 |
-| Bytes after | 8 669 301 |
-| **Saved** | **379 213 (4.19 %)** |
+| Refused by contract (progressive/arithmetic JPEG, multi-page, tiled, LZW/CCITT TIFF) | 81 |
+| Failed (corrupt upstream fixtures, see allowlist) | 20 |
+| Bytes before | 21 864 484 |
+| Bytes after | 19 733 541 |
+| **Saved** | **2 130 943 (9.75 %)** |
 | Files rewritten on a second pass | 0 |
 
-Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files.
+Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files, TIFF 39 files. The TIFF
+bytes dominate the total because uncompressed scans are the one thing in this corpus that still has room;
+the PNG and JPEG rows are unchanged from v0.6.0, which is what "no handler changed" should look like.
 
 The 156 "already optimal" files are the honest part of this number: these are files that upstream projects
 already compressed well, and leaving them alone is the contract working, not the tool failing.

@@ -40,3 +40,14 @@ pillow-jpeg_ff00_header.jpg
 pillow-junk_jpeg_header.jpg
 pillow-photoshop-200dpi-broken.jpg
 pillow-ultrahdr.jpg
+
+# TIFFs from Pillow's fuzz regression set. Every one of them is truncated or
+# lies about its own geometry — Pillow keeps them to prove a decoder cannot be
+# crashed by them, and Tzim refuses them for the same reason it refuses any
+# damaged file: repairing it would mean guessing.
+pillow-crash-0e16d3bfb83be87356d026d66919deaefca44dac.tif
+pillow-crash-1152ec2d1a1a71395b6f2ce6721c38924d025bf3.tif
+pillow-crash-4f085cc12ece8cde18758d42608bed6a2a2cfb1c.tif
+pillow-crash-86214e58da443d2b80820cff9677a38a33dcbbca.tif
+pillow-oom-225817ca0f8c663be7ab4b9e717b02c661e66834.tif
+pillow-tiff_wrong_bits_per_sample.tiff

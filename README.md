@@ -347,7 +347,7 @@ rather than approximated. Why the other formats are refused is in
 | [docs/roadmap.md](docs/roadmap.md) | Versions, gates, risks |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test and submit changes |
 
-The static Linux binary measures **988 KiB**; the smallest useful build, PNG and gzip only, is 764 KiB. The real-file corpus run saves **4.19 %** over 576 files from
+The static Linux binary measures **1 024 KiB**; the smallest useful build, PNG and gzip only, is 764 KiB. The real-file corpus run saves **9.75 %** over 694 files from
 four pinned upstream projects and changes nothing on a second pass. Both numbers, and the comparisons
 against oxipng, optipng and jpegtran, are in [docs/benchmarks.md](docs/benchmarks.md).
 

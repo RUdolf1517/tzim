@@ -177,7 +177,10 @@ def reason(record):
     # "tiff: tiled layout is not supported; only strips are rewritten" becomes
     # "tiled layout is not supported": the handler prefix and the aside go.
     _, _, rest = note.partition(": ")
-    return (rest or note).split(";")[0].split(" (")[0][:80]
+    clause = (rest or note).split(";")[0].split(" (")[0]
+    if len(clause) > 58:
+        clause = clause[:58].rsplit(" ", 1)[0] + "..."
+    return clause
 
 if skipped:
     by_reason = collections.Counter(reason(r) for r in skipped)

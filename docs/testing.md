@@ -101,6 +101,22 @@ not done until every row passes in CI.
 | `T-JPG-08` | A non-smaller candidate is discarded; a second run reports `already optimal` |
 | `T-JPG-09` | Bytes after `EOI` are preserved verbatim |
 
+### TIFF
+
+| ID | Assertion |
+| --- | --- |
+| `T-TIF-01` | Byte order, tag set, entry order, type and count preserved for every entry |
+| `T-TIF-02` | Every tag value identical except `Compression`, `StripOffsets`, `StripByteCounts` |
+| `T-TIF-03` | Every strip decodes to identical bytes, through `flate2` rather than through the writer |
+| `T-TIF-04` | Uncompressed strips become Deflate; `Compression` may change `1 → 8` or `32946 → 8` and nothing else |
+| `T-TIF-05` | Little- and big-endian files both round-trip, byte order preserved |
+| `T-TIF-06` | A Deflate file with nothing to gain is left alone (`already optimal`) |
+| `T-TIF-07` | BigTIFF, tiles, multiple IFDs, planar `2` and predictors are refused with a reason, exit 0, file untouched |
+| `T-TIF-08` | Unknown out-of-line tags are refused; unknown inline tags are copied untouched |
+| `T-TIF-09` | Truncated or inconsistent files fail with exit 1 and the original is untouched |
+| `T-TIF-10` | `--strip-metadata` removes the textual tags only; geometry, colour and ICC survive |
+| `T-TIF-11` | `--formats png` reports a TIFF as skipped, not failed |
+
 ---
 
 ## 3. Test levels
@@ -134,6 +150,7 @@ The command line has its own contract, because it is what every other test goes 
 | `tzim x.gz --strip-metadata` | header reduced to ten bytes with `FLG = 0` and `MTIME = 0`; payload identical |
 | `tzim x.jpg --formats jpeg --strip-metadata` | `APP1` and `COM` gone, `APP0` kept, coefficients unchanged |
 | `tzim x.zip --strip-metadata` | archive and entry comments gone, extra fields byte-identical, payload identical |
+| `tzim x.tif --strip-metadata` | textual tags gone, `Orientation`, resolution and every strip untouched |
 | `tzim x.png --strip-metadata --dry-run --json` | nothing written; `metadata_stripped` in the record and `strip_metadata` in the summary |
 | `tzim x.png` (no flag) | text chunks still there, whatever the encoder does |
 
@@ -205,11 +222,13 @@ SHA-256, and assembles the images into one tree; the run is `.github/scripts/cor
 | `pnggroup/libpng` | `v1.6.44` | `0ef5b633d0c65f78` | 51 from `contrib/pngsuite` |
 | `libjpeg-turbo/libjpeg-turbo` | `3.1.0` | `35fec2e1ddfb05ec` | 4 from `testimages` |
 | `image-rs/image` | `v0.25.6` | `e547553fc4e4353b` | 22 from `tests/images` |
-| `python-pillow/Pillow` | `11.3.0` | `fa4aca745b1e1c73` | 495 from `Tests/images` |
+| `python-pillow/Pillow` | `11.3.0` | `fa4aca745b1e1c73` | 613 from `Tests/images`: PNG, JPEG and, since v0.7.0, 118 TIFF |
 
 Plus four containers built on the spot from those files with `gzip -9` and `zip -9`, so the gzip and ZIP
-handlers are exercised on real payloads. The corpus is downloaded, never committed: it is 9 MiB of other
-people's files, and a URL plus a checksum says more than a binary blob in review.
+handlers are exercised on real payloads. The corpus is downloaded, never committed: it is 22 MiB of other
+people's files, and a URL plus a checksum says more than a binary blob in review. The TIFF files matter more
+than their count suggests: they are the reason a bug in the strip-layout scan was caught before release, and
+the refusal reasons they produce (LZW, tiles, multi-page) are exactly the contract's exclusions.
 
 The run executes the binary twice over the tree and gates on four properties, none of which is a fixture
 assertion in disguise:
