@@ -131,3 +131,28 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Publish the checksums in the notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The hashes are also an asset, but an asset cannot be read from the
+          # release page. Keeping one copy in the notes is what makes
+          # "copy the SHA-256 into the formula" a one-minute job, and a second
+          # run replaces the block instead of stacking another one.
+          gh release view "$TAG" --repo "$REPO" --json body --jq .body > body.md
+          if grep -q '^### SHA-256$' body.md; then
+            sed -i '/^### SHA-256$/,$d' body.md
+          fi
+          {
+            cat body.md
+            echo '### SHA-256'
+            echo
+            echo '```'
+            cat artifacts/SHA256SUMS
+            echo '```'
+          } > notes.md
+          gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
