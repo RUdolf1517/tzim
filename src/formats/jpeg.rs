@@ -1339,7 +1339,7 @@ fn assemble(
     Ok(out)
 }
 
-fn marker_sequence(image: &Image, opts: &Options) -> Vec<(u8, &[u8])> {
+fn marker_sequence<'a>(image: &'a Image, opts: &Options) -> Vec<(u8, &'a [u8])> {
     image
         .segments
         .iter()

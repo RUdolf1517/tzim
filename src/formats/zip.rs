@@ -925,7 +925,7 @@ pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
             // supported format that got smaller and still satisfies its contract.
             let data_a = &a[ea.data_offset..ea.data_offset + ea.data_len];
             let data_b = &b[eb.data_offset..eb.data_offset + eb.data_len];
-            verify_nested_change(data_a, data_b, ea.method, &label)?;
+            verify_nested_change(data_a, data_b, ea.method, &label, opts)?;
         }
         if ea.version_made_by != eb.version_made_by || ea.version_needed != eb.version_needed {
             return Err(Error::verify(format!("entry `{label}`: version fields changed")));
@@ -988,6 +988,7 @@ fn verify_nested_change(
     data_b: &[u8],
     method: u16,
     label: &str,
+    opts: &Options,
 ) -> Result<()> {
     if method != METHOD_DEFLATE {
         return Err(Error::verify(format!(
@@ -1010,7 +1011,7 @@ fn verify_nested_change(
             "entry `{label}`: content changed but is not a supported format"
         ))
     })?;
-    super::verify(format, &child_a, &child_b)
+    super::verify(format, &child_a, &child_b, opts)
         .map_err(|e| Error::verify(format!("entry `{label}`: nested content: {e}")))
 }
 
