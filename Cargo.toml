@@ -1,0 +1,34 @@
+[package]
+name = "tzim"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Lossless file optimizer: shrink the file, never the information"
+license = "MIT"
+repository = "https://github.com/RUdolf1517/tzim"
+readme = "README.md"
+keywords = ["lossless", "optimization", "png", "gzip", "cli"]
+categories = ["command-line-utilities", "compression"]
+
+[dependencies]
+crc32fast = { version = "1.5", optional = true }
+flate2 = { version = "1.1", optional = true, default-features = false, features = ["rust_backend"] }
+png = { version = "0.18", optional = true, default-features = false }
+zopfli = { version = "0.8", optional = true, default-features = false, features = ["std"] }
+
+[features]
+default = ["png", "gzip", "zopfli"]
+gzip = ["dep:flate2", "dep:crc32fast"]
+png = ["dep:png", "dep:flate2", "dep:crc32fast"]
+zopfli = ["dep:zopfli"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+incremental = false
+
+[lints.rust]
+unsafe_code = "forbid"

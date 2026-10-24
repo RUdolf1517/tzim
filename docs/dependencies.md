@@ -5,7 +5,7 @@ Related: [size budget](size-budget.md) · [formats](formats.md)
 Tzim exists partly as a reaction to file optimizers with enormous dependency trees. Every dependency is
 therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**.
 
-The project targets **Rust 1.88** (edition 2024). The floor is set by the optional Zopfli encoder; the PNG
+The project targets **Rust 1.88** (edition 2021). The floor is set by the optional Zopfli encoder; the PNG
 decoder requires 1.81 and `flate2` requires 1.67. Keeping the floor at 1.88 means one toolchain for
 everything, including the optional feature.
 
