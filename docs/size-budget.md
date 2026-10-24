@@ -6,8 +6,9 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 1 049 440 bytes (1 024 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.7.0. Per-feature measurements are in §3.
+> **Measured: 922 464 bytes (900 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.7.1. Per-feature measurements are in §3; the profile that got
+> here is in §2, and what it cost in speed is in §5.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
 ---
@@ -19,13 +20,13 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 
 | Profile | Features | Measured | Budget (+15 %) |
 | --- | --- | --- | --- |
-| `png` | `png` | 756 KiB | 870 KiB |
-| `core` | `png,gzip` | 764 KiB | 880 KiB |
-| `+zip` | `png,gzip,zip` | 812 KiB | 935 KiB |
-| `images` | `png,gzip,zip,ico` | 828 KiB | 955 KiB |
-| `+jpeg` | `png,gzip,zip,ico,jpeg` | 892 KiB | 1 030 KiB |
-| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 924 KiB | 1 063 KiB |
-| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 1 024 KiB | 1 178 KiB |
+| `png` | `png` | 688 KiB | 792 KiB |
+| `core` | `png,gzip` | 692 KiB | 796 KiB |
+| `+zip` | `png,gzip,zip` | 732 KiB | 842 KiB |
+| `images` | `png,gzip,zip,ico` | 744 KiB | 856 KiB |
+| `+jpeg` | `png,gzip,zip,ico,jpeg` | 796 KiB | 916 KiB |
+| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 824 KiB | 948 KiB |
+| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 900 KiB | 1 036 KiB |
 
 `full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
 rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
@@ -44,28 +45,32 @@ Exactly what `Cargo.toml` contains today:
 
 ```toml
 [profile.release]
-opt-level = 3
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+strip = "symbols"
+incremental = false
+
+[profile.release.package."*"]
+opt-level = 3
 ```
 
 Notes:
 
+- `opt-level = "s"` applies to **this crate**; everything it depends on — `miniz_oxide`, `fdeflate`, `png`,
+  `zopfli` — is built at `3`. The time is in the codecs, the bytes are mostly here: the same corpus runs
+  3.6 % slower this way instead of 11 %, and the binary is 104 KiB smaller (§5 has all three measurements).
 - `panic = "abort"` means `Drop` guards do not run on a panic. The original file is still intact
   (replacement happens last), but a temporary file may remain. This is documented in
   [safety](safety.md#5-failure-modes).
-- `strip` is **not** set, so symbols stay in the binary. That is deliberate: a panic message with a symbol
-  name is worth more to whoever has to report the bug than the bytes it costs, and the budget is set with
-  them included. If a future release needs the space, `strip = "symbols"` is the first thing to try, and the
-  experiment in §5 records the decision either way.
+- `strip = "symbols"` removes the symbol table. `strip = true` measured byte-identical (§5): there is no
+  debug information to remove in the first place. A panic in the released binary therefore prints addresses;
+  the message and the exit code are unaffected.
+- `lto = "fat"` and `codegen-units = 1` are what make cross-crate inlining possible; thin LTO measured
+  106 KiB *larger* (§5), so the extra link time buys size rather than costing it.
 - `debug` and `incremental` are Cargo's defaults for a release profile (off and off); they are not spelled
   out because writing them down would suggest a measurement that never happened.
-- LTO is "fat" because the tree is tiny; thin LTO was not worth the extra measurement complexity.
-- No `opt-level = "s"` or `"z"` for the whole crate: it slows the DEFLATE and PNG hot paths, and there is no
-  measurement in this repository showing the size win would pay for it.
-
----
 
 ## 3. Feature matrix
 
@@ -95,16 +100,18 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 
 | Features | Bytes | KiB |
 | --- | --- | --- |
-| `png` | 774 944 | 756 |
-| `png,gzip` | 783 136 | 764 |
-| `png,gzip,zip` | 832 288 | 812 |
-| `png,gzip,zip,ico` | 848 672 | 828 |
-| `png,gzip,zip,ico,jpeg` | 914 208 | 892 |
-| `png,gzip,zip,ico,jpeg,tiff` | 946 976 | 924 |
-| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 1 049 440 | 1 024 |
+| `png` | 705 312 | 688 |
+| `png,gzip` | 709 408 | 692 |
+| `png,gzip,zip` | 750 368 | 732 |
+| `png,gzip,zip,ico` | 762 656 | 744 |
+| `png,gzip,zip,ico,jpeg` | 815 904 | 796 |
+| `png,gzip,zip,ico,jpeg,tiff` | 844 576 | 824 |
+| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 922 464 | 900 |
 
-Each feature's cost is visible by subtracting the row above it: `gzip` +8 KiB, `zip` +49 KiB, `ico`
-+16 KiB, the JPEG codec +65 KiB, the TIFF handler +32 KiB, Zopfli +98 KiB.
+Each feature's cost is visible by subtracting the row above it: `gzip` +4 KiB, `zip` +40 KiB, `ico`
++12 KiB, the JPEG codec +52 KiB, the TIFF handler +28 KiB, Zopfli +76 KiB. The same deltas measured at
+`opt-level = 3` were 8, 49, 16, 65, 32 and 98 KiB, which is the profile change made visible in each
+handler: the codecs shrink least, because they are already compiled for speed.
 
 The deltas are what a user saves by narrowing the build, not estimates: `png,gzip` is the smallest useful
 optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, `+tiff` adds the one
@@ -172,24 +179,72 @@ table that looks measured.
 
 ## 5. Options considered
 
-**None of the rows below is a measurement taken in this repository.** They are recorded decisions with the
-reasoning that led to them, kept so the next person does not have to re-litigate them from memory. A row
-with a number attached would say so; none has one.
+### 5.1 The measurements behind the current profile
+
+One CI job built all of these from the same commit and ran the same corpus through each (694 real files,
+`--recursive`, one job, warm cache, two timed runs per build). "Bytes written" is what the corpus run
+produced: it is identical in every row, which is the only result that matters — a compiler flag cannot
+change a zlib stream, so a difference here would have been a bug.
+
+| Build | Bytes | KiB | PNG corpus | JPEG corpus | Bytes written |
+| --- | --- | --- | --- | --- | --- |
+| `opt-level = 3` (previous) | 1 028 960 | 1 004 | 9 050 ms | 304 ms | 379 177 |
+| `opt-level = 3` (repeat) | 1 028 960 | 1 004 | 9 063 ms | 308 ms | 379 177 |
+| `opt-level = "s"` (whole tree) | 901 984 | 880 | 10 073 ms | 321 ms | 379 177 |
+| `opt-level = "s"` (repeat) | 901 984 | 880 | 10 073 ms | 329 ms | 379 177 |
+| **`"s"` + deps `3` (chosen)** | **922 464** | **900** | **9 390 ms** | **311 ms** | 379 177 |
+| `"s"` + deps `3` (repeat) | 922 464 | 900 | 9 379 ms | 314 ms | 379 177 |
+
+Reading of the table: shrinking the whole tree buys 124 KiB and costs 11 % on real PNGs; shrinking only
+this crate buys 104 KiB and costs 3.6 % (≈60 ms per 1 MiB corpus, JPEG +2 %), because the time is spent
+inside the codecs. The remaining 20 KiB would have been paid for with three times the slowdown, so the
+mixed profile is the trade this project takes. Both repeats agree to within 15 ms, so these are not
+noise-limited numbers.
+
+### 5.2 Earlier trials in the same pass
+
+Measured the same way but before the `core::fmt` change described in §5.3, so each figure is roughly
+20 KiB above what the same variant would measure today. They are kept because they are the reason the
+chosen combination is what it is; none of them is a claim about the shipped binary.
+
+| Experiment | Result | Decision |
+| --- | --- | --- |
+| `opt-level = 2` | 1 020 768 (−8 KiB vs `3`) | pointless: 8 KiB for a full optimisation level |
+| `opt-level = "z"` | 926 560 | rejected: smaller than `3`, larger than `"s"`, slower than both |
+| `lto = "thin"` | 1 008 480 at `opt=s` | rejected: 106 KiB larger than fat LTO |
+| `lto = false` | 1 131 368 at `opt=s` | rejected |
+| `codegen-units = 16` | 922 464 at `opt=s` | rejected: no smaller than the mixed profile, and gives up cross-crate inlining |
+| `strip = true` instead of `strip = "symbols"` | 1 049 440, identical | no effect: there is no debug information to strip |
+| `-Wl,--gc-sections` | 1 049 440, identical | no effect: LTO already removes what is unreachable |
+| `-C force-unwind-tables=no` | identical at both `opt=3` and `opt=s` | no effect, and a non-standard flag is not worth zero bytes |
+
+### 5.3 What is left, and why it is not taken
+
+`cargo bloat`-style attribution of the 1 049 440-byte binary put 165 KiB in `gimli`/`addr2line`/`unwind`
+symbols, which looks like free money. It is not: a hello-world Rust binary with `panic = "abort"` and
+`strip = "symbols"` carries 127 `gimli` symbols and 107 unwind symbols of its own, so that stack is `std`'s
+and no dead-code pass over this repository can remove it. `panic = "abort"` is already on; the only way
+past it is `-Z build-std` on nightly, which §5.4 rejects.
+
+The other size lever was `core::fmt`, at 17.5 KiB: formatting a `u64` with `{}` pulls in the general
+formatter. `src/report.rs` now computes sizes, percentages and durations with integer arithmetic and its
+own two-decimal rounding, which removes that path from the binary without changing a single byte of output
+format. That is the shape of every remaining win here: code that is compiled but whose general case is
+never reached.
+
+### 5.4 Options rejected without measurement in this repository
+
+Recorded decisions with the reasoning that led to them, kept so the next person does not have to
+re-litigate them from memory. A row with a number attached would say so; none has one.
 
 | Experiment | Expected effect | Decision rule |
 | --- | --- | --- |
-| `opt-level = "z"` globally | −5…15 % size, slower codecs | keep only if the size win exceeds 10 % and runtime cost is under 20 % |
-| `opt-level = "z"` for the CLI/reporting modules only | small | per-package override if measurable |
-| `strip = "debuginfo"` vs `"symbols"` vs none | small | **decided: none** — symbols are kept so a panic can name a function; revisit only if the budget gets tight |
-| `panic = "abort"` (already on) | tens of KiB | stays |
-| `-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort` (nightly) | 20–30 % smaller | **not default**; offered only in a documented "minimal" build, because it needs nightly and weakens reproducibility |
+| `-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort` (nightly) | 20–30 % smaller | **not default**; it needs nightly, weakens reproducibility, and would change the toolchain every user needs to match a release |
 | `flate2` `zlib-rs` backend instead of `miniz_oxide` | faster, possibly larger, adds `unsafe` | rejected by default; re-evaluate only if decode speed becomes the bottleneck |
 | `zopfli` default-features off (already) | avoids `log`, `simd-adler32`, gzip/zlib wrappers | stays |
 | `png` default-features off (already) | avoids `unstable`, `zlib-rs` | stays |
 | UPX | −50…70 % on disk | **never**: false positives in antivirus, decompression at startup, additional attack surface, and it hides the real size instead of reducing it |
 | dynamic linking against system zlib | smaller artifact | **never**: breaks static cross-platform builds and reproducibility |
-
----
 
 ## 6. CI gate
 
