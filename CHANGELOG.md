@@ -11,6 +11,14 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [0.4.3] - 2026-10-24 — checksums where they can be read
 
+### Added
+
+- **Homebrew formula** (`Formula/tzim.rb`) for the third-party tap, pinned per platform to the published
+  artifact and its SHA-256. It unpacks the release, so the tap builds nothing.
+- **winget manifest** (`packaging/winget/0.4.3/`) for Windows x64: a `zip` installer with a portable
+  nested `tzim.exe`, nothing written outside the package store.
+- The README now leads with the install channels and carries the contact address.
+
 ### Changed
 
 - The release workflow writes the `SHA256SUMS` block into the release notes and into a check annotation,
