@@ -10,6 +10,10 @@ use crate::replace::{self, Snapshot, TempFile};
 use crate::report::{Outcome, Status};
 
 /// Everything the per-file pipeline needs, copied out of the command line once.
+///
+/// Two fields are only consulted on Unix, where ownership and link counts are
+/// available without extra dependencies.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub struct Config {
     pub dry_run: bool,
     pub zopfli: bool,

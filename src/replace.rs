@@ -93,6 +93,7 @@ pub struct Snapshot {
     #[cfg(unix)]
     pub nlink: u64,
     #[cfg(not(unix))]
+    #[allow(dead_code)]
     pub nlink: u64,
 }
 

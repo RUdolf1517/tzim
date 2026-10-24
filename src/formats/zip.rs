@@ -422,15 +422,20 @@ fn ascii_lower(b: u8) -> u8 {
 
 fn starts_with_ignore_case(name: &[u8], prefix: &str) -> bool {
     let p = prefix.as_bytes();
-    name.len() >= p.len() && name[..p.len()].iter().map(|b| ascii_lower(*b)).eq(p.iter().copied())
+    name.len() >= p.len()
+        && name[..p.len()]
+            .iter()
+            .map(|b| ascii_lower(*b))
+            .eq(p.iter().map(|b| ascii_lower(*b)))
 }
 
 fn ends_with_ignore_case(name: &[u8], suffix: &str) -> bool {
     let s = suffix.as_bytes();
-    name.len() >= s.len() && name[name.len() - s.len()..]
-        .iter()
-        .map(|b| ascii_lower(*b))
-        .eq(s.iter().copied())
+    name.len() >= s.len()
+        && name[name.len() - s.len()..]
+            .iter()
+            .map(|b| ascii_lower(*b))
+            .eq(s.iter().map(|b| ascii_lower(*b)))
 }
 
 /// Archive-level reasons to refuse, before any byte is written.
@@ -446,13 +451,13 @@ fn deny_reason(archive: &Archive<'_>, d: &[u8]) -> Option<String> {
         let name = e.name;
         if starts_with_ignore_case(name, "META-INF/") {
             let tail = &name["META-INF/".len()..];
-            if tail.iter().all(|b| *b != b'/') {
-                if ends_with_ignore_case(tail, ".sf")
+            if tail.iter().all(|b| *b != b'/')
+                && (ends_with_ignore_case(tail, ".sf")
                     || ends_with_ignore_case(tail, ".rsa")
                     || ends_with_ignore_case(tail, ".dsa")
                     || ends_with_ignore_case(tail, ".ec")
                     || ends_with_ignore_case(tail, "documentsignatures.xml")
-                    || ends_with_ignore_case(tail, "macrosignatures.xml")
+                    || ends_with_ignore_case(tail, "macrosignatures.xml"))
                 {
                     return Some(format!(
                         "zip: signed archive (`{}` present) — recompression would invalidate the signature",
