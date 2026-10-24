@@ -41,6 +41,11 @@ planning aids, not commitments.
 - Independent verification for both formats.
 - Test suite, fixture corpus, failure-injection hooks, CI on three platforms, size measurement.
 
+**Status:** implemented. 41 unit and 21 integration tests pass on Linux, macOS and Windows; clippy is clean
+with `-D warnings`; the static musl binary measures 832 KiB. Remaining before a tagged release: commit
+`Cargo.lock`, publish artifacts, and fill the comparative benchmark rows in
+[benchmarks.md](benchmarks.md#4-what-is-still-missing).
+
 **Gate**
 
 - `T-PNG-*` and `T-GZ-*` pass in CI on Linux, macOS and Windows;
