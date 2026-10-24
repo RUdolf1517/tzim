@@ -133,6 +133,9 @@ struct Tiff<'a> {
     data: &'a [u8],
     /// True for big-endian files.
     big: bool,
+    /// Where the header says the IFD lives. Real files put it after the image
+    /// data as often as before it, so this cannot be assumed.
+    ifd: usize,
     entries: Vec<Entry<'a>>,
 }
 
@@ -235,6 +238,7 @@ fn parse(data: &[u8]) -> Result<Tiff<'_>> {
     let mut tiff = Tiff {
         data,
         big,
+        ifd: 0,
         entries: Vec::new(),
     };
 
@@ -251,6 +255,7 @@ fn parse(data: &[u8]) -> Result<Tiff<'_>> {
     if ifd < 8 || ifd + 2 > data.len() {
         return Err(Error::parse("tiff: the IFD lies outside the file"));
     }
+    tiff.ifd = ifd;
     let count = tiff.u16_at(ifd)? as usize;
     if count == 0 {
         return Err(Error::refused("tiff: an empty IFD has nothing to rewrite"));
@@ -421,9 +426,8 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
 /// the strips: those bytes would be lost by the rebuild.
 fn ensure_nothing_else(tiff: &Tiff<'_>, offsets: &[u32], counts: &[u32]) -> Result<()> {
     let mut ranges: Vec<(usize, usize)> = vec![(0, 8)]; // the header is always ours
-    let ifd_start = 8;
     let ifd_len = 2 + tiff.entries.len() * 12 + 4;
-    ranges.push((ifd_start, ifd_start + ifd_len));
+    ranges.push((tiff.ifd, tiff.ifd + ifd_len));
     for entry in &tiff.entries {
         let size = type_size(entry.typ).unwrap_or(0);
         let len = size * entry.count as usize;
@@ -949,6 +953,7 @@ mod tests {
         let tiff = Tiff {
             data: &[0, 0, 0, 0, 0, 0, 0, 0],
             big: false,
+            ifd: 8,
             entries: Vec::new(),
         };
         let entry = Entry {
