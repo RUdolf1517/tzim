@@ -635,10 +635,10 @@ pub fn verify(original: &Path, candidate: &Path, opts: &Options) -> Result<()> {
         return Err(Error::verify("non-IDAT chunk count changed"));
     }
 
-    compare_pixels(&a, &b, pa.header, opts)
+    compare_pixels(&a, &b, pa.header)
 }
 
-fn compare_pixels(a: &[u8], b: &[u8], header: Header, opts: &Options) -> Result<()> {
+fn compare_pixels(a: &[u8], b: &[u8], header: Header) -> Result<()> {
     if header.interlace == 0 {
         let mut ra = open_reader(a)?;
         let mut rb = open_reader(b)?;

@@ -137,7 +137,7 @@ fn corrupt_png_is_refused_and_left_untouched() {
 fn gzip_header_is_preserved_byte_for_byte() {
     let ws = Workspace::new("gz-header");
     let payload = b"the quick brown fox jumps over the lazy dog\n".repeat(200);
-    let original = build_gzip(&payload, Some("original-name.txt"), Some(b"XYZZ"), 0x04, 1);
+    let original = build_gzip(&payload, Some(b"original-name.txt"), Some(b"XYZZ"), 0x04, 1);
     let path = ws.write("data.gz", &original);
 
     let (code, stdout, stderr) = run(&["optimize", "data.gz"], &ws.path);

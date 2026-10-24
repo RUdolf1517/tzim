@@ -34,7 +34,7 @@ fn main() -> ExitCode {
             ExitCode::from(0)
         }
         Ok(Command::Optimize(args)) => match run_optimize(&args) {
-            Ok(code) => ExitCode::from(code),
+            Ok(code) => ExitCode::from(code as u8),
             Err(e) => {
                 eprintln!("tzim: {e}");
                 ExitCode::from(3)
