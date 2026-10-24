@@ -819,11 +819,9 @@ fn mask_local(header: &[u8], checksum: bool) -> Vec<u8> {
     if copy.len() >= LOCAL_COMP_OFFSET + 4 {
         copy[LOCAL_COMP_OFFSET..LOCAL_COMP_OFFSET + 4].fill(0);
     }
-    if checksum {
-        if copy.len() >= LOCAL_UNCOMP_OFFSET + 4 {
-            copy[LOCAL_CRC_OFFSET..LOCAL_CRC_OFFSET + 4].fill(0);
-            copy[LOCAL_UNCOMP_OFFSET..LOCAL_UNCOMP_OFFSET + 4].fill(0);
-        }
+    if checksum && copy.len() >= LOCAL_UNCOMP_OFFSET + 4 {
+        copy[LOCAL_CRC_OFFSET..LOCAL_CRC_OFFSET + 4].fill(0);
+        copy[LOCAL_UNCOMP_OFFSET..LOCAL_UNCOMP_OFFSET + 4].fill(0);
     }
     copy
 }
