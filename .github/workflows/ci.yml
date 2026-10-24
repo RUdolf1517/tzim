@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "arena/**"]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test
+        id: test
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --all-features 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}.log"
+
+      - name: Publish failure log
+        if: steps.test.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "/tmp/tzim-test-${{ matrix.os }}.log" "test-${{ matrix.os }}"
+
+      - name: Fail the job
+        if: steps.test.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Clippy
+        id: clippy
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/tzim-clippy.log
+
+      - name: Publish failure log
+        if: steps.clippy.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-clippy.log clippy
+
+      - name: Fail the job
+        if: steps.clippy.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  size:
+    name: binary size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Install musl tooling
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build static binary
+        id: size
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --release --target x86_64-unknown-linux-musl --all-features 2>&1 | tee /tmp/tzim-size.log
+          ls -l target/x86_64-unknown-linux-musl/release/tzim
+          file target/x86_64-unknown-linux-musl/release/tzim
+          stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim
+
+      - name: Report size
+        if: steps.size.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+            deps=$(cargo tree --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
+            echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
+            echo "normal dependency lines: ${deps}"
+            echo
+            echo "sections:"
+            llvm-size -A target/x86_64-unknown-linux-musl/release/tzim 2>/dev/null | head -12 || true
+          } | tee /tmp/tzim-size-report.txt
+          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size report
+
+      - name: Publish failure log
+        if: steps.size.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-size.log size
+
+      - name: Fail the job
+        if: steps.size.outcome == 'failure'
+        shell: bash
+        run: exit 1
