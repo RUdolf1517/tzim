@@ -37,9 +37,9 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   on the same Apple silicon runner; `install.sh` and `docs/releases.md` pick it up.
 - The release smoke test accepts both `--list-formats` and the older `formats`, so tags before 0.5 still
   pass it.
-- `Formula/tzim.rb` stays pinned to v0.4.3 until the v0.5.0 assets exist; it is updated in the follow-up
-  release PR, together with the winget manifest for 0.5.0. A formula never carries a hash for a file that
-  has not been built.
+- `Formula/tzim.rb` and `packaging/winget/0.5.0/` are pinned to the published v0.5.0 artifacts and their
+  SHA-256, taken from the release notes after the build. The formula now covers Intel as well as Apple
+  silicon macOS, and its caveats and test use `--list-formats`.
 
 ### Documentation
 

@@ -94,6 +94,11 @@ files before anything is touched.
   comparative benchmarks; the binary was the same code as 0.4.0.
 - **v0.4.2 changes packaging, not behaviour.** Same binary content, new asset names, plus `.deb`, `.rpm`,
   `install.sh`, the Homebrew formula and the winget manifest.
+- **v0.5.0 changes the command line, not the bytes.** `tzim optimize <path>` became `tzim <path>`, and
+  `-i`, `--list-formats` and `--check-deps` were added. The old verb is still accepted, so upgrading never
+  breaks a script; it is simply undocumented. The formula and the winget manifest for 0.5.0 were pinned in
+  a follow-up PR from the hashes in the release notes, which is the only order that never publishes a hash
+  for a file that does not exist yet.
 
 ## 5. Release process
 
