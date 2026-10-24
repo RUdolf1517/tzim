@@ -123,6 +123,11 @@ jobs:
           }
           measure "opt=3" opt3
           measure "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          # The other direction: shrink the dependencies, keep this crate fast.
+          cp Cargo.toml /tmp/Cargo.toml.orig
+          printf '\n[profile.release.package."*"]\nopt-level = "s"\n' >> Cargo.toml
+          measure "opt=3, deps opt=s" depss
+          cp /tmp/Cargo.toml.orig Cargo.toml
           cat "$out"
 
       - name: Report
