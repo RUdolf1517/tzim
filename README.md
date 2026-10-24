@@ -12,9 +12,13 @@ The name comes from the Hebrew צמצום (*tsimtsum*) — contraction, reductio
 
 ## Status
 
-**Pre-alpha: specification stage.** This repository currently contains the design documents only; there is
-no code yet, and no format is supported today. The format table below describes what is *planned*, with the
-version in which it is expected. Nothing here should be read as a claim of existing functionality.
+**v0.1 implemented.** PNG and gzip are supported and verified; the code is tested on Linux, macOS and
+Windows in CI. Everything else in the table below is *planned*, with the version in which it is expected —
+nothing outside the PNG and gzip rows works today.
+
+- Static Linux binary: **832 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
+- 41 unit and 21 integration tests, clippy clean with `-D warnings`.
+- No release artifacts have been published yet; build from source (below).
 
 See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
 admission criteria a format must meet before it may be listed as supported.
@@ -57,8 +61,8 @@ verified. See [docs/guarantees.md](docs/guarantees.md).
 
 | Format | Version | Status | Transformation | Guarantee |
 | --- | --- | --- | --- | --- |
-| PNG | v0.1 | planned | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
-| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | planned | Recompress the DEFLATE body; header preserved verbatim | G3 |
+| PNG | v0.1 | **implemented** | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
+| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | **implemented** | Recompress the DEFLATE body; header preserved verbatim | G3 |
 | ZIP and ZIP-based formats (`.zip`, `.jar`, `.apk`, `.docx/.xlsx/.pptx`, `.epub`, `.odt/.ods/.odp`, `.cbz`, `.whl`, `.nupkg`) | v0.2 | planned | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed archives are refused | G3 |
 | ICO / CUR | v0.3 | planned | Optimize embedded PNG images | G3 |
 | APNG | v0.3 | planned | Recompress animation frames | G3 |
@@ -77,16 +81,19 @@ minification, which destroys information.
 
 ## Installation
 
-Not available yet. Once v0.1 ships, the intended installation paths are:
-
 ```sh
 # from source (requires Rust 1.88 or newer)
 cargo install --path .
 
-# prebuilt binaries will be published for Linux (glibc and musl), macOS and Windows
+# smallest build: PNG and gzip only, no Zopfli encoder
+cargo build --release --no-default-features --features png,gzip
+
+# static Linux binary, matching the measured 832 KiB artifact
+cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-The tool is designed to build as a single static binary with no C toolchain and no runtime dependencies.
+The tool builds as a single static binary with no C toolchain and no runtime dependencies. Prebuilt
+binaries for Linux, macOS and Windows will be published with the first tagged release.
 
 ## Usage
 
@@ -155,6 +162,7 @@ These are permanent non-goals, not unimplemented features:
 | [docs/dependencies.md](docs/dependencies.md) | Every dependency and why it exists |
 | [docs/size-budget.md](docs/size-budget.md) | Binary size budget, feature matrix, measurement procedure |
 | [docs/testing.md](docs/testing.md) | Test strategy, fixture corpus, fuzzing, CI |
+| [docs/benchmarks.md](docs/benchmarks.md) | Measured binary size, tests, and what is still unmeasured |
 | [docs/roadmap.md](docs/roadmap.md) | Versions, gates, complexity and risks |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test and submit changes |
 

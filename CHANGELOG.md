@@ -4,8 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The project is in the specification stage: there is no runnable code yet, so nothing below is a released
-feature. Planned releases are described in [docs/roadmap.md](docs/roadmap.md).
+The v0.1 code is complete and tested in CI, but no release artifacts have been published yet. Planned
+releases are described in [docs/roadmap.md](docs/roadmap.md).
+
+## [0.1.0] - unreleased
+
+### Added
+
+- **PNG handler.** IDAT recompression with `zlib -9`, scanline filter re-selection for non-interlaced,
+  non-animated images, optional Zopfli. Every non-IDAT chunk is copied byte for byte, including unknown and
+  private chunks. Verification re-parses the candidate (all chunk CRCs) and decodes both files row by row
+  with the independent `png` crate.
+- **gzip handler.** The header (`FEXTRA`, `FNAME`, `FCOMMENT`, `FHCRC`, `MTIME`, `XFL`, `OS`) is preserved
+  verbatim; only the DEFLATE body is rewritten and the trailer is copied after proving it matches.
+  Multi-member files and trailing data are refused.
+- **Safe replacement.** Temporary file created next to the destination with `create_new`, RAII cleanup,
+  permission and timestamp preservation, `fsync`, single `rename`, directory `fsync` on Unix, and detection
+  of concurrent modification before the swap.
+- **CLI.** `optimize`, `formats`, `--help`, `--version`; multiple files, directories, `--recursive`,
+  `--dry-run`, `--jobs`, `--json`, `--quiet`, `--fail-fast`, `--include`, `--exclude`, `--min-size`,
+  `--max-size`, `--max-pixels`, `--zopfli`, `--follow-symlinks`, `--allow-hardlinks`,
+  `--allow-root-ownership-change`, `--no-fsync`. Exit codes `0`–`4`.
+- Deterministic output ordering, de-duplication by `(device, inode)`, symlink and hard-link refusal.
+- 41 unit tests and 21 integration tests; CI on Linux, macOS and Windows; clippy `-D warnings`; static musl
+  build with a measured size of 832 KiB and 14 dependency lines.
 
 ## [Unreleased]
 

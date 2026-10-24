@@ -5,9 +5,11 @@ Related: [dependencies](dependencies.md) · [roadmap](roadmap.md)
 A small binary is a project requirement, not a nice-to-have. But "small" is only meaningful when it is
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
-> **Current status:** pre-alpha. Nothing has been built yet, so **no size number in this document is a
-> measurement**. The targets below are provisional budgets to be validated and tightened at v0.1, when the
-> first binary exists.
+> **Current status:** the v0.1 binary has been built and measured by CI.
+> **Measured: 852 832 bytes (832 KiB)** for `x86_64-unknown-linux-musl`, `--release --all-features`
+> (PNG + gzip + Zopfli), commit `5c678b0`. That is 46 % of the provisional budget for the same profile.
+> The budgets in §1 remain upper bounds; the next step is to tighten them to *measured + 15 %*.
+> Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
 ---
 
