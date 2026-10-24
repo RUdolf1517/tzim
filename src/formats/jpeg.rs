@@ -1361,6 +1361,19 @@ fn build_tables(layout: &Layout, stats: &Stats) -> BTreeMap<TableKey, Huff> {
 // Entry points
 // ---------------------------------------------------------------------------
 
+/// Runs the parser, the analysis and the entropy decoder on arbitrary bytes,
+/// without writing anything. Only the fuzz targets call this.
+#[cfg(feature = "fuzz-api")]
+pub fn probe(data: &[u8]) -> bool {
+    let Ok(image) = parse(data) else {
+        return false;
+    };
+    let Ok(layout) = analyze(&image) else {
+        return false;
+    };
+    decode(&image, &layout).is_ok()
+}
+
 pub fn optimize(input: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
     let image = parse(input)?;
     let layout = analyze(&image)?;

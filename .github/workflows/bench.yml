@@ -1,0 +1,78 @@
+name: bench
+
+# Comparative benchmarks against the established tools.
+#
+# Not run on every pull request: `oxipng -o max` alone takes minutes and the
+# numbers would be the same. Run it by hand when a change could move the ratio,
+# and weekly to catch drift in the tools themselves.
+#
+# The table this job produces is pasted into docs/benchmarks.md, with the run id
+# recorded next to it.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  bench:
+    name: comparisons
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install the reference tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends optipng libjpeg-turbo-progs time
+          # oxipng is not packaged at a version worth trusting; build it instead.
+          cargo install oxipng --locked
+
+      - name: Build Tzim
+        run: cargo build --release --all-features
+
+      - name: Measure
+        id: measure
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash .github/scripts/bench.sh target/release/tzim 2>&1 | tee /tmp/tzim-bench.log
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "${RUNNER_TEMP}/tzim-bench/summary.md" ]; then
+            cat "${RUNNER_TEMP}/tzim-bench/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The benchmark did not reach the report step; see the log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the raw results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/tzim-bench/summary.md
+            ${{ runner.temp }}/tzim-bench/results.tsv
+            ${{ runner.temp }}/tzim-bench/versions.txt
+            ${{ runner.temp }}/tzim-bench/time-*.txt
+            ${{ runner.temp }}/tzim-bench/log-*.txt
+
+      - name: Fail the job
+        if: steps.measure.outcome == 'failure'
+        shell: bash
+        run: exit 1

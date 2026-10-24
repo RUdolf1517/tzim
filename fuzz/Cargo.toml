@@ -1,0 +1,45 @@
+# Fuzz targets for the parsers. A separate workspace on purpose: `libfuzzer-sys`
+# and the sanitizer runtime must never reach the release binary, and `cargo test`
+# at the repository root must not compile them.
+#
+#   cargo install cargo-fuzz
+#   cargo +nightly fuzz run jpeg_decode
+#
+# The target crate is pulled in with `features = ["fuzz-api"]`, which is the only
+# thing that exposes the parsers directly (see src/fuzz_api.rs).
+[package]
+name = "tzim-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.tzim]
+path = ".."
+default-features = false
+features = ["png", "gzip", "zip", "fuzz-api"]
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "jpeg_decode"
+path = "fuzz_targets/jpeg_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false

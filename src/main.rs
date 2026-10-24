@@ -1,21 +1,15 @@
 #![forbid(unsafe_code)]
 
-mod cli;
-mod detect;
-mod error;
-mod formats;
-mod pipeline;
-mod pool;
-mod replace;
-mod report;
-mod walk;
-
 use std::process::ExitCode;
 use std::time::Instant;
 
-use cli::Command;
-use error::Result;
-use report::{Outcome, Status};
+use tzim::cli::{self, Command};
+use tzim::error::{self, Result};
+use tzim::formats;
+use tzim::pipeline;
+use tzim::pool;
+use tzim::report::{self, Outcome, Status};
+use tzim::walk;
 
 fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
