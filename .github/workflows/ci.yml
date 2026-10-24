@@ -124,7 +124,8 @@ jobs:
             "png,gzip,zip" \
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
-            "png,gzip,zip,ico,jpeg,zopfli"
+            "png,gzip,zip,ico,jpeg,tiff" \
+            "png,gzip,zip,ico,jpeg,tiff,zopfli"
           do
             cargo build --release --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

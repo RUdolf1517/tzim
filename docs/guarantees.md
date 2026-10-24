@@ -445,11 +445,75 @@ the code path is the most intricate in the project.
 
 ---
 
-### 4.8. TIFF and FLAC — research, no contract yet
+### 4.8. TIFF (classic, baseline strips) — v0.7
 
-No contract exists for these formats, therefore **no support is claimed and no code will be written** until
-a contract and its verification method are specified in this document. This ordering is deliberate: the
-document comes first.
+**Transformation.** Rewrite the strip data and the offsets that point at it. Uncompressed strips
+(`Compression = 1`) are compressed with zlib and the `Compression` entry becomes `8`; `Deflate` strips
+(`Compression = 8` or `32946`) are recompressed, keeping whichever of the two encodings is smaller per
+strip. The decoded bytes of every strip are identical to the input, which for `PhotometricInterpretation`
+without predictor means identical pixels.
+
+**Accepted subset** — the file is rewritten only when all of these hold, and refused with a reason
+otherwise:
+
+- classic TIFF only: byte order `II` or `MM`, magic `42`. BigTIFF (`43`) is refused;
+- exactly **one** IFD. A non-zero next-IFD offset is refused (multi-page);
+- strips, not tiles: tags `322`–`325` are refused;
+- `PlanarConfiguration = 1` (interleaved), `Predictor` absent or `1` (none). Anything else is refused,
+  because re-predicting a strip would change what the bytes mean;
+- `Compression` ∈ {`1`, `8`, `32946`}. LZW (`5`), JPEG (`6`, `7`), PackBits (`32773`), CCITT, and every
+  other compression are refused: rewriting LZW needs an encoder this build does not have, and pretending
+  otherwise would mean writing a file whose strips do not decode;
+- every out-of-line value belongs to a tag this build knows to be **plain data** (the list below). An
+  unknown out-of-line tag is refused, because a value we cannot classify may be an absolute offset that
+  the rewrite would invalidate. An unknown tag whose value fits in the entry's four value bytes is copied
+  verbatim: it is not moved, so it cannot break;
+- the only non-zero bytes outside the structures that are re-placed are the strips, the IFD, and the
+  out-of-line values above. Any other non-zero byte would be data we cannot place, and the file is
+  refused;
+- entries are in ascending tag order, `StripOffsets` and `StripByteCounts` have the same count, and every
+  strip lies inside the file.
+
+**Preserved:** byte order, the tag set, entry order and every entry's type and count; every value except
+the three entries below, as resolved bytes rather than as bytes at a fixed position; `ImageWidth`,
+`ImageLength`, `BitsPerSample`, `PhotometricInterpretation`, `SamplesPerPixel`, `RowsPerStrip`,
+`ResolutionUnit`, the X/Y resolution rationals, `ColorMap`, `ExtraSamples`, `SampleFormat`, ICC profile,
+XMP, EXIF-in-TIFF, ASCII tags and every private tag in the list below.
+
+**Allowed to change:** `Compression` (only `1` → `8`; a Deflate file keeps `8`), `StripOffsets` and
+`StripByteCounts` (recomputed for the new layout), the strip payloads, the offsets of the out-of-line
+values, and therefore the length of the file.
+
+**Verification.** Re-parse the candidate with the same strict reader (V3, [§2.6](#26-verification-independence)),
+then:
+
+1. entry count, order, tags, types and counts are identical;
+2. every value is identical except `Compression`, `StripOffsets` and `StripByteCounts`;
+3. each strip of both files is decoded — with `flate2` for Deflate, verbatim for uncompressed — and the
+   decoded bytes are compared exactly (V1 for the content);
+4. the candidate is not larger than the input.
+
+What the shared reader cannot catch is a structural field both sides misread; the strip bytes themselves
+are compared through an independent inflater, so a content change cannot hide behind it.
+
+**Refused (skipped, exit 0):** BigTIFF, tiles, more than one IFD, planar `2`, predictor other than `1`/
+absent, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable non-zero bytes,
+`StripOffsets`/`StripByteCounts` with different counts. A file of this kind is valid and untouched.
+
+**Corrupt (failed, exit 1):** bad byte order or magic, an IFD outside the file, an entry count that runs
+past the end, a strip outside the file, a zlib stream that does not decode, a decoded strip whose length
+does not match `RowsPerStrip` × row bytes for the last strip — all leave the original untouched.
+
+**Expected gain:** 5–30 % on uncompressed strips, 0–5 % on Deflate strips already written at level 9,
+nothing on LZW (refused). This is the honest range: an uncompressed 8-bit RGB scan shrinks by roughly the
+entropy of its content, while a TIFF from a modern scanner is often already Deflate- or LZW-compressed.
+
+### 4.9. FLAC — research, no contract yet
+
+No contract exists for FLAC, therefore **no support is claimed and no code will be written** until a
+contract and its verification method are specified here. The open question is whether the stream MD5, the
+seek table and every metadata block can be preserved across a re-encode without trusting the encoder that
+produced them.
 
 ---
 

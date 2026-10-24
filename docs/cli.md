@@ -117,6 +117,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
 | JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+| TIFF | `ImageDescription`, `DocumentName`, `Make`, `Model`, `Software`, `DateTime`, `HostComputer`, `InkNames`, `Copyright`, IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
 timestamp removes metadata without removing bytes, and the point of the flag is the metadata. A candidate

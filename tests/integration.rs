@@ -1516,3 +1516,227 @@ fn metadata_is_preserved_when_the_flag_is_absent() {
         "without the flag no metadata may be removed"
     );
 }
+
+// ---------------------------------------------------------------------------
+// TIFF
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tiff_uncompressed_strips_are_compressed_and_decode_identically() {
+    let ws = Workspace::new("tiff-opt");
+    let spec = TiffSpec {
+        width: 96,
+        height: 64,
+        samples_per_pixel: 3,
+        photometric: 2,
+        rows_per_strip: 16,
+        extra_ascii: vec![(270, "a description".to_string()), (305, "some editor".to_string())],
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("scan.tif", &original);
+
+    let (code, stdout, stderr) = run(&["scan.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a smaller file");
+    assert_eq!(tiff_compression(&optimized), 8, "strips must be Deflate now");
+    assert_eq!(tiff_strips(&optimized), tiff_strips(&original), "pixels must be identical");
+
+    // Everything but the three entries the rewrite is allowed to touch.
+    let before = parse_tiff_tags(&original);
+    let after = parse_tiff_tags(&optimized);
+    assert_eq!(
+        before.iter().map(|(t, _, _, _)| *t).collect::<Vec<_>>(),
+        after.iter().map(|(t, _, _, _)| *t).collect::<Vec<_>>(),
+        "the tag set and its order must survive"
+    );
+    for ((tag, typ, count, was), (_, now_typ, now_count, now)) in before.iter().zip(after.iter()) {
+        match *tag {
+            // The only three entries the rewrite may touch.
+            259 | 273 | 279 => {}
+            _ => {
+                assert_eq!(typ, now_typ, "the type of tag {tag} changed");
+                assert_eq!(count, now_count, "the count of tag {tag} changed");
+                assert_eq!(was, now, "the value of tag {tag} changed");
+            }
+        }
+    }
+}
+
+#[test]
+fn tiff_both_byte_orders_round_trip() {
+    for big_endian in [false, true] {
+        let ws = Workspace::new("tiff-endian");
+        let spec = TiffSpec {
+            big_endian,
+            width: 32,
+            height: 32,
+            ..Default::default()
+        };
+        let original = build_tiff(&spec);
+        let path = ws.write("scan.tif", &original);
+        let (code, stdout, stderr) = run(&["scan.tif"], &ws.path);
+        assert_eq!(code, 0, "big_endian={big_endian} stdout={stdout} stderr={stderr}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        assert_eq!(&optimized[..2], &original[..2], "byte order must be preserved");
+        assert_eq!(tiff_strips(&optimized), tiff_strips(&original));
+    }
+}
+
+#[test]
+fn tiff_already_deflated_small_file_is_left_alone() {
+    let ws = Workspace::new("tiff-nogain");
+    let spec = TiffSpec {
+        width: 16,
+        height: 16,
+        compression: 8,
+        rows_per_strip: 16,
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("tiny.tif", &original);
+
+    let (code, stdout, stderr) = run(&["tiny.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("already"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original, "nothing to gain, nothing to write");
+}
+
+#[test]
+fn tiff_bigtiff_is_skipped_with_a_reason() {
+    let ws = Workspace::new("tiff-bigtiff");
+    let original = tiff_header(false, 43);
+    let path = ws.write("huge.tif", &original);
+
+    let (code, stdout, stderr) = run(&["huge.tif"], &ws.path);
+    assert_eq!(code, 0, "a refusal is not a failure: {stdout} {stderr}");
+    assert!(stdout.contains("BigTIFF"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn tiff_tiled_layout_is_skipped() {
+    let ws = Workspace::new("tiff-tiled");
+    let spec = TiffSpec {
+        tiled: true,
+        width: 32,
+        height: 32,
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("tiled.tif", &original);
+
+    let (code, stdout, stderr) = run(&["tiled.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("tiled"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn tiff_lzw_is_skipped_because_there_is_no_encoder() {
+    let ws = Workspace::new("tiff-lzw");
+    let spec = TiffSpec {
+        // LZW. The fixture's strips are not really LZW, so the refusal has to
+        // come from the tag rather than from a failed decode.
+        compression: 5,
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("lzw.tif", &original);
+
+    let (code, stdout, stderr) = run(&["lzw.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("compression 5") || stdout.contains("LZW"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn tiff_predictor_is_skipped() {
+    let ws = Workspace::new("tiff-predictor");
+    let spec = TiffSpec {
+        predictor: Some(2),
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("pred.tif", &original);
+
+    let (code, stdout, stderr) = run(&["pred.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("predictor"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn tiff_unknown_out_of_line_tag_is_skipped() {
+    let ws = Workspace::new("tiff-private");
+    let spec = TiffSpec {
+        // 65000 is private: an out-of-line value there may be an offset, so the
+        // rebuild cannot place it.
+        extra_ascii: vec![(65000, "private payload".to_string())],
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("private.tif", &original);
+
+    let (code, stdout, stderr) = run(&["private.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("65000"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn tiff_truncated_file_fails_and_is_untouched() {
+    let ws = Workspace::new("tiff-truncated");
+    let original = build_tiff(&TiffSpec::default());
+    let cut = original[..original.len() / 2].to_vec();
+    let path = ws.write("cut.tif", &cut);
+
+    let (code, stdout, _stderr) = run(&["cut.tif"], &ws.path);
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), cut);
+}
+
+#[test]
+fn tiff_strip_metadata_removes_only_textual_tags() {
+    let ws = Workspace::new("tiff-strip");
+    let spec = TiffSpec {
+        extra_ascii: vec![
+            (270, "image description".to_string()),
+            (305, "software".to_string()),
+            (315, "artist".to_string()),
+            (33432, "copyright".to_string()),
+        ],
+        extra_short: vec![(274, 1)], // Orientation: geometry, must stay
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("tagged.tif", &original);
+
+    let (code, stdout, stderr) = run(&["--strip-metadata", "tagged.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    let tags: Vec<u16> = parse_tiff_tags(&optimized).into_iter().map(|(t, _, _, _)| t).collect();
+    for removed in [270u16, 305, 315, 33432] {
+        assert!(!tags.contains(&removed), "tag {removed} should be gone: {tags:?}");
+    }
+    assert!(tags.contains(&274), "Orientation is geometry, not metadata");
+    assert!(tags.contains(&256) && tags.contains(&259), "{tags:?}");
+    assert_eq!(tiff_strips(&optimized), tiff_strips(&original));
+    assert!(stdout.contains("metadata"), "{stdout}");
+}
+
+#[test]
+fn tiff_is_skipped_when_the_format_is_not_enabled() {
+    let ws = Workspace::new("tiff-disabled");
+    let original = build_tiff(&TiffSpec::default());
+    let path = ws.write("scan.tif", &original);
+
+    let (code, stdout, stderr) = run(&["--formats", "png", "scan.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}

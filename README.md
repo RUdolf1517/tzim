@@ -97,7 +97,7 @@ downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
 git clone https://github.com/RUdolf1517/tzim
 cd tzim
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.6.0
+winget install --manifest .\packaging\winget\0.7.0
 ```
 
 `LocalManifestFiles` is once, as Administrator. After microsoft/winget-pkgs accepts the manifest:
@@ -231,7 +231,7 @@ documentation is checked against:
 
 ```
 $ tzim -i
-tzim 0.6.0 — shrink the file, never the information
+tzim 0.7.0 — shrink the file, never the information
 ...
 Formats in this build: PNG, gzip, ICO/CUR, JPEG, ZIP
 ...
@@ -311,7 +311,8 @@ list is in [docs/safety.md](docs/safety.md#3-metadata).
 | APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
 | Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
 | JPEG | v0.4 | **implemented**, opt-in | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
-| TIFF, FLAC | v0.6+ | research | not specified yet — no contract, no claim | — |
+| TIFF (classic, strips) | v0.7 | **implemented** | Recompress strips (or compress uncompressed ones); every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
+| FLAC | v0.8+ | research | not specified yet — no contract, no claim | — |
 | PDF, WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
 
 Progressive, arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason
