@@ -74,16 +74,16 @@ measure() {
 
 # --- Tzim -------------------------------------------------------------------
 tzim_png() {
-    "$bin" optimize -r --formats png --jobs 1 --json "$1" > /dev/null || true
+    "$bin" -r --formats png --jobs 1 --json "$1" > /dev/null || true
 }
 tzim_png_parallel() {
-    "$bin" optimize -r --formats png --json "$1" > /dev/null || true
+    "$bin" -r --formats png --json "$1" > /dev/null || true
 }
 tzim_png_zopfli() {
-    "$bin" optimize -r --formats png --zopfli --jobs 1 --json "$1" > /dev/null || true
+    "$bin" -r --formats png --zopfli --jobs 1 --json "$1" > /dev/null || true
 }
 tzim_jpeg() {
-    "$bin" optimize -r --formats jpeg --jobs 1 --json "$1" > /dev/null || true
+    "$bin" -r --formats jpeg --jobs 1 --json "$1" > /dev/null || true
 }
 
 # --- oxipng -----------------------------------------------------------------

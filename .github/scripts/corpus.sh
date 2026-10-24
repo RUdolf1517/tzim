@@ -45,7 +45,7 @@ manifest > "$work/manifest-before.txt"
 run() {
     local out="$1" err="$2"
     set +e
-    "$bin" optimize --formats png,gzip,zip,ico,jpeg --jobs 2 --json -r "$corpus" \
+    "$bin" --formats png,gzip,zip,ico,jpeg,tiff --jobs 2 --json -r "$corpus" \
         > "$out" 2> "$err"
     local code=$?
     set -e
@@ -174,8 +174,10 @@ skipped = [r for r in files1 if r.get("status") == "skipped"]
 
 def reason(record):
     note = record.get("note") or (record.get("error") or {}).get("message") or "no reason given"
-    # The first clause identifies the cause; the rest is a sentence.
-    return note.split(": ", 1)[-1].split(";")[0][:70]
+    # "tiff: tiled layout is not supported; only strips are rewritten" becomes
+    # "tiled layout is not supported": the handler prefix and the aside go.
+    _, _, rest = note.partition(": ")
+    return (rest or note).split(";")[0].split(" (")[0][:80]
 
 if skipped:
     by_reason = collections.Counter(reason(r) for r in skipped)
