@@ -680,25 +680,35 @@ impl<'a> Reader<'a> {
     }
 
     fn next_data_byte(&mut self) -> Option<u8> {
-        if self.pos >= self.data.len() {
-            return None;
-        }
-        let byte = self.data[self.pos];
-        if byte != 0xff {
-            self.pos += 1;
-            return Some(byte);
-        }
-        if self.pos + 1 >= self.data.len() {
-            self.pos = self.data.len();
-            return None;
-        }
-        let next = self.data[self.pos + 1];
-        if next == 0x00 {
+        loop {
+            if self.pos >= self.data.len() {
+                return None;
+            }
+            let byte = self.data[self.pos];
+            if byte != 0xff {
+                self.pos += 1;
+                return Some(byte);
+            }
+            if self.pos + 1 >= self.data.len() {
+                self.pos = self.data.len();
+                return None;
+            }
+            let next = self.data[self.pos + 1];
+            if next == 0xff {
+                // A fill byte repeats the marker prefix; skip it.
+                self.pos += 1;
+                continue;
+            }
+            if next == 0x00 {
+                self.pos += 2;
+                return Some(0xff);
+            }
+            // A real marker. It is consumed here so that a restart marker is
+            // never seen twice, and remembered for `expect_restart`.
+            self.marker = Some(next);
             self.pos += 2;
-            return Some(0xff);
+            return None;
         }
-        self.marker = Some(next);
-        None
     }
 
     fn fill(&mut self, want: u32) {
