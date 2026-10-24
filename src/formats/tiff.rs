@@ -355,7 +355,7 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
         )));
     }
 
-    let compression = tiff.scalar(TAG_COMPRESSION, Some(COMPRESSION_NONE))? as u16;
+    let compression = tiff.scalar(TAG_COMPRESSION, Some(COMPRESSION_NONE as u32))? as u16;
     if !matches!(
         compression,
         COMPRESSION_NONE | COMPRESSION_DEFLATE | COMPRESSION_ADOBE_DEFLATE
@@ -479,14 +479,22 @@ fn deflate(data: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     if zopfli {
         #[cfg(feature = "zopfli")]
         {
-            let mut out = Vec::new();
+            let mut raw = Vec::new();
             zopfli::compress(
                 zopfli::Options::default(),
-                zopfli::Format::Zlib,
+                zopfli::Format::Deflate,
                 data,
-                &mut out,
+                &mut raw,
             )
             .map_err(|e| Error::Internal(format!("zopfli failed: {e}")))?;
+            // A TIFF strip is a zlib stream, and the encoder writes raw
+            // DEFLATE, so the two-byte header and the Adler-32 trailer are
+            // added here. Verification inflates every strip again, so a
+            // wrapper mistake cannot reach the file.
+            let mut out = Vec::with_capacity(raw.len() + 6);
+            out.extend_from_slice(&[0x78, 0xda]);
+            out.extend_from_slice(&raw);
+            out.extend_from_slice(&adler32(data).to_be_bytes());
             return Ok(out);
         }
         #[cfg(not(feature = "zopfli"))]
@@ -497,6 +505,20 @@ fn deflate(data: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(9));
     encoder.write_all(data)?;
     Ok(encoder.finish()?)
+}
+
+/// Adler-32, as the zlib trailer requires. Not a compressor: the build has a
+/// crate for that, and this is fifteen lines of checksum.
+#[cfg(feature = "zopfli")]
+fn adler32(data: &[u8]) -> u32 {
+    const MOD: u32 = 65521;
+    let mut a: u32 = 1;
+    let mut b: u32 = 0;
+    for byte in data {
+        a = (a + *byte as u32) % MOD;
+        b = (b + a) % MOD;
+    }
+    (b << 16) | a
 }
 
 /// The decoded bytes of a strip, whatever its compression.
@@ -705,7 +727,7 @@ pub fn optimize(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Can
 
     for (index, strip) in plan.strips.iter().enumerate() {
         let decoded = decode_strip(strip, plan.compression)?;
-        if let Some(want) = expected.get(index) {
+        if let Some(Some(want)) = expected.get(index) {
             if decoded.len() != *want {
                 return Err(Error::refused(format!(
                     "tiff: strip {index} decodes to {} bytes, expected {want}; the file is left alone",
@@ -913,6 +935,13 @@ mod tests {
         assert!(!is_stripped(TAG_IMAGE_WIDTH));
         assert!(!is_stripped(34675), "ICC changes how pixels are read");
         assert!(!is_stripped(320), "the colour map is content, not metadata");
+    }
+
+    #[cfg(feature = "zopfli")]
+    #[test]
+    fn adler32_matches_the_reference_value() {
+        assert_eq!(adler32(b"Wikipedia"), 0x11E6_0398);
+        assert_eq!(adler32(b""), 1);
     }
 
     #[test]
