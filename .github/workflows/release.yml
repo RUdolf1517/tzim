@@ -132,6 +132,16 @@ jobs:
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
 
+      - name: Annotate the checksums
+        shell: bash
+        run: |
+          # Second channel on purpose: the notes are for people, the annotation
+          # is reachable from the API, and a release is not something to redo
+          # because a hash was not copyable.
+          printf '::notice::'
+          awk '{ if (NR > 1) printf "%s", "%0A"; printf "%s", $0 }' artifacts/SHA256SUMS
+          printf '\n'
+
       - name: Publish the checksums in the notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
