@@ -11,23 +11,25 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | `3c5e291` |
+| Commit | `52a33cb` |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release --all-features` (PNG, APNG, gzip, ZIP, ICO/CUR, Zopfli) |
+| Profile | `--release --all-features` (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
 | Features in the binary | all |
-| **Size** | **926 560 bytes (904 KiB)** |
+| **Size** | **1 000 288 bytes (976 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
 | Provisional budget for this profile | 2 200 KiB |
-| Headroom | 1 296 KiB |
+| Headroom | 1 224 KiB |
 
-Growth by version, with no new dependency lines at any step (every handler reuses the DEFLATE codec,
-CRC-32 and the PNG decoder that v0.1 introduced):
+Growth by version, with **no new dependency lines at any step** — four direct crates since v0.1. The JPEG
+handler in v0.4 adds code rather than a crate, because no Rust JPEG library exposes DCT coefficients (see
+[dependencies](dependencies.md#26-jpeg-why-there-is-no-jpeg-dependency)):
 
 | Version | Contents added | Binary |
 | --- | --- | --- |
 | v0.1 | PNG, gzip | 832 KiB |
 | v0.2 | ZIP family | 868 KiB (+36 KiB) |
 | v0.3 | APNG frames, ICO/CUR, nested archives | 904 KiB (+36 KiB) |
+| v0.4 | baseline JPEG entropy codec (opt-in) | 976 KiB (+72 KiB) |
 
 The binary is statically linked, contains no C code, and requires no runtime beyond the OS.
 
@@ -46,9 +48,9 @@ order of magnitude while carrying an independent verification decoder.
 
 | Metric | Value |
 | --- | --- |
-| Unit tests | 46 |
-| Integration tests (real binary, real files) | 44 (42 on Windows, where two tests are Unix-only) |
-| Platforms | Linux, macOS, Windows — all green at `3c5e291` |
+| Unit tests | 56 |
+| Integration tests (real binary, real files) | 54 (52 on Windows, where two tests are Unix-only) |
+| Platforms | Linux, macOS, Windows — all green at `52a33cb` |
 | Clippy | `-D warnings`, clean |
 | Exit codes covered by tests | 0, 1, 2 (4 is covered by a unit test on an injected verification error) |
 

@@ -31,7 +31,8 @@ releases are described in [docs/roadmap.md](docs/roadmap.md).
 
 - Documentation: `docs/guarantees.md` §4.7 rewritten as the actual contract, `docs/dependencies.md` §2.6
   records why this codec is hand-written instead of delegated to a crate.
-- No new dependencies and no `unsafe`; the dependency count stays at four.
+- No new dependencies and no `unsafe`; the dependency count stays at four. Measured static binary size:
+  976 KiB (+72 KiB over v0.3).
 
 ## [0.3.0] - unreleased
 

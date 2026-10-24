@@ -17,8 +17,8 @@ and verified, including optional optimization of files stored inside archives (`
 tested on Linux, macOS and Windows in CI. Everything else in the table below is *planned*, with the version
 in which it is expected.
 
-- Static Linux binary: **904 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
-- 46 unit and 44 integration tests, clippy clean with `-D warnings`.
+- Static Linux binary: **976 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
+- 56 unit and 54 integration tests, clippy clean with `-D warnings`.
 - No release artifacts have been published yet; build from source (below).
 
 See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
