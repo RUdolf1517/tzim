@@ -11,14 +11,14 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.7.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Commit | v0.7.1 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, Zopfli) |
+| Profile | `--release`, `opt-level = "s"` for this crate and `3` for its dependencies, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **1 049 440 bytes (1 024 KiB)** |
+| **Size** | **922 464 bytes (900 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Budget for this profile | 1 178 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 154 KiB |
+| Budget for this profile | 1 036 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
+| Headroom | 136 KiB |
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -38,10 +38,16 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.5.0 | path-first command line, `-i`, `--list-formats`, `--check-deps` | 980 KiB (+0) |
 | v0.6.0 | `--strip-metadata`, one feature per handler | 988 KiB (+8 KiB) |
 | v0.7.0 | classic TIFF: strips, tags, rebuild-then-verify | 1 024 KiB (+36 KiB) |
+| v0.7.1 | release profile: `-Os` for this crate, `-O3` for the codecs; no behaviour change | 900 KiB (−124 KiB) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
 The v0.7.0 row is the TIFF handler: a parser, a rebuild and a verifier, and still no new dependency.
+The v0.7.1 row is the only one that removed bytes instead of adding them, and it removed nothing from the
+program: the same commit built at `opt-level = 3` measures 1 028 960 bytes and writes the same output. Two
+changes did it — `opt-level = "s"` for this crate with `-O3` kept for the codecs (−104 KiB, +3.6 % on the
+corpus, see [size-budget §5.1](size-budget.md#51-the-measurements-behind-the-current-profile)), and integer
+formatting in `src/report.rs`, which removes the general `core::fmt` path (−20 KiB, no output change).
 
 The binary is statically linked, contains no C code, and requires no runtime beyond the OS.
 
@@ -106,6 +112,11 @@ were taken rather than re-taken to look fresh. Reference
 tools: oxipng 10.2.1, OptiPNG 0.7.8, jpegtran from libjpeg-turbo 2.1.5. The timed comparison is capped at
 files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte; the ratio for the whole corpus
 is the table in §3.1.
+
+The timings below were taken from a binary built at `opt-level = 3`. The current profile compiles this
+crate at `"s"` and its dependencies at `3`, which the corpus measured at +3.6 % on PNG and +2.3 % on JPEG
+([size-budget §5.1](size-budget.md#51-the-measurements-behind-the-current-profile)) — inside the variation
+between runs at this scale, and left unadjusted rather than re-taken.
 
 **PNG** — 3 603 182 bytes in files of 200 KiB or less:
 

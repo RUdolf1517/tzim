@@ -1,6 +1,6 @@
 [package]
 name = "tzim"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Lossless file optimizer: shrink the file, never the information"
@@ -44,12 +44,21 @@ zopfli = ["dep:zopfli"]
 fuzz-api = []
 
 [profile.release]
-opt-level = 3
+# This crate is where the size can be bought: -Os keeps it about 10 % smaller
+# for about 3 % on the real-file corpus. The dependencies stay at -O3, because
+# that is where the CPU actually goes — shrinking them instead saved a quarter
+# of the size and cost twice the speed (docs/size-budget.md §5).
+opt-level = "s"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = "symbols"
 incremental = false
+
+# The codecs are hot: DEFLATE, the PNG decoder, Zopfli. They are compiled at
+# full optimization even though this crate is not.
+[profile.release.package."*"]
+opt-level = 3
 
 [lints.rust]
 unsafe_code = "forbid"
