@@ -984,7 +984,8 @@ fn ico_with_a_bad_offsets_is_refused() {
         }],
     );
     // Point the image outside the file.
-    icon[6 + 12..6 + 16].copy_from_slice(&(icon.len() as u32 + 100).to_le_bytes());
+    let past_end = icon.len() as u32 + 100;
+    icon[6 + 12..6 + 16].copy_from_slice(&past_end.to_le_bytes());
     let original = icon.clone();
     let path = ws.write("broken.ico", &original);
 

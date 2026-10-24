@@ -13,7 +13,6 @@ pub mod zip;
 /// Options a handler may need. Everything here is explicit: there are no
 /// hidden defaults inside handlers that change what is written.
 #[derive(Clone, Copy, Debug)]
-#[derive(Clone, Copy)]
 pub struct Options {
     pub zopfli: bool,
     pub max_pixels: u64,

@@ -859,7 +859,6 @@ struct IconEntry<'a> {
     /// The complete 16-byte directory entry.
     record: &'a [u8],
     payload: &'a [u8],
-    offset: u32,
 }
 
 fn parse_icon(data: &[u8]) -> Result<Icon<'_>> {
@@ -901,7 +900,6 @@ fn parse_icon(data: &[u8]) -> Result<Icon<'_>> {
         entries.push(IconEntry {
             record,
             payload: &data[start..end],
-            offset,
         });
     }
 
@@ -956,7 +954,7 @@ pub fn optimize_icon(input: &[u8], out: &mut dyn Write, opts: &Options) -> Resul
     let mut directory = icon.header.to_vec();
     let mut body = Vec::new();
     let mut cursor = directory.len();
-    for (index, entry) in icon.entries.iter().enumerate() {
+    for (index, _entry) in icon.entries.iter().enumerate() {
         let payload = &payloads[index];
         let at = ICO_HEADER + index * ICO_ENTRY;
         directory[at + 8..at + 12].copy_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -972,7 +970,6 @@ pub fn optimize_icon(input: &[u8], out: &mut dyn Write, opts: &Options) -> Resul
 
     out.write_all(&directory)?;
     out.write_all(&body)?;
-    let _ = (icon.kind, icon.entries.iter().map(|e| e.offset).count());
     Ok(Cand::Written(total))
 }
 
