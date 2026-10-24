@@ -12,12 +12,12 @@ The name comes from the Hebrew צמצום (*tsimtsum*) — contraction, reductio
 
 ## Status
 
-**v0.1 implemented.** PNG and gzip are supported and verified; the code is tested on Linux, macOS and
-Windows in CI. Everything else in the table below is *planned*, with the version in which it is expected —
-nothing outside the PNG and gzip rows works today.
+**v0.2 implemented.** PNG, gzip and the ZIP family are supported and verified; the code is tested on Linux,
+macOS and Windows in CI. Everything else in the table below is *planned*, with the version in which it is
+expected.
 
-- Static Linux binary: **832 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
-- 41 unit and 21 integration tests, clippy clean with `-D warnings`.
+- Static Linux binary: **868 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
+- 46 unit and 35 integration tests, clippy clean with `-D warnings`.
 - No release artifacts have been published yet; build from source (below).
 
 See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
@@ -63,7 +63,7 @@ verified. See [docs/guarantees.md](docs/guarantees.md).
 | --- | --- | --- | --- | --- |
 | PNG | v0.1 | **implemented** | Recompress IDAT; re-select scanline filters; optional Zopfli | G3 |
 | gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | **implemented** | Recompress the DEFLATE body; header preserved verbatim | G3 |
-| ZIP and ZIP-based formats (`.zip`, `.jar`, `.apk`, `.docx/.xlsx/.pptx`, `.epub`, `.odt/.ods/.odp`, `.cbz`, `.whl`, `.nupkg`) | v0.2 | planned | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed archives are refused | G3 |
+| ZIP and ZIP-based formats (`.zip`, `.jar`, `.apk`, `.docx/.xlsx/.pptx`, `.epub`, `.odt/.ods/.odp`, `.cbz`, `.whl`, `.nupkg`) | v0.2 | **implemented** | Recompress DEFLATE entries; names, extra fields, comments, order and attributes preserved; signed, ZIP64 and encrypted archives are refused | G3 |
 | ICO / CUR | v0.3 | planned | Optimize embedded PNG images | G3 |
 | APNG | v0.3 | planned | Recompress animation frames | G3 |
 | Nested containers | v0.3 | planned | Optimize supported files inside ZIP archives (opt-in) | G3 |
@@ -129,7 +129,7 @@ Full CLI reference: [docs/cli.md](docs/cli.md).
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success. Includes files that were already optimal, skipped or unsupported. |
+| `0` | Success. Includes files that were already optimal, skipped, unsupported or refused. |
 | `1` | One or more files failed; other files were still processed. |
 | `2` | Invalid usage; nothing was processed. |
 | `3` | Fatal error; the run could not be completed. |

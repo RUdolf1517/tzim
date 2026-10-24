@@ -118,7 +118,7 @@ the per-scanline filters (the pixel data itself is never altered).
 
 - source truncated, bad chunk CRC, missing IHDR/IEND/IDAT, or not a PNG;
 - interlace method other than 0 or 1;
-- images larger than `--max-pixels` (default 200 MPix) or files larger than `--max-size`;
+- images larger than `--max-pixels` (default 100 MPix) or files larger than `--max-size`;
 - image data that does not decompress to exactly the expected number of scanline bytes;
 - files with data after `IEND`.
 
@@ -232,6 +232,11 @@ structure is copied and only the fields that must change are patched.
 
 - ODF and EPUB archives (`mimetype` stored as the first entry) are accepted, because v0.2 preserves the
   compression method of every entry and does not reorder anything.
+- A refused archive is reported as `skipped` with the reason, the file is left byte-identical, and the run
+  still exits `0`: the input is not broken, policy simply declined it. A genuinely corrupt archive is
+  reported as `failed` with exit `1`.
+- Detection is by content, so an archive with a prepended stub (`MZ...`, `.exe` installers) is not recognised
+  as a ZIP at all and is reported as `unsupported`; it is never rewritten either way.
 - Changing a stored entry to DEFLATE is a much larger win on some archives but can break formats that
   require stored entries. It is deliberately **not implemented**; if it is added, it will be an explicit
   opt-in with an ODF/EPUB/installer deny-list and its own contract clause.

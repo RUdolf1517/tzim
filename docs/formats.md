@@ -32,17 +32,17 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 
 ## 2. Format matrix
 
-| Format | Version | Transformation | Expected gain | Risk | Contract |
-| --- | --- | --- | --- | --- | --- |
-| PNG | v0.1 | IDAT recompression; scanline filter re-selection; optional Zopfli | 5–45 % on unoptimized files; ~0–3 % on already-optimized ones | medium | [§4.1](guarantees.md#41-png--v01) |
-| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | DEFLATE body recompression, header verbatim | 0–15 % | low | [§4.2](guarantees.md#42-gzip--v01) |
-| ZIP family | v0.2 | DEFLATE entry recompression, everything else preserved | 0–20 %, depends on the level used by the original archiver | high | [§4.3](guarantees.md#43-zip--v02) |
-| ICO / CUR | v0.3 | Optimize embedded PNGs | equals the embedded PNG gain | medium | [§4.4](guarantees.md#44-ico--cur--v03) |
-| APNG | v0.3 | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
-| Nested (`--nested`) | v0.3 | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
-| JPEG (opt-in) | v0.4 | Huffman table optimization only | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
-| TIFF | v0.5+ | Deflate/LZW strip recompression, tags untouched | 5–30 % on uncompressed scans | high | not written yet |
-| FLAC | v0.5+ | Lossless re-encode, all metadata blocks preserved | 0–3 % | high | not written yet |
+| Format | Version | Status | Transformation | Expected gain | Risk | Contract |
+| --- | --- | --- | --- | --- | --- | --- |
+| PNG | v0.1 | implemented | IDAT recompression; scanline filter re-selection; optional Zopfli | 5–45 % on unoptimized files; ~0–3 % on already-optimized ones | medium | [§4.1](guarantees.md#41-png--v01) |
+| gzip (`.gz`, `.tgz`, `.svgz`) | v0.1 | implemented | DEFLATE body recompression, header verbatim | 0–15 % | low | [§4.2](guarantees.md#42-gzip--v01) |
+| ZIP family | v0.2 | implemented | DEFLATE entry recompression, everything else preserved | 0–20 %, depends on the level used by the original archiver | high | [§4.3](guarantees.md#43-zip--v02) |
+| ICO / CUR | v0.3 | planned | Optimize embedded PNGs | equals the embedded PNG gain | medium | [§4.4](guarantees.md#44-ico--cur--v03) |
+| APNG | v0.3 | planned | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
+| Nested (`--nested`) | v0.3 | planned | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
+| JPEG (opt-in) | v0.4 | planned | Huffman table optimization only | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
+| TIFF | v0.5+ | research | Deflate/LZW strip recompression, tags untouched | 5–30 % on uncompressed scans | high | not written yet |
+| FLAC | v0.5+ | research | Lossless re-encode, all metadata blocks preserved | 0–3 % | high | not written yet |
 
 ### ZIP-based formats covered by the ZIP handler
 
@@ -52,7 +52,9 @@ file. Structurally safe to rewrite does not mean accepted: `.apk`, `.aab`, `.ipa
 documents usually carry signatures or signing metadata, and the signed ones are refused by the checks
 below.
 
-Two categories are deliberately refused, because a byte-level rewrite would silently invalidate them:
+A refused archive is reported as `skipped`, left untouched, and does not fail the run; corrupt archives are
+reported as `failed`. Two categories are deliberately refused, because a byte-level rewrite would silently
+invalidate them:
 
 - **Signed archives** — JAR/APK signatures (`META-INF/*.SF`, `*.RSA`, `*.DSA`, `*.EC`, APK signing block).
   The bytes would be preserved according to the contract while the artifact stopped being verifiable. That

@@ -65,6 +65,11 @@ with `-D warnings`; the static musl binary measures 832 KiB. Remaining before a 
 - `--max-uncompressed`, `--max-ratio`.
 - Corpus covering ODF/EPUB, data descriptors, duplicate and non-UTF-8 names, and every refusal case.
 
+**Status:** implemented. The rewriter, the refusal detectors and the verification are in place, with 13
+integration tests covering deflate, stored entries, data descriptors, non-UTF-8 names, signed JAR/ODF/APK,
+ZIP64, encryption, truncation, corrupt CRCs, bombs and already-optimal archives. Binary size grew by 36 KiB
+with no new dependency lines.
+
 **Gate**
 
 - `T-ZIP-01` … `T-ZIP-12` pass;

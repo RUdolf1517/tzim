@@ -80,7 +80,9 @@ reproducible and diffable.
 | `--exclude <EXT,...>` | none | skip files with these extensions; wins over `--include` |
 | `--min-size <BYTES>` | `0` | skip smaller files |
 | `--max-size <BYTES>` | `2147483648` (2 GiB) | skip larger files |
-| `--max-pixels <N>` | `200000000` | skip images with more pixels (PNG) |
+| `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG) |
+| `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
+| `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
 | `--zopfli` | off | use the Zopfli encoder; much slower, smaller output |
 | `--follow-symlinks` | off | resolve and follow symbolic links |
 | `--allow-hardlinks` | off | process files that have more than one hard link |
@@ -98,8 +100,6 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | `--formats <LIST>` | v0.3 | restrict enabled handlers (`png,gzip,zip,ico,apng,jpeg`); required to enable opt-in handlers such as `jpeg` |
 | `--nested` | v0.3 | optimize supported files inside archives |
 | `--max-depth <N>` | v0.3 | nesting depth limit, default `3` |
-| `--max-uncompressed <BYTES>` | v0.2 | archive expansion limit, default `8589934592` (8 GiB) |
-| `--max-ratio <N>` | v0.2 | archive compression-ratio limit, default `1000` |
 
 The exact syntax of these options may still change before the version that introduces them. Everything in
 the v0.1 table is frozen.
@@ -156,7 +156,7 @@ Field rules:
 | `saved` | integer | `before - after` |
 | `guarantee` | string | `format_equivalent` for `optimized` / `would_optimize`; `byte_identical` otherwise |
 | `duration_ms` | integer | wall time spent on this file |
-| `error` | object or null | `{"kind": "...", "message": "..."}`; `kind` is one of `io`, `parse`, `limit`, `verify`, `internal` |
+| `error` | object or null | `{"kind": "...", "message": "..."}`; `kind` is one of `io`, `parse`, `limit`, `refused`, `verify`, `internal` (a `usage` error exits before any file record exists); `refused` and `limit` accompany a `skipped` status, meaning the input is valid but Tzim declines it |
 | `schema` | integer | present in the summary only; bumped on breaking schema changes |
 | `dry_run` | boolean | present in the summary only |
 
@@ -169,7 +169,7 @@ and enum values are stable; new optional fields may be added in minor versions.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | No failures. Includes `already_optimal`, `unsupported` and `skipped`. |
+| `0` | No failures. Includes `already_optimal`, `unsupported` and `skipped` (including refused inputs). |
 | `1` | At least one file failed; the rest were processed. |
 | `2` | Invalid usage (unknown flag, no paths, conflicting flags). Nothing was processed. |
 | `3` | Fatal error: the run could not be completed (unreadable input root, out of memory, stdout closed). |
@@ -204,7 +204,7 @@ Statuses in dry-run: `would_optimize` (a strictly smaller, verified candidate ex
 | Limit | Default | Why |
 | --- | --- | --- |
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
-| maximum pixels | 200 MPix | a decoded RGBA buffer at this size is already ~800 MiB |
+| maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
 | jobs | 4 (2 with `--zopfli`) | bounded memory; Zopfli's compressor state is large |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |

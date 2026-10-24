@@ -7,6 +7,30 @@ All notable changes to this project are documented here. The format follows
 The v0.1 code is complete and tested in CI, but no release artifacts have been published yet. Planned
 releases are described in [docs/roadmap.md](docs/roadmap.md).
 
+## [0.2.0] - unreleased
+
+### Added
+
+- **ZIP family.** Surgical rewriter: local headers, central directory records, extra fields, names,
+  comments, flags, attributes and timestamps are copied and only the compressed size and offset fields are
+  patched. Only DEFLATE entries are recompressed, per entry, keeping whichever is smaller; stored entries
+  stay stored, so ODF/EPUB `mimetype` requirements hold.
+- Data descriptors (bit 3) are validated against the central directory and rewritten with the new size.
+- Refused, with the file left untouched: signed archives (JAR/APK signing block, `META-INF` signatures,
+  signed ODF `documentsignatures.xml`, `_xmlsignatures/`, OPC digital signatures), ZIP64, multi-disk,
+  encrypted archives, unknown compression methods and prepended stubs.
+- `--max-uncompressed` (default 8 GiB) and `--max-ratio` (default 1000:1) guard against decompression bombs.
+- New error class `refused`: a valid input that policy declines is reported as `skipped` and the run exits
+  `0`, while corrupt inputs remain `failed` with exit `1`. The JSON `kind` field gained `refused`.
+- 5 unit tests and 14 integration tests for ZIP, with a fixture builder covering deflate, stored entries,
+  data descriptors, extra fields, comments and non-UTF-8 names.
+
+### Changed
+
+- gzip: an unsupported compression method and multi-member files are now reported as `refused` (skipped,
+  exit `0`) instead of failures.
+- Measured static binary size: 868 KiB (+36 KiB over v0.1, no new dependencies).
+
 ## [0.1.0] - unreleased
 
 ### Added

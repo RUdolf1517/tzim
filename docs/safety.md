@@ -111,6 +111,7 @@ Every row ends with the original file intact unless stated otherwise.
 | Bad arguments | nothing is processed | — | `2` |
 | Path does not exist / permission denied on read | error for that path, others continue | `failed` | `1` |
 | Unsupported or unknown format | nothing written | `unsupported` | `0` |
+| Valid input that policy declines (signed archive, ZIP64, encryption, multi-member gzip) | nothing written | `skipped` (`refused`) | `0` |
 | Malformed file of a supported format | refused, nothing written | `failed` (`parse`) | `1` |
 | Limit exceeded (size, pixels, ratio) | skipped, nothing written | `skipped` | `0` |
 | Candidate cannot be created (permissions, read-only directory) | error | `failed` (`io`) | `1` |
