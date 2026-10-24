@@ -147,7 +147,13 @@ pub fn exit_code(outcomes: &[Outcome]) -> i32 {
     0
 }
 
-pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool, dry_run: bool) {
+pub fn print_human(
+    outcomes: &[Outcome],
+    summary: &Summary,
+    quiet: bool,
+    dry_run: bool,
+    strip_metadata: bool,
+) {
     if !quiet {
         let width = outcomes
             .iter()
@@ -171,11 +177,15 @@ pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool, dry_run
                     } else {
                         100.0 * (o.before as f64 - o.after as f64) / o.before as f64
                     };
-                    let suffix = if o.status == Status::WouldOptimize {
-                        "  (dry run)"
-                    } else {
-                        ""
-                    };
+                    let mut suffix = String::new();
+                    if o.status == Status::WouldOptimize {
+                        suffix.push_str("  (dry run)");
+                    }
+                    if strip_metadata {
+                        // The only status where the output is not a faithful copy
+                        // of the input's metadata, so it is named on every line.
+                        suffix.push_str("  (metadata stripped)");
+                    }
                     format!("{} -> {}  {:+.1}%{suffix}", size(o.before), size(o.after), -pct)
                 }
                 _ => match (&o.note, &o.error) {
@@ -202,7 +212,12 @@ pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool, dry_run
     );
 }
 
-pub fn print_json(outcomes: &[Outcome], summary: &Summary, dry_run: bool) {
+pub fn print_json(
+    outcomes: &[Outcome],
+    summary: &Summary,
+    dry_run: bool,
+    strip_metadata: bool,
+) {
     for o in outcomes {
         let mut line = String::with_capacity(256);
         line.push_str("{\"type\":\"file\",\"path\":");
@@ -219,6 +234,9 @@ pub fn print_json(outcomes: &[Outcome], summary: &Summary, dry_run: bool) {
         line.push_str(&format!(",\"saved\":{}", o.saved()));
         line.push_str(",\"guarantee\":");
         push_json_string(&mut line, o.guarantee().id());
+        if strip_metadata && matches!(o.status, Status::Optimized | Status::WouldOptimize) {
+            line.push_str(",\"metadata_stripped\":true");
+        }
         line.push_str(&format!(",\"duration_ms\":{}", o.duration.as_millis()));
         line.push_str(",\"error\":");
         match (&o.status, &o.error) {
@@ -236,7 +254,7 @@ pub fn print_json(outcomes: &[Outcome], summary: &Summary, dry_run: bool) {
     }
 
     println!(
-        "{{\"type\":\"summary\",\"schema\":1,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{}}}",
+        "{{\"type\":\"summary\",\"schema\":1,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
         summary.files,
         summary.optimized,
         summary.would_optimize,
@@ -248,7 +266,8 @@ pub fn print_json(outcomes: &[Outcome], summary: &Summary, dry_run: bool) {
         summary.after,
         summary.before.saturating_sub(summary.after),
         summary.elapsed.as_millis(),
-        dry_run
+        dry_run,
+        strip_metadata
     );
 }
 

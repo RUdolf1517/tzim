@@ -78,6 +78,7 @@ fn print_info() {
     println!("  G1  byte-identical, wherever nothing was written");
     println!("  G3  format-equivalent, with a per-format contract checked before");
     println!("      the original is replaced");
+    println!("  G4  metadata removed on request, and only with --strip-metadata");
     println!();
     println!("No external programs, no configuration file, no network, no telemetry.");
     println!();
@@ -149,9 +150,9 @@ fn run_optimize(args: &cli::Args) -> Result<i32> {
 
     let summary = report::summarize(&outcomes, started.elapsed());
     if args.json {
-        report::print_json(&outcomes, &summary, args.dry_run);
+        report::print_json(&outcomes, &summary, args.dry_run, args.strip_metadata);
     } else {
-        report::print_human(&outcomes, &summary, args.quiet, args.dry_run);
+        report::print_human(&outcomes, &summary, args.quiet, args.dry_run, args.strip_metadata);
     }
 
     let mut code = report::exit_code(&outcomes);

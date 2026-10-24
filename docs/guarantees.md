@@ -16,7 +16,7 @@ Related: [formats](formats.md) · [safety](safety.md) · [testing](testing.md)
 | **Content** | The part of the information a consumer of the format actually uses: pixels, samples, entry payloads, text. |
 | **Significant property** | A format-level attribute that changes how the content is interpreted or presented: dimensions, color type, bit depth, frame delays, entry names, timestamps, compression method, checksums. |
 | **Contract** | An explicit, per-format statement of what is preserved, what is allowed to change, and how the result is checked. |
-| **Verification** | A mechanical check performed on the candidate file, using a decoder that is independent of the code that produced the candidate. |
+| **Verification** | A mechanical check performed on the candidate file. It never uses the encoder that produced it; how independent its *reader* is differs per format and is stated in [§2.6](#26-verification-independence). |
 | **Candidate** | The temporary output file produced by a handler. It never replaces the original until it passes verification. |
 
 A transformation is acceptable only if a contract exists, the contract is implemented as a verification
@@ -56,9 +56,74 @@ Bytes differ; all content and all significant properties are preserved according
 G3 is the only class used for real optimizations. It is always verified by:
 
 1. re-parsing the candidate strictly, including all checksums;
-2. an **independent** decode of both input and candidate, comparing content;
+2. decoding both input and candidate and comparing content — with an independent library where one exists,
+   and with this repository's own reader where it does not ([§2.6](#26-verification-independence));
 3. comparing the inventory of significant properties and preserved byte ranges;
-4. confirming the candidate is strictly smaller than the input.
+4. confirming the candidate is not larger than the input (strictly smaller unless `--strip-metadata`
+   removed something, see [§2.7](#27-g4--metadata-removed-on-request)).
+
+### G4 — metadata removed on request
+
+Used **only** when `--strip-metadata` is given. Content and every significant property are still preserved —
+the pixels, the coefficients, the payload, the names, the order — but a fixed list of metadata is removed on
+purpose. The complete list per format, and the rules that bound it, are in §2.7.
+
+G4 exists so that the other three classes never have to be quietly stretched: without the flag, nothing in
+this document changes.
+
+### 2.6 Verification independence
+
+Three levels exist, and this project uses all of them. Naming the level is the point: "verified" on its own
+would suggest more than any of these delivers.
+
+| Level | Meaning | Used for |
+| --- | --- | --- |
+| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip and ZIP payloads (`flate2`, `miniz_oxide`) |
+| **V2 — separate reader** | Code in this repository, used only for reading, that the writer's output never passes through. | *Not used anywhere today.* |
+| **V3 — shared implementation** | The candidate is parsed by the same reader the handler used to build it. | ZIP structure, ICO directory, JPEG markers and JPEG coefficients |
+
+| Format | Structure | Content | What a shared bug could hide |
+| --- | --- | --- | --- |
+| PNG | V3 (own chunk walker) | **V1** (`png` crate decodes both files, pixels compared) | A framing error that both sides accept; the IDAT payload is compared through an independent inflater, so it cannot hide a content change |
+| gzip | V3 (own header walker) | **V1** (`flate2` decodes both bodies; CRC-32 and ISIZE recomputed) | A header misreading; the payload comparison would still be independent |
+| ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
+| ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
+| JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
+
+**The honest consequence for JPEG.** Its verification is the weakest of the five, and it cannot be
+strengthened without an independent JPEG decoder, which would mean a new dependency and a much larger
+binary. What is in place instead: a strict parser that refuses anything it cannot fully validate, a
+coefficient-level comparison (stronger than comparing pixels, which a second decoder would give), the
+fixtures and the real-file corpus, and a fuzz target for the entropy reader. None of that is a proof. A
+symmetric codec defect would pass every check in this repository. This is the main reason JPEG is opt-in and
+why its gain is not oversold.
+
+**For ZIP** the risk is smaller than it sounds: the structure is copied, not synthesized, so most bytes are
+compared literally; the payload of every entry is inflated independently and its CRC-32 recomputed from the
+decompressed bytes, which the writer cannot fake without also changing the content.
+
+### 2.7 G4 — metadata removed on request
+
+`--strip-metadata` is the only path in Tzim that deliberately removes information, and it exists because
+every serious optimizer has it and users otherwise reach for a tool that removes it silently.
+
+| Format | Removed | Always kept |
+| --- | --- | --- |
+| PNG / APNG | `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf` | `iCCP`, `sRGB`, `gAMA`, `cHRM`, `pHYs`, `sBIT`, `bKGD`, `tRNS`, `hIST`, `sPLT`, every `acTL`/`fcTL`/`fdAT`, every critical chunk, every unknown chunk |
+| gzip | `FNAME`, `FCOMMENT`, `FEXTRA`, `FHCRC`, `MTIME` (zeroed) | the `XFL` and `OS` bytes, `CM`, the payload, CRC-32 and ISIZE |
+| ZIP family | archive comment, entry comments, DOS timestamps | names, extra fields (some are structure: ZIP64, the Unicode path), attributes, order, method, CRCs |
+| JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop/IPTC), `COM` | `APP0` (JFIF density), `APP2` (ICC), `APP14` (Adobe colour transform), every other `APPn`, all quantization and Huffman tables, every DCT coefficient |
+| ICO / CUR | nothing of its own; embedded PNGs are stripped under the PNG rule | the directory, bitmap entries, every PNG chunk in the keep list above |
+
+Rules that hold in every format:
+
+- the flag is off unless typed; no configuration file, no environment variable can turn it on;
+- content is never touched: pixels, coefficients, payload bytes, entry names and order;
+- anything this build does not understand is kept — removing what cannot be checked is not a decision the
+  tool makes, even when asked;
+- the run says so: every rewritten line carries `(metadata stripped)` and the JSON grows
+  `"metadata_stripped":true`;
+- `--dry-run` reports what would be removed and writes nothing.
 
 ---
 
@@ -69,11 +134,11 @@ These hold for every format, in addition to the per-format contract.
 | ID | Invariant |
 | --- | --- |
 | **I1** | The original file is never modified unless a candidate has passed every check. |
-| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded. |
-| **I3** | No metadata, comment, attachment, vendor chunk, private field or unknown structure is removed or normalized. |
+| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field (`--strip-metadata`, §2.7). A larger candidate is never accepted, under any flag. |
+| **I3** | No metadata, comment, attachment, vendor chunk, private field or unknown structure is removed or normalized. The single exception is the explicit `--strip-metadata` request, which removes the fixed list in §2.7 and nothing beyond it. |
 | **I4** | No lossy transformation, no format conversion, no quality, resolution, rate or bit-depth change. |
 | **I5** | If the input changes on disk between the initial stat and the replacement, the operation is aborted. |
-| **I6** | Verification never relies on the code that produced the candidate. Decoding uses an independent library or an independently written reader that is only used for reading. |
+| **I6** | Verification never reuses the encoder. Where the checker necessarily shares a parser with the writer — the JPEG codec and the ZIP structure — the sharing, and what it cannot catch, are stated in §2.6 instead of being called independence. |
 | **I7** | The candidate is written to a temporary file in the same directory and replaces the original only by an atomic rename where the platform supports it (see [safety](safety.md)). |
 | **I8** | Anything that cannot be parsed with full confidence is refused with a clear message, never "repaired". Tzim does not attempt to fix broken files, and never writes an output for an input it could not fully validate. |
 
@@ -408,6 +473,10 @@ listed here so that nobody has to guess:
 
 Any file whose metadata matters to you (ACLs, xattrs, ownership) should be backed up before running any
 optimizer, including this one.
+
+This section is about **filesystem** metadata. Embedded **content** metadata (Exif, ICC, comments, ZIP extra
+fields) is a different thing and is preserved byte for byte — except under `--strip-metadata`, which removes
+the fixed list in §2.7.
 
 ---
 

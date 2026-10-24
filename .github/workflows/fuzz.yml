@@ -69,7 +69,7 @@ jobs:
         run: |
           seconds="${{ github.event.inputs.seconds || '60' }}"
           status=0
-          for target in jpeg_decode roundtrip; do
+          for target in jpeg_decode roundtrip strip; do
             echo "::group::${target}, ${seconds}s"
             cargo +nightly fuzz run "$target" -- \
               -max_total_time="$seconds" -print_final_stats=1 || status=1

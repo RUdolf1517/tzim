@@ -22,13 +22,20 @@ libfuzzer-sys = "0.4"
 [dependencies.tzim]
 path = ".."
 default-features = false
-features = ["png", "gzip", "zip", "fuzz-api"]
+features = ["png", "gzip", "zip", "ico", "jpeg", "fuzz-api"]
 
 [workspace]
 members = ["."]
 
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "strip"
+path = "fuzz_targets/strip.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "jpeg_decode"

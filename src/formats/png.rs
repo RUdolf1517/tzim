@@ -572,12 +572,12 @@ pub fn optimize(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Can
         }
     }
 
-    let total = total_len(&parsed, &replacements)?;
+    let total = total_len(&parsed, &replacements, opts.strip_metadata)?;
     if total >= input.len() as u64 {
         return Ok(Cand::NoGain);
     }
 
-    write_candidate(&parsed, &replacements, out)?;
+    write_candidate(&parsed, &replacements, opts.strip_metadata, out)?;
     Ok(Cand::Written(total))
 }
 
@@ -631,9 +631,16 @@ fn split_evenly(data: &[u8], count: usize) -> Vec<&[u8]> {
     pieces
 }
 
-fn total_len(parsed: &Parsed<'_>, replacements: &[Option<Vec<u8>>]) -> Result<u64> {
+fn total_len(
+    parsed: &Parsed<'_>,
+    replacements: &[Option<Vec<u8>>],
+    strip: bool,
+) -> Result<u64> {
     let mut total = SIGNATURE.len() as u64;
     for (index, chunk) in parsed.chunks.iter().enumerate() {
+        if !survives(&chunk.typ, strip) {
+            continue;
+        }
         match &replacements[index] {
             Some(data) => total += 12 + data.len() as u64,
             None => total += chunk.raw.len() as u64,
@@ -645,10 +652,14 @@ fn total_len(parsed: &Parsed<'_>, replacements: &[Option<Vec<u8>>]) -> Result<u6
 fn write_candidate(
     parsed: &Parsed<'_>,
     replacements: &[Option<Vec<u8>>],
+    strip: bool,
     out: &mut dyn Write,
 ) -> Result<()> {
     out.write_all(&SIGNATURE)?;
     for (index, chunk) in parsed.chunks.iter().enumerate() {
+        if !survives(&chunk.typ, strip) {
+            continue;
+        }
         match &replacements[index] {
             Some(data) => {
                 if data.len() > MAX_CHUNK {
@@ -682,6 +693,30 @@ fn write_chunk(w: &mut dyn Write, typ: &[u8; 4], data: &[u8]) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// What `--strip-metadata` removes
+// ---------------------------------------------------------------------------
+
+/// Chunks removed when the user asks for `--strip-metadata`.
+///
+/// The list is deliberately short and textual. Anything that changes how the
+/// image looks, prints or animates stays: `iCCP`, `sRGB`, `gAMA`, `cHRM`,
+/// `pHYs` (print size), `sBIT`, `bKGD`, `tRNS`, `hIST`, `sPLT`, `acTL`, `fcTL`,
+/// `fdAT`. Chunks this build does not know are kept as well: deleting something
+/// whose meaning we cannot check is not a decision this tool makes, even when
+/// asked nicely.
+pub fn is_stripped(typ: &[u8; 4]) -> bool {
+    matches!(
+        typ,
+        b"tEXt" | b"zTXt" | b"iTXt" | b"tIME" | b"eXIf"
+    )
+}
+
+/// True when this chunk survives a stripping rewrite.
+fn survives(typ: &[u8; 4], strip: bool) -> bool {
+    !(strip && is_stripped(typ))
+}
+
+// ---------------------------------------------------------------------------
 // Verification
 // ---------------------------------------------------------------------------
 
@@ -695,12 +730,26 @@ fn open_reader(data: &[u8]) -> Result<PngReader<'_>> {
         .map_err(|e| Error::verify(format!("png: cannot decode: {e}")))
 }
 
-pub fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
+pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
     let pa = parse(original).map_err(|e| Error::verify(format!("original: {e}")))?;
     let pb = parse(candidate).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
     if pa.header != pb.header {
         return Err(Error::verify("IHDR changed"));
+    }
+
+    // With stripping enabled, a chunk may only disappear when it is on the list,
+    // and it must actually be gone: a verifier that accepted both would hide the
+    // case where the writer forgot to remove it.
+    if opts.strip_metadata {
+        for chunk in &pb.chunks {
+            if is_stripped(&chunk.typ) {
+                return Err(Error::verify(format!(
+                    "chunk `{}` survived --strip-metadata",
+                    String::from_utf8_lossy(&chunk.typ)
+                )));
+            }
+        }
     }
 
     // Everything that is neither IDAT nor fdAT must be byte-identical and in the
@@ -710,6 +759,7 @@ pub fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
         .chunks
         .iter()
         .filter(|c| c.typ != *b"IDAT" && c.typ != *b"fdAT")
+        .filter(|c| survives(&c.typ, opts.strip_metadata))
         .collect();
     let kept_b: Vec<_> = pb
         .chunks
@@ -986,7 +1036,7 @@ fn optimize_embedded_png(payload: &[u8], opts: &Options) -> Result<Option<Vec<u8
     }
 }
 
-pub fn verify_icon(original: &[u8], candidate: &[u8]) -> Result<()> {
+pub fn verify_icon(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
     let a = parse_icon(original).map_err(|e| Error::verify(format!("original: {e}")))?;
     let b = parse_icon(candidate).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
@@ -1005,7 +1055,7 @@ pub fn verify_icon(original: &[u8], candidate: &[u8]) -> Result<()> {
         }
         let is_png = ea.payload.len() >= SIGNATURE.len() && ea.payload[..SIGNATURE.len()] == SIGNATURE;
         if is_png {
-            verify(ea.payload, eb.payload)
+            verify(ea.payload, eb.payload, opts)
                 .map_err(|e| Error::verify(format!("image {index}: {e}")))?;
         } else if ea.payload != eb.payload {
             return Err(Error::verify(format!(

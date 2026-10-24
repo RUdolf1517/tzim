@@ -20,6 +20,7 @@ pub struct Config {
     pub max_pixels: u64,
     pub max_uncompressed: u64,
     pub max_ratio: u64,
+    pub strip_metadata: bool,
     pub nested: bool,
     pub max_depth: u32,
     pub allow: Allow,
@@ -38,6 +39,7 @@ impl Config {
             max_pixels: args.max_pixels,
             max_uncompressed: args.max_uncompressed,
             max_ratio: args.max_ratio,
+            strip_metadata: args.strip_metadata,
             nested: args.nested,
             max_depth: args.max_depth,
             allow: args.allow,
@@ -120,11 +122,20 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     if !cfg.allow.permits(format) {
         outcome.status = Status::Skipped;
         let enabled = cfg.allow.names();
-        outcome.note = Some(format!(
-            "{} is not enabled for this run (use --formats; enabled: {})",
-            format.name(),
-            if enabled.is_empty() { "none".to_string() } else { enabled.join(", ") }
-        ));
+        if !formats::compiled(format) {
+            let built = formats::compiled_names();
+            outcome.note = Some(format!(
+                "this build has no {} handler (compiled: {})",
+                format.id(),
+                if built.is_empty() { "none".to_string() } else { built.join(", ") }
+            ));
+        } else {
+            outcome.note = Some(format!(
+                "{} is not enabled for this run (use --formats; enabled: {})",
+                format.name(),
+                if enabled.is_empty() { "none".to_string() } else { enabled.join(", ") }
+            ));
+        }
         return Ok(());
     }
 
@@ -153,6 +164,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         max_pixels: cfg.max_pixels,
         max_uncompressed: cfg.max_uncompressed,
         max_ratio: cfg.max_ratio,
+        strip_metadata: cfg.strip_metadata,
         nested: cfg.nested,
         max_depth: cfg.max_depth,
         depth: 0,
@@ -182,7 +194,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     }
 
     let candidate = fs::read(temp.path())?;
-    formats::verify(format, &input, &candidate)?;
+    formats::verify(format, &input, &candidate, &options)?;
 
     outcome.after = written;
 
@@ -214,6 +226,7 @@ mod tests {
             max_pixels: 100_000_000,
             max_uncompressed: 8 * 1024 * 1024 * 1024,
             max_ratio: 1000,
+            strip_metadata: false,
             nested: false,
             max_depth: 3,
             allow: Allow::default(),

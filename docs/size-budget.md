@@ -5,29 +5,31 @@ Related: [dependencies](dependencies.md) · [roadmap](roadmap.md)
 A small binary is a project requirement, not a nice-to-have. But "small" is only meaningful when it is
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
-> **Current status:** the v0.1 binary has been built and measured by CI.
-> **Measured: 852 832 bytes (832 KiB)** for `x86_64-unknown-linux-musl`, `--release --all-features`
-> (PNG + gzip + Zopfli), commit `5c678b0`. That is 46 % of the provisional budget for the same profile.
-> The budgets in §1 remain upper bounds; the next step is to tighten them to *measured + 15 %*.
+> **Current status:** measured by CI on every pull request (`ci` job `binary size`).
+> **Measured: 1 012 576 bytes (988 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,zopfli`), v0.6.0. Per-feature measurements are in §3.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
 ---
 
 ## 1. Budget
 
-These are **upper bounds** for the stripped release binary. Exceeding one fails CI.
+These are **upper bounds** for the stripped release binary, one row per build CI actually performs. A row
+that CI does not build does not belong here: an unchecked budget is decoration.
 
-| Profile | Features | Budget | Rationale |
+| Profile | Features | Measured | Budget (+15 %) |
 | --- | --- | --- | --- |
-| `minimal` | none (CLI, walker, replacement pipeline) | 700 KiB | proves the core is thin; also a quick sanity check for accidental pulls |
-| `core` | `png,gzip` | 1.5 MiB | the v0.1 shipping configuration |
-| `core+zopfli` | `png,gzip,zopfli` | 1.8 MiB | +300 KiB allowed for the strongest encoder |
-| `+zip` | `png,gzip,zip` | 2.0 MiB | v0.2 |
-| `images` | `png,gzip,zip,ico,apng` | 2.2 MiB | v0.3, mostly reuses the PNG engine |
-| `full` | everything, including `jpeg` | 2.6 MiB | v0.4 |
+| `png` | `png` | 756 KiB | 870 KiB |
+| `core` | `png,gzip` | 764 KiB | 880 KiB |
+| `+zip` | `png,gzip,zip` | 812 KiB | 935 KiB |
+| `images` | `png,gzip,zip,ico` | 828 KiB | 955 KiB |
+| `+jpeg` | `png,gzip,zip,ico,jpeg` | 892 KiB | 1 030 KiB |
+| `full` | `png,gzip,zip,ico,jpeg,zopfli` | 988 KiB | 1 140 KiB |
 
-After the first real measurement, each budget is tightened to **measured size + 15 %**, so that regressions
-are caught early rather than after they accumulate.
+`full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
+rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
+*measured + 15 %*, so a change that costs more than a sixth of the current size has to be justified in the
+pull request.
 
 Reference point only (not a target): the official oxipng 10.2.1 Linux release archive is ~493 KiB
 compressed, and Leanify advertises "under 1 MB" for a C++ tool covering many formats. We are in the same
@@ -37,43 +39,76 @@ order of magnitude, with a stricter contract.
 
 ## 2. Release profile
 
+Exactly what `Cargo.toml` contains today:
+
 ```toml
 [profile.release]
-opt-level = 3          # codecs are hot; "z" is tested separately, see §5
+opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"        # no unwinding tables; a panic is a bug, not a recoverable error
-strip = "symbols"
-debug = false
-incremental = false
+panic = "abort"
 ```
 
 Notes:
 
-- `panic = "abort"` means `Drop` guards do not run on panic. The original file is still intact (replacement
-  happens last), but a temporary file may remain. This is documented in [safety](safety.md#5-failure-modes).
-- `strip = "symbols"` is the default. `strip = "debuginfo"` and no stripping are compared once, and the
-  smallest is chosen.
+- `panic = "abort"` means `Drop` guards do not run on a panic. The original file is still intact
+  (replacement happens last), but a temporary file may remain. This is documented in
+  [safety](safety.md#5-failure-modes).
+- `strip` is **not** set, so symbols stay in the binary. That is deliberate: a panic message with a symbol
+  name is worth more to whoever has to report the bug than the bytes it costs, and the budget is set with
+  them included. If a future release needs the space, `strip = "symbols"` is the first thing to try, and the
+  experiment in §5 records the decision either way.
+- `debug` and `incremental` are Cargo's defaults for a release profile (off and off); they are not spelled
+  out because writing them down would suggest a measurement that never happened.
 - LTO is "fat" because the tree is tiny; thin LTO was not worth the extra measurement complexity.
-- No `opt-level = "s"` or `"z"` for the whole crate: it slows the DEFLATE/PNG hot paths measurably and the
-  saving is small. Per-package overrides are evaluated per release.
+- No `opt-level = "s"` or `"z"` for the whole crate: it slows the DEFLATE and PNG hot paths, and there is no
+  measurement in this repository showing the size win would pay for it.
 
 ---
 
 ## 3. Feature matrix
 
-Every format family is an opt-in feature; the default is `full`.
+One feature per handler family, exactly as `Cargo.toml` declares them. `default` is what the published
+binaries are built with; everything else is a way to build a smaller tool for a narrower job.
 
-```
-default = ["png", "gzip", "zip", "ico", "apng"]
-png     = []            # PNG + APNG engine, needs flate2, crc32fast, png
-gzip    = []            # gzip container, needs flate2, crc32fast
-zip     = []            # ZIP rewriter, needs flate2, crc32fast
+```toml
+default = ["png", "gzip", "zip", "ico", "jpeg", "zopfli"]
+png     = ["dep:png", "dep:flate2", "dep:crc32fast"]
+gzip    = ["dep:flate2", "dep:crc32fast"]
+zip     = ["dep:flate2", "dep:crc32fast"]
 ico     = ["png"]
-apng    = ["png"]
-jpeg    = []            # opt-in at runtime too: requires --formats jpeg
+jpeg    = []
 zopfli  = ["dep:zopfli"]
+fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```
+
+`ico` is a thin layer over `png` (an icon is a directory plus embedded PNGs), and `jpeg` gates this
+repository's own codec, so it adds code without adding a crate. Turning a feature off removes the handler
+from `--list-formats`, makes `--formats <name>` a usage error instead of a silent no-op, and reports files
+of that format as `skipped: this build has no <format> handler`.
+
+Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one build per row
+(`ci` job `binary size`, step `Feature matrix`):
+
+| Features | Bytes | KiB |
+| --- | --- | --- |
+| `png` | 774 944 | 756 |
+| `png,gzip` | 783 136 | 764 |
+| `png,gzip,zip` | 832 288 | 812 |
+| `png,gzip,zip,ico` | 848 672 | 828 |
+| `png,gzip,zip,ico,jpeg` | 914 208 | 892 |
+| `png,gzip,zip,ico,jpeg,zopfli` | 1 012 576 | 988 |
+
+Each feature's cost is visible by subtracting the row above it: `gzip` +8 KiB, `zip` +49 KiB, `ico`
++16 KiB, the JPEG codec +65 KiB, Zopfli +98 KiB.
+
+The deltas are what a user saves by narrowing the build, not estimates: `png,gzip` is the smallest useful
+optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, and the last row is the
+published binary.
+
+`jpeg` is the only feature that is *also* off at runtime by default: its handler requires an explicit
+`--formats jpeg`, because the expected gain is small and the verification is the weakest in the project
+([guarantees §2.6](guarantees.md#26-verification-independence)).
 
 Build examples:
 
@@ -81,17 +116,12 @@ Build examples:
 # smallest useful build
 cargo build --release --no-default-features --features png,gzip
 
-# everything except the optional encoder
-cargo build --release --no-default-features --features png,gzip,zip
+# everything except JPEG and the optional encoder
+cargo build --release --no-default-features --features png,gzip,zip,ico
 
-# maximum compression
-cargo build --release --features zopfli
+# the published binary
+cargo build --release
 ```
-
-`jpeg` is the only feature that is also disabled at runtime by default: its handler requires an explicit
-`--formats jpeg`, because the expected gain is small and the risk is the highest in the project.
-
----
 
 ## 4. Measurement procedure
 
@@ -123,26 +153,30 @@ cargo clean && /usr/bin/time -v cargo build --release --target x86_64-unknown-li
             --no-default-features --features png,gzip
 ```
 
-What gets recorded for every release, in `docs/benchmarks.md`:
+What CI records, and what therefore appears in `docs/benchmarks.md`:
 
-- artifact size in bytes, per profile and per target triple;
-- size of `.text`, `.rodata`, `.data`, and the total of everything else;
-- top 10 crates by size with `cargo-bloat`;
-- number of lines from `cargo tree`;
-- wall-clock clean build time;
-- the exact commit hash and toolchain version.
+- the artifact size in bytes for the shipping profile, and the size of every feature combination in §3;
+- the number of `cargo tree` lines, as a dependency-count tripwire;
+- the `llvm-size` section table for the shipping binary, when the tool is present;
+- the commit the run was built from (the job summary names the workflow run, not just a hash).
+
+What it does **not** record, and which no report here claims: `cargo-bloat` attribution and clean build time.
+Both are useful and neither runs today; a number that this project has not measured does not appear in a
+table that looks measured.
 
 ---
 
-## 5. Experiments to run at v0.1
+## 5. Options considered
 
-Each is measured, kept only if it helps, and recorded either way:
+**None of the rows below is a measurement taken in this repository.** They are recorded decisions with the
+reasoning that led to them, kept so the next person does not have to re-litigate them from memory. A row
+with a number attached would say so; none has one.
 
 | Experiment | Expected effect | Decision rule |
 | --- | --- | --- |
 | `opt-level = "z"` globally | −5…15 % size, slower codecs | keep only if the size win exceeds 10 % and runtime cost is under 20 % |
 | `opt-level = "z"` for the CLI/reporting modules only | small | per-package override if measurable |
-| `strip = "debuginfo"` vs `"symbols"` vs none | small | pick the smallest |
+| `strip = "debuginfo"` vs `"symbols"` vs none | small | **decided: none** — symbols are kept so a panic can name a function; revisit only if the budget gets tight |
 | `panic = "abort"` (already on) | tens of KiB | stays |
 | `-Z build-std=std,panic_abort -Z build-std-features=panic_immediate_abort` (nightly) | 20–30 % smaller | **not default**; offered only in a documented "minimal" build, because it needs nightly and weakens reproducibility |
 | `flate2` `zlib-rs` backend instead of `miniz_oxide` | faster, possibly larger, adds `unsafe` | rejected by default; re-evaluate only if decode speed becomes the bottleneck |
@@ -155,16 +189,18 @@ Each is measured, kept only if it helps, and recorded either way:
 
 ## 6. CI gate
 
-The size check runs on every pull request that touches `Cargo.toml`, `Cargo.lock`, or `src/`:
+The `binary size` job in `.github/workflows/ci.yml` runs on every pull request — there is no path filter,
+because a handler change can move the size just as a `Cargo.toml` change can:
 
-1. build the `core` profile for `x86_64-unknown-linux-musl`;
-2. compare `stat -c %s` with the budget in §1 (a machine-readable budget file is added with the first
-   implementation, so the numbers live in one place);
-3. if the size grew by more than 5 % compared with the recorded baseline, the pull request must either
-   justify it in the description or reduce it;
-4. publish the number in the PR comment, so reviewers never have to guess.
+1. builds the shipping profile (default features) for `x86_64-unknown-linux-musl`;
+2. fails when `stat -c %s` exceeds the `full` budget in §1;
+3. builds every feature combination in §3 in the same job and prints the table, so a pull request cannot
+   claim a size saving without the number;
+4. publishes the whole report as a PR comment.
 
-The baseline is updated only by the release commit, together with `docs/benchmarks.md`.
+The budget lives in the workflow (one `budget=` line next to the check) and in §1. When a release changes
+the size, both are updated in the same pull request: a document that disagrees with the gate is worse than
+no document.
 
 ---
 

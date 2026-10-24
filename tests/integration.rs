@@ -1305,3 +1305,214 @@ fn jpeg_restart_intervals_are_preserved() {
     assert_eq!(code, 0);
     assert!(stdout.contains("already optimal"), "{stdout}");
 }
+
+
+// ---------------------------------------------------------------------------
+// --strip-metadata
+// ---------------------------------------------------------------------------
+
+/// The list of marker bytes in a JPEG's header, stopping at the scan.
+fn jpeg_header_markers(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut pos = 2usize;
+    while pos + 3 < data.len() {
+        if data[pos] != 0xff {
+            break;
+        }
+        let marker = data[pos + 1];
+        out.push(marker);
+        if marker == 0xda || marker == 0xd9 {
+            break;
+        }
+        let len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]) as usize;
+        pos += 2 + len;
+    }
+    out
+}
+
+#[test]
+fn strip_metadata_removes_png_text_and_exif_but_keeps_the_content() {
+    let ws = Workspace::new("strip-png");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        extra_chunks: vec![
+            ("tEXt".to_string(), b"Comment\0written by a tool".to_vec()),
+            ("tIME".to_string(), vec![0x07, 0xea, 1, 2, 3, 4, 5]),
+            ("prVt".to_string(), b"private, must survive".to_vec()),
+        ],
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("stamped.png", &original);
+
+    let (code, stdout, stderr) = run(&["stamped.png", "--strip-metadata"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let stripped = std::fs::read(&path).unwrap();
+    assert!(stripped.len() < original.len(), "stripping must shrink the file");
+    let chunks: Vec<String> = png_chunks(&stripped).unwrap().into_iter().map(|(t, _)| t).collect();
+    assert!(!chunks.contains(&"tEXt".to_string()), "{chunks:?}");
+    assert!(!chunks.contains(&"tIME".to_string()), "{chunks:?}");
+    // A chunk this build does not understand stays: deleting what we cannot
+    // check is not what the flag means.
+    assert!(chunks.contains(&"prVt".to_string()), "{chunks:?}");
+
+    let (w1, h1, p1) = decode_pixels(&original).unwrap();
+    let (w2, h2, p2) = decode_pixels(&stripped).unwrap();
+    assert_eq!((w1, h1), (w2, h2));
+    assert_eq!(p1, p2, "pixels must be identical");
+}
+
+#[test]
+fn strip_metadata_clears_the_gzip_header_and_keeps_the_payload() {
+    let ws = Workspace::new("strip-gzip");
+    let payload = b"the payload is the content and it never changes".repeat(200);
+    let original = build_gzip(&payload, Some(b"secret-name.txt"), Some(b"XYZZ"), 0, 1);
+    let path = ws.write("blob.gz", &original);
+
+    let (code, stdout, stderr) = run(&["blob.gz", "--strip-metadata"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let stripped = std::fs::read(&path).unwrap();
+    assert!(stripped.len() < original.len());
+    assert_eq!(&stripped[..4], &[0x1f, 0x8b, 0x08, 0x00], "flags must be zero");
+    assert_eq!(&stripped[4..8], &[0, 0, 0, 0], "MTIME must be zero");
+    assert!(
+        !stripped.windows(16).any(|w| w == b"secret-name.txt\0"),
+        "the name must be gone"
+    );
+
+    // The decompressed bytes are the contract, so decode both and compare.
+    let (payload_before, _) = inflate_member(&original);
+    let (payload_after, _) = inflate_member(&stripped);
+    assert_eq!(payload_before, payload_after);
+}
+
+/// Inflates a single-member gzip file, returning the payload and its CRC.
+fn inflate_member(data: &[u8]) -> (Vec<u8>, u32) {
+    use std::io::Read;
+
+    // The fixtures used here have no FEXTRA/FNAME/FCOMMENT after stripping, but
+    // the original may have them, so walk the header flags the slow way.
+    let flags = data[3];
+    let mut pos = 10usize;
+    if flags & 0x04 != 0 {
+        let xlen = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
+        pos += 2 + xlen;
+    }
+    for bit in [0x08u8, 0x10] {
+        if flags & bit != 0 {
+            while data[pos] != 0 {
+                pos += 1;
+            }
+            pos += 1;
+        }
+    }
+    let body = &data[pos..data.len() - 8];
+    let mut decoder = flate2::read::DeflateDecoder::new(body);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).unwrap();
+    let crc = crc32fast::hash(&out);
+    (out, crc)
+}
+
+#[test]
+fn strip_metadata_drops_jpeg_exif_and_comment() {
+    let ws = Workspace::new("strip-jpeg");
+    let original = build_jpeg(64, 64, 3);
+    let path = ws.write("shot.jpg", &original);
+    assert!(
+        jpeg_header_markers(&original).contains(&0xe1),
+        "the fixture must carry an APP1 segment"
+    );
+
+    let (code, stdout, stderr) = run(
+        &["shot.jpg", "--formats", "jpeg", "--strip-metadata"],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let stripped = std::fs::read(&path).unwrap();
+    let markers = jpeg_header_markers(&stripped);
+    assert!(!markers.contains(&0xe1), "APP1 must be gone: {markers:02x?}");
+    assert!(!markers.contains(&0xfe), "COM must be gone: {markers:02x?}");
+    // JFIF stays: it declares the pixel density and the colour space.
+    assert!(markers.contains(&0xe0), "{markers:02x?}");
+    assert_eq!(&stripped[..2], &[0xff, 0xd8]);
+    assert_eq!(&stripped[stripped.len() - 2..], &[0xff, 0xd9]);
+}
+
+#[test]
+fn strip_metadata_drops_zip_comments_and_keeps_extra_fields() {
+    let ws = Workspace::new("strip-zip");
+    let mut entry = ZipEntrySpec::deflated("report.txt", &b"contents".repeat(400), 1);
+    entry.comment = b"entry comment".to_vec();
+    entry.local_extra = vec![0x55, 0x54, 0x05, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00];
+    entry.central_extra = entry.local_extra.clone();
+    let original = build_zip(&[entry], b"archive comment");
+    let path = ws.write("bundle.zip", &original);
+
+    let (code, stdout, stderr) = run(&["bundle.zip", "--strip-metadata"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let stripped = std::fs::read(&path).unwrap();
+    assert!(stripped.len() < original.len());
+    assert!(zip_archive_comment(&stripped).is_empty());
+
+    let before = parse_zip(&original);
+    let after = parse_zip(&stripped);
+    assert_eq!(after.len(), before.len());
+    assert!(after[0].comment.is_empty(), "the entry comment must be gone");
+    assert_eq!(
+        after[0].central_extra, before[0].central_extra,
+        "extra fields are structure, not decoration"
+    );
+    assert_eq!(after[0].decompressed(&stripped), before[0].decompressed(&original));
+}
+
+#[test]
+fn strip_metadata_is_reported_and_dry_run_writes_nothing() {
+    let ws = Workspace::new("strip-dry");
+    let spec = PngSpec {
+        level: 1,
+        extra_chunks: vec![("tEXt".to_string(), b"Key\0value".to_vec())],
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("tagged.png", &original);
+
+    let (code, stdout, stderr) = run(&["tagged.png", "--strip-metadata", "--dry-run"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("metadata stripped"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original, "dry run must not write");
+
+    // The JSON schema says so too, for scripts that audit what happened.
+    let (code, stdout, stderr) =
+        run(&["tagged.png", "--strip-metadata", "--dry-run", "--json"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("\"metadata_stripped\":true"), "{stdout}");
+    assert!(stdout.contains("\"strip_metadata\":true"), "{stdout}");
+}
+
+#[test]
+fn metadata_is_preserved_when_the_flag_is_absent() {
+    let ws = Workspace::new("keep-meta");
+    let spec = PngSpec {
+        level: 1,
+        extra_chunks: vec![("tEXt".to_string(), b"Comment\0keep me".to_vec())],
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("tagged.png", &original);
+
+    let (code, _, stderr) = run(&["tagged.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    let chunks = png_chunks(&optimized).unwrap();
+    assert!(
+        chunks.iter().any(|(t, _)| t == "tEXt"),
+        "without the flag no metadata may be removed"
+    );
+}

@@ -8,6 +8,11 @@
 //! Only DEFLATE entries are recompressed. A stored entry stays stored, which is
 //! what keeps ODF/EPUB (`mimetype` must be stored) valid.
 //!
+//! `--strip-metadata` removes the archive comment, every entry comment and every
+//! DOS timestamp, and nothing else: extra fields stay because some of them are
+//! structure (`ZIP64`, the Unicode path) rather than decoration, and a rule that
+//! guessed which was which would eventually delete a file's real name.
+//!
 //! Verification re-parses the candidate with the same strict reader and compares
 //! every preserved field, then decompresses each entry from both files and
 //! compares the payloads. The writer and the verifier agree on the file format,
@@ -622,15 +627,19 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
 
     let rebuilt = rebuild(data, &archive, opts)?;
     match rebuilt {
-        Some(out) if out.len() < data.len() => {
+        // Zeroing timestamps removes metadata without removing bytes, so with the
+        // flag set an equal-size rewrite is still the requested result.
+        Some(out) if out.len() < data.len() || (opts.strip_metadata && out.len() == data.len()) => {
+            let len = out.len() as u64;
             dst.write_all(&out)?;
-            Ok(Cand::Written(out.len() as u64))
+            Ok(Cand::Written(len))
         }
         _ => Ok(Cand::NoGain),
     }
 }
 
 fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>> {
+    let strip = opts.strip_metadata;
     let count = a.entries.len();
     let mut out: Vec<u8> = Vec::with_capacity(d.len());
     let mut new_offsets = vec![0u32; count];
@@ -638,6 +647,22 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
     let mut new_crc = vec![0u32; count];
     let mut new_uncomp = vec![0u32; count];
     let mut changed = false;
+
+    if strip {
+        // An archive that is already bare is not rewritten for its own sake.
+        if !a.comment.is_empty() {
+            changed = true;
+        }
+        for e in &a.entries {
+            if !e.comment.is_empty()
+                || read_u16(e.local, 10)? != 0
+                || read_u16(e.local, 12)? != 0
+            {
+                changed = true;
+                break;
+            }
+        }
+    }
 
     for &index in &a.physical {
         let e = &a.entries[index];
@@ -705,6 +730,9 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
             .map_err(|_| Error::limit("zip: entry would exceed 4 GiB"))?;
 
         let mut header = e.local.to_vec();
+        if strip {
+            header[10..14].fill(0);
+        }
         if !e.has_descriptor() {
             header[LOCAL_CRC_OFFSET..LOCAL_CRC_OFFSET + 4].copy_from_slice(&crc.to_le_bytes());
             header[LOCAL_COMP_OFFSET..LOCAL_COMP_OFFSET + 4]
@@ -729,6 +757,11 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
         .map_err(|_| Error::limit("zip: rewritten archive would exceed 4 GiB"))?;
     for (index, e) in a.entries.iter().enumerate() {
         let mut record = e.central.to_vec();
+        if strip {
+            record[12..16].fill(0);
+            record.truncate(CENTRAL_LEN + e.name.len() + e.central_extra.len());
+            record[32..34].copy_from_slice(&0u16.to_le_bytes());
+        }
         record[CENTRAL_CRC_OFFSET..CENTRAL_CRC_OFFSET + 4]
             .copy_from_slice(&new_crc[index].to_le_bytes());
         record[CENTRAL_COMP_OFFSET..CENTRAL_COMP_OFFSET + 4]
@@ -742,7 +775,10 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
     let cd_size = u32::try_from(out.len() - cd_offset as usize)
         .map_err(|_| Error::limit("zip: central directory would exceed 4 GiB"))?;
 
-    let mut eocd = a.eocd.to_vec();
+    let mut eocd = if strip { a.eocd[..EOCD_LEN].to_vec() } else { a.eocd.to_vec() };
+    if strip {
+        eocd[20..22].copy_from_slice(&0u16.to_le_bytes());
+    }
     eocd[12..16].copy_from_slice(&cd_size.to_le_bytes());
     eocd[16..20].copy_from_slice(&cd_offset.to_le_bytes());
     out.extend_from_slice(&eocd);
@@ -796,7 +832,7 @@ fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u3
     if candidate.is_empty() || candidate.len() >= child.len() {
         return Ok(None);
     }
-    if super::verify(format, child, &candidate).is_err() {
+    if super::verify(format, child, &candidate, &deeper).is_err() {
         return Ok(None);
     }
     let crc = crc32fast::hash(&candidate);
@@ -814,8 +850,12 @@ fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u3
 /// Masks the fields a rewrite may change. `checksum` is set when a nested
 /// rewrite legitimately replaced the content, which also changes the stored CRC
 /// and the uncompressed size.
-fn mask_local(header: &[u8], checksum: bool) -> Vec<u8> {
+fn mask_local(header: &[u8], checksum: bool, strip: bool) -> Vec<u8> {
     let mut copy = header.to_vec();
+    if strip && copy.len() >= 14 {
+        // DOS time and date, removed on request and therefore not compared.
+        copy[10..14].fill(0);
+    }
     if copy.len() >= LOCAL_COMP_OFFSET + 4 {
         copy[LOCAL_COMP_OFFSET..LOCAL_COMP_OFFSET + 4].fill(0);
     }
@@ -826,8 +866,18 @@ fn mask_local(header: &[u8], checksum: bool) -> Vec<u8> {
     copy
 }
 
-fn mask_central(record: &[u8], checksum: bool) -> Vec<u8> {
+fn mask_central(record: &[u8], checksum: bool, strip: bool) -> Vec<u8> {
     let mut copy = record.to_vec();
+    if strip && copy.len() >= CENTRAL_LEN {
+        let name_len = u16::from_le_bytes([copy[28], copy[29]]) as usize;
+        let extra_len = u16::from_le_bytes([copy[30], copy[31]]) as usize;
+        let keep = CENTRAL_LEN + name_len + extra_len;
+        if keep <= copy.len() {
+            copy.truncate(keep);
+        }
+        copy[12..16].fill(0);
+        copy[32..34].fill(0);
+    }
     if copy.len() >= CENTRAL_LOCAL_OFFSET + 4 {
         copy[CENTRAL_COMP_OFFSET..CENTRAL_COMP_OFFSET + 4].fill(0);
         copy[CENTRAL_LOCAL_OFFSET..CENTRAL_LOCAL_OFFSET + 4].fill(0);
@@ -839,14 +889,21 @@ fn mask_central(record: &[u8], checksum: bool) -> Vec<u8> {
     copy
 }
 
-pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
+pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
     let pa = parse_archive(a).map_err(|e| Error::verify(format!("original: {e}")))?;
     let pb = parse_archive(b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+    let strip = opts.strip_metadata;
 
     if pa.entries.len() != pb.entries.len() {
         return Err(Error::verify("entry count changed"));
     }
-    if pa.comment != pb.comment {
+    if strip {
+        if !pb.comment.is_empty() {
+            return Err(Error::verify(
+                "archive comment survived --strip-metadata",
+            ));
+        }
+    } else if pa.comment != pb.comment {
         return Err(Error::verify("archive comment was not preserved"));
     }
 
@@ -868,7 +925,7 @@ pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
             // supported format that got smaller and still satisfies its contract.
             let data_a = &a[ea.data_offset..ea.data_offset + ea.data_len];
             let data_b = &b[eb.data_offset..eb.data_offset + eb.data_len];
-            verify_nested_change(data_a, data_b, ea.method, &label)?;
+            verify_nested_change(data_a, data_b, ea.method, &label, opts)?;
         }
         if ea.version_made_by != eb.version_made_by || ea.version_needed != eb.version_needed {
             return Err(Error::verify(format!("entry `{label}`: version fields changed")));
@@ -876,16 +933,34 @@ pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
         if ea.central_extra != eb.central_extra || ea.local_extra != eb.local_extra {
             return Err(Error::verify(format!("entry `{label}`: extra fields changed")));
         }
-        if ea.comment != eb.comment {
+        if strip {
+            if !eb.comment.is_empty() {
+                return Err(Error::verify(format!(
+                    "entry `{label}`: comment survived --strip-metadata"
+                )));
+            }
+            if read_u16(eb.local, 10)? != 0
+                || read_u16(eb.local, 12)? != 0
+                || read_u16(eb.central, 12)? != 0
+                || read_u16(eb.central, 14)? != 0
+            {
+                return Err(Error::verify(format!(
+                    "entry `{label}`: timestamp survived --strip-metadata"
+                )));
+            }
+        } else if ea.comment != eb.comment {
             return Err(Error::verify(format!("entry `{label}`: comment changed")));
         }
         let checksum_changed = ea.crc != eb.crc || ea.uncomp_size != eb.uncomp_size;
-        if mask_local(ea.local, checksum_changed) != mask_local(eb.local, checksum_changed) {
+        if mask_local(ea.local, checksum_changed, strip) != mask_local(eb.local, checksum_changed, strip)
+        {
             return Err(Error::verify(format!(
                 "entry `{label}`: local header changed outside the allowed fields"
             )));
         }
-        if mask_central(ea.central, checksum_changed) != mask_central(eb.central, checksum_changed) {
+        if mask_central(ea.central, checksum_changed, strip)
+            != mask_central(eb.central, checksum_changed, strip)
+        {
             return Err(Error::verify(format!(
                 "entry `{label}`: central directory record changed outside the allowed fields"
             )));
@@ -913,6 +988,7 @@ fn verify_nested_change(
     data_b: &[u8],
     method: u16,
     label: &str,
+    opts: &Options,
 ) -> Result<()> {
     if method != METHOD_DEFLATE {
         return Err(Error::verify(format!(
@@ -935,7 +1011,7 @@ fn verify_nested_change(
             "entry `{label}`: content changed but is not a supported format"
         ))
     })?;
-    super::verify(format, &child_a, &child_b)
+    super::verify(format, &child_a, &child_b, opts)
         .map_err(|e| Error::verify(format!("entry `{label}`: nested content: {e}")))
 }
 
@@ -1020,7 +1096,7 @@ mod tests {
     fn masking_keeps_preserved_bytes() {
         let mut local = vec![0u8; LOCAL_LEN];
         local[LOCAL_COMP_OFFSET] = 0xaa;
-        let masked = mask_local(&local, false);
+        let masked = mask_local(&local, false, false);
         assert_eq!(masked[LOCAL_COMP_OFFSET], 0);
         assert_eq!(local[LOCAL_COMP_OFFSET], 0xaa);
     }

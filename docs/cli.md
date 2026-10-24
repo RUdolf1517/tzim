@@ -90,6 +90,7 @@ reproducible and diffable.
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`); naming `jpeg` is the only way to enable it |
+| `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
 | `--max-depth <N>` | `3` | how deep `--nested` may recurse (`0` is rejected) |
 | `--zopfli` | off | use the Zopfli encoder; much slower, smaller output |
@@ -106,6 +107,20 @@ reproducible and diffable.
 
 `--include` and `--exclude` take extension lists (`png,gz`), not glob patterns. Globs are deliberately not
 implemented: shell globbing already exists, and a second pattern language is a second set of edge cases.
+
+`--strip-metadata` is the only option that removes information, and it never removes content:
+
+| Format | Removed | Kept |
+| --- | --- | --- |
+| PNG, APNG | `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf` | ICC, `sRGB`, `gAMA`, `cHRM`, `pHYs`, `sBIT`, `bKGD`, `tRNS`, APNG control chunks, unknown chunks |
+| gzip | `FNAME`, `FCOMMENT`, `FEXTRA`, `FHCRC`, `MTIME` (zeroed) | `XFL`, `OS`, method, payload, CRC-32, ISIZE |
+| ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
+| JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
+| ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+
+With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
+timestamp removes metadata without removing bytes, and the point of the flag is the metadata. A candidate
+that is *larger* is still refused under every flag.
 
 `--formats` is an allowlist, not an addition: `--formats jpeg` processes JPEG and nothing else, and
 `--formats png,jpeg` processes both. Formats that are detected but not enabled are reported as `skipped`
@@ -165,6 +180,7 @@ Field rules:
 | `before`, `after` | integer | file sizes in bytes; equal for every non-optimizing outcome |
 | `saved` | integer | `before - after` |
 | `guarantee` | string | `format_equivalent` for `optimized` / `would_optimize`; `byte_identical` otherwise |
+| `metadata_stripped` | bool | present and `true` only when `--strip-metadata` rewrote this file |
 | `duration_ms` | integer | wall time spent on this file |
 | `error` | object or null | `{"kind": "...", "message": "..."}`; `kind` is one of `io`, `parse`, `limit`, `refused`, `verify`, `internal` (a `usage` error exits before any file record exists); `refused` and `limit` accompany a `skipped` status, meaning the input is valid but Tzim declines it |
 | `schema` | integer | present in the summary only; bumped on breaking schema changes |

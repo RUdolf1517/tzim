@@ -130,6 +130,12 @@ The command line has its own contract, because it is what every other test goes 
 | `tzim -- -weird-name.png` | a path that starts with a dash needs the separator, and works with it |
 | `tzim -i`, `--info`, `--list-formats`, `--check-deps` | exit `0`, no path needed, nothing on disk touched |
 | `tzim --help` | lists `tzim [OPTIONS] <PATH>...` and the information commands, and no verb |
+| `tzim x.png --strip-metadata` | text, `tIME` and `eXIf` gone; pixels identical; an unknown private chunk still present |
+| `tzim x.gz --strip-metadata` | header reduced to ten bytes with `FLG = 0` and `MTIME = 0`; payload identical |
+| `tzim x.jpg --formats jpeg --strip-metadata` | `APP1` and `COM` gone, `APP0` kept, coefficients unchanged |
+| `tzim x.zip --strip-metadata` | archive and entry comments gone, extra fields byte-identical, payload identical |
+| `tzim x.png --strip-metadata --dry-run --json` | nothing written; `metadata_stripped` in the record and `strip_metadata` in the summary |
+| `tzim x.png` (no flag) | text chunks still there, whatever the encoder does |
 
 ### Fixture corpus
 
@@ -222,17 +228,18 @@ raises a warning so that the list cannot rot into a set of broad patterns hiding
 ### Fuzzing (`cargo-fuzz`, nightly, separate workspace)
 
 `fuzz/` is a separate Cargo workspace so that `libfuzzer-sys` and the sanitizer runtime never become
-dependencies of the binary. Two targets, both reached through the `fuzz-api` feature of the library, which no
-release build enables:
+dependencies of the binary. Three targets, all reached through the `fuzz-api` feature of the library, which
+no release build enables:
 
 | Target | Reaches |
 | --- | --- |
 | `jpeg_decode` | the JPEG marker parser, the layout analysis and the entropy decoder |
 | `roundtrip` | detection, the handler for the detected format, and verification of the candidate |
+| `strip` | the same round trip with `--strip-metadata`: the removal paths and the checks that the removed structures are gone |
 
 The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
-and — for `roundtrip` — that any candidate reported as accepted is smaller than the input and passes
-verification. The seed corpus is the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is
+and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input and
+passes verification. The seed corpus is the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is
 part of CI (`fuzz.yml`); longer runs are performed before a release.
 
 Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored.

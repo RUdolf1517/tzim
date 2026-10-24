@@ -1297,6 +1297,7 @@ fn assemble(
     layout: &Layout,
     optimized: &BTreeMap<TableKey, Huff>,
     entropy: &[u8],
+    strip: bool,
 ) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(entropy.len() + 1024);
     out.push(0xff);
@@ -1305,6 +1306,9 @@ fn assemble(
     let mut merged = false;
     let mut seen_scan = false;
     for segment in &image.segments {
+        if !survives(segment.marker, strip) {
+            continue;
+        }
         if segment.marker == SOS {
             seen_scan = true;
             write_segment(&mut out, SOS, &segment.payload)?;
@@ -1335,11 +1339,12 @@ fn assemble(
     Ok(out)
 }
 
-fn marker_sequence(image: &Image) -> Vec<(u8, &[u8])> {
+fn marker_sequence<'a>(image: &'a Image, opts: &Options) -> Vec<(u8, &'a [u8])> {
     image
         .segments
         .iter()
         .filter(|s| s.marker != DHT)
+        .filter(|s| survives(s.marker, opts.strip_metadata))
         .map(|s| (s.marker, s.payload.as_slice()))
         .collect()
 }
@@ -1355,6 +1360,25 @@ fn build_tables(layout: &Layout, stats: &Stats) -> BTreeMap<TableKey, Huff> {
         tables.insert((class, id), optimal(counts));
     }
     tables
+}
+
+// ---------------------------------------------------------------------------
+// What `--strip-metadata` removes
+// ---------------------------------------------------------------------------
+
+/// Markers removed when the user asks for `--strip-metadata`.
+///
+/// `APP1` carries Exif and XMP, `APP13` carries the Photoshop/IPTC block, and
+/// `COM` carries a comment. Nothing else is touched: `APP0` (JFIF density and
+/// thumbnail), `APP2` (ICC profile), `APP14` (Adobe colour transform) and every
+/// unknown `APPn` change how the file is interpreted or may be structural, so
+/// they stay even though some of them are metadata too.
+pub fn is_stripped(marker: u8) -> bool {
+    marker == 0xe1 || marker == 0xed || marker == 0xfe
+}
+
+fn survives(marker: u8, strip: bool) -> bool {
+    !(strip && is_stripped(marker))
 }
 
 // ---------------------------------------------------------------------------
@@ -1389,7 +1413,7 @@ pub fn optimize(input: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Can
     let decoded = decode(&image, &layout)?;
     let tables = build_tables(&layout, &decoded.stats);
     let entropy = encode_scan(&decoded, &layout, &tables)?;
-    let candidate = assemble(&image, &layout, &tables, &entropy)?;
+    let candidate = assemble(&image, &layout, &tables, &entropy, opts.strip_metadata)?;
 
     if candidate.len() >= input.len() {
         return Ok(Cand::NoGain);
@@ -1398,7 +1422,7 @@ pub fn optimize(input: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Can
     Ok(Cand::Written(candidate.len() as u64))
 }
 
-pub fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
+pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
     let before = parse(original)?;
     let after = parse(candidate)?;
     let layout_before = analyze(&before)?;
@@ -1407,7 +1431,17 @@ pub fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
     if layout_before.frame != layout_after.frame {
         return Err(Error::verify("jpeg: the frame header changed"));
     }
-    if marker_sequence(&before) != marker_sequence(&after) {
+    if opts.strip_metadata {
+        for segment in &after.segments {
+            if is_stripped(segment.marker) {
+                return Err(Error::verify(format!(
+                    "jpeg: marker 0x{:02X} survived --strip-metadata",
+                    segment.marker
+                )));
+            }
+        }
+    }
+    if marker_sequence(&before, opts) != marker_sequence(&after, opts) {
         return Err(Error::verify(
             "jpeg: markers outside the Huffman tables changed",
         ));
