@@ -45,7 +45,7 @@ manifest > "$work/manifest-before.txt"
 run() {
     local out="$1" err="$2"
     set +e
-    "$bin" optimize --formats png,gzip,zip,ico,jpeg --jobs 2 --json -r "$corpus" \
+    "$bin" --formats png,gzip,zip,ico,jpeg,tiff --jobs 2 --json -r "$corpus" \
         > "$out" 2> "$err"
     local code=$?
     set -e
@@ -158,7 +158,7 @@ lines.append(f"| Files | {len(files1)} |")
 lines.append(f"| Optimized | {optimized} |")
 lines.append(f"| Already optimal | {summary1.get('already_optimal', 0)} |")
 lines.append(f"| Unsupported | {summary1.get('unsupported', 0)} |")
-lines.append(f"| Skipped (refused: progressive/arithmetic/limit) | {summary1.get('skipped', 0)} |")
+lines.append(f"| Skipped (refused by contract: progressive/arithmetic/limit/unsupported layout) | {summary1.get('skipped', 0)} |")
 lines.append(f"| Failed | {len(failed)} ({len(failed) - len(unexpected)} expected) |")
 lines.append(f"| Bytes before | {before} |")
 lines.append(f"| Bytes after | {after} |")
@@ -170,6 +170,23 @@ lines.append("Optimized files, by format: " +
 lines.append("")
 lines.append("By container: " + ", ".join(f"{name} {count}" for name, count in sorted(kinds.items())))
 lines.append("")
+skipped = [r for r in files1 if r.get("status") == "skipped"]
+
+def reason(record):
+    note = record.get("note") or (record.get("error") or {}).get("message") or "no reason given"
+    # "tiff: tiled layout is not supported; only strips are rewritten" becomes
+    # "tiled layout is not supported": the handler prefix and the aside go.
+    _, _, rest = note.partition(": ")
+    clause = (rest or note).split(";")[0].split(" (")[0]
+    if len(clause) > 58:
+        clause = clause[:58].rsplit(" ", 1)[0] + "..."
+    return clause
+
+if skipped:
+    by_reason = collections.Counter(reason(r) for r in skipped)
+    lines.append("Skipped, by reason: " +
+                 "; ".join(f"{text} ({count})" for text, count in by_reason.most_common(6)))
+    lines.append("")
 if failed:
     lines.append("### Files that failed")
     lines.append("")

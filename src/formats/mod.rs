@@ -9,6 +9,8 @@ pub mod gzip;
 pub mod jpeg;
 #[cfg(feature = "png")]
 pub mod png;
+#[cfg(feature = "tiff")]
+pub mod tiff;
 #[cfg(feature = "zip")]
 pub mod zip;
 
@@ -20,6 +22,7 @@ pub const fn compiled(format: Format) -> bool {
         Format::Zip => cfg!(feature = "zip"),
         Format::Ico => cfg!(feature = "ico"),
         Format::Jpeg => cfg!(feature = "jpeg"),
+        Format::Tiff => cfg!(feature = "tiff"),
     }
 }
 
@@ -41,6 +44,9 @@ pub fn compiled_names() -> Vec<&'static str> {
     if cfg!(feature = "jpeg") {
         out.push("jpeg");
     }
+    if cfg!(feature = "tiff") {
+        out.push("tiff");
+    }
     out
 }
 
@@ -56,6 +62,7 @@ pub struct Allow {
     pub zip: bool,
     pub ico: bool,
     pub jpeg: bool,
+    pub tiff: bool,
 }
 
 impl Default for Allow {
@@ -68,6 +75,7 @@ impl Default for Allow {
             zip: cfg!(feature = "zip"),
             ico: cfg!(feature = "ico"),
             jpeg: false,
+            tiff: cfg!(feature = "tiff"),
         }
     }
 }
@@ -83,6 +91,7 @@ impl Allow {
             zip: false,
             ico: false,
             jpeg: false,
+            tiff: false,
         };
         for name in names {
             let (format, slot) = match name.as_str() {
@@ -91,9 +100,10 @@ impl Allow {
                 "zip" => (Format::Zip, &mut allow.zip),
                 "ico" | "cur" => (Format::Ico, &mut allow.ico),
                 "jpeg" | "jpg" => (Format::Jpeg, &mut allow.jpeg),
+                "tiff" | "tif" => (Format::Tiff, &mut allow.tiff),
                 other => {
                     return Err(Error::usage(format!(
-                        "unknown format `{other}`; expected png, gzip, zip, ico or jpeg"
+                        "unknown format `{other}`; expected png, gzip, zip, ico, jpeg or tiff"
                     )))
                 }
             };
@@ -117,6 +127,7 @@ impl Allow {
             Format::Zip => self.zip,
             Format::Ico => self.ico,
             Format::Jpeg => self.jpeg,
+            Format::Tiff => self.tiff,
         }
     }
 
@@ -137,6 +148,9 @@ impl Allow {
         }
         if self.jpeg {
             out.push("jpeg");
+        }
+        if self.tiff {
+            out.push("tiff");
         }
         out
     }
@@ -198,6 +212,8 @@ pub fn optimize(
         Format::Ico => png::optimize_icon(input, dst, opts)?,
         #[cfg(feature = "jpeg")]
         Format::Jpeg => jpeg::optimize(input, dst, opts)?,
+        #[cfg(feature = "tiff")]
+        Format::Tiff => tiff::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -228,6 +244,8 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options)
         Format::Ico => png::verify_icon(original, candidate, opts),
         #[cfg(feature = "jpeg")]
         Format::Jpeg => jpeg::verify(original, candidate, opts),
+        #[cfg(feature = "tiff")]
+        Format::Tiff => tiff::verify(original, candidate, opts),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -264,6 +282,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "JPEG",
         "re-encode the entropy data with optimal Huffman tables",
         "every marker and every DCT coefficient preserved; opt-in via --formats",
+    ));
+    #[cfg(feature = "tiff")]
+    rows.push((
+        "TIFF",
+        "recompress strips, or compress uncompressed ones",
+        "every tag, entry order and geometry; strips decode identically",
     ));
     #[cfg(feature = "zip")]
     rows.push((

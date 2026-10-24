@@ -24,6 +24,7 @@ fn options() -> Options {
             zip: true,
             ico: true,
             jpeg: true,
+            tiff: true,
         },
     }
 }

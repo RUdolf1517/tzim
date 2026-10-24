@@ -1,6 +1,6 @@
 [package]
 name = "tzim"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Lossless file optimizer: shrink the file, never the information"
@@ -27,7 +27,7 @@ zopfli = { version = "0.8", optional = true, default-features = false, features 
 [features]
 # One feature per handler family, so a build can drop what it will never see.
 # `default` is what the published binaries are built with.
-default = ["png", "gzip", "zip", "ico", "jpeg", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zopfli"]
 gzip = ["dep:flate2", "dep:crc32fast"]
 png = ["dep:png", "dep:flate2", "dep:crc32fast"]
 zip = ["dep:flate2", "dep:crc32fast"]
@@ -37,6 +37,8 @@ ico = ["png"]
 # The JPEG codec is part of this repository and pulls in no crate, so the
 # feature costs nothing but the code it gates.
 jpeg = []
+# TIFF only needs the DEFLATE codec that PNG and gzip already bring in.
+tiff = ["dep:flate2"]
 zopfli = ["dep:zopfli"]
 # Exposes the parsers to the fuzz targets in fuzz/. Never enabled for a release.
 fuzz-api = []

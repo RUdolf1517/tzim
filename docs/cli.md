@@ -117,6 +117,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
 | JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+| TIFF | `ImageDescription`, `DocumentName`, `Make`, `Model`, `Software`, `DateTime`, `HostComputer`, `InkNames`, `Copyright`, IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
 timestamp removes metadata without removing bytes, and the point of the flag is the metadata. A candidate
@@ -163,8 +164,8 @@ Statuses shown to humans: `optimized`, `already optimal`, `skipped: <reason>`, `
 object. Nothing else is written to stdout. Warnings and errors still appear on stderr as human text.
 
 ```json
-{"type":"file","path":"photo.png","format":"png","status":"optimized","before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"error":null}
-{"type":"file","path":"notes.txt","format":null,"status":"skipped","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"error":{"kind":"unsupported","message":"unsupported format"}}
+{"type":"file","path":"photo.png","format":"png","status":"optimized","before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"note":null,"error":null}
+{"type":"file","path":"notes.txt","format":null,"status":"skipped","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":"unsupported format","error":{"kind":"unsupported","message":"unsupported format"}}
 {"type":"summary","schema":1,"files":2,"optimized":1,"would_optimize":0,"already_optimal":0,"unsupported":1,"skipped":0,"failed":0,"before":1258332,"after":1065041,"saved":193291,"duration_ms":414,"dry_run":false}
 ```
 
@@ -175,13 +176,14 @@ Field rules:
 | `type` | string | `file` or `summary` |
 | `path` | string | lossy UTF-8 rendering of the path, for humans |
 | `path_raw_b64` | string, optional | base64 of the raw path bytes; present on Unix only when the path is not valid UTF-8 |
-| `format` | string or null | handler id: `png`, `gzip`, `zip`, `ico`, `apng`, `jpeg` |
+| `format` | string or null | handler id: `png`, `gzip`, `zip`, `ico`, `apng`, `jpeg`, `tiff` |
 | `status` | string | `optimized`, `would_optimize`, `already_optimal`, `unsupported`, `skipped`, `failed` |
 | `before`, `after` | integer | file sizes in bytes; equal for every non-optimizing outcome |
 | `saved` | integer | `before - after` |
 | `guarantee` | string | `format_equivalent` for `optimized` / `would_optimize`; `byte_identical` otherwise |
 | `metadata_stripped` | bool | present and `true` only when `--strip-metadata` rewrote this file |
 | `duration_ms` | integer | wall time spent on this file |
+| `note` | string or null | why the file landed in this status: the refusal reason for `skipped`, the filesystem reason for a skipped replacement |
 | `error` | object or null | `{"kind": "...", "message": "..."}`; `kind` is one of `io`, `parse`, `limit`, `refused`, `verify`, `internal` (a `usage` error exits before any file record exists); `refused` and `limit` accompany a `skipped` status, meaning the input is valid but Tzim declines it |
 | `schema` | integer | present in the summary only; bumped on breaking schema changes |
 | `dry_run` | boolean | present in the summary only |

@@ -89,7 +89,7 @@ Additional requirements:
 
 | Crate | Direct | Compiled by | Purpose | In the binary |
 | --- | --- | --- | --- | --- |
-| `flate2` | yes | features `png`, `gzip`, `zip` | DEFLATE decode/encode | with any of those |
+| `flate2` | yes | features `png`, `gzip`, `zip`, `tiff` | DEFLATE decode/encode | with any of those |
 | `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |

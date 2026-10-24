@@ -6,8 +6,8 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 1 012 576 bytes (988 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,zopfli`), v0.6.0. Per-feature measurements are in §3.
+> **Measured: 1 049 440 bytes (1 024 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.7.0. Per-feature measurements are in §3.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
 ---
@@ -24,7 +24,8 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 | `+zip` | `png,gzip,zip` | 812 KiB | 935 KiB |
 | `images` | `png,gzip,zip,ico` | 828 KiB | 955 KiB |
 | `+jpeg` | `png,gzip,zip,ico,jpeg` | 892 KiB | 1 030 KiB |
-| `full` | `png,gzip,zip,ico,jpeg,zopfli` | 988 KiB | 1 140 KiB |
+| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 924 KiB | 1 063 KiB |
+| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 1 024 KiB | 1 178 KiB |
 
 `full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
 rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
@@ -72,18 +73,20 @@ One feature per handler family, exactly as `Cargo.toml` declares them. `default`
 binaries are built with; everything else is a way to build a smaller tool for a narrower job.
 
 ```toml
-default = ["png", "gzip", "zip", "ico", "jpeg", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zopfli"]
 png     = ["dep:png", "dep:flate2", "dep:crc32fast"]
 gzip    = ["dep:flate2", "dep:crc32fast"]
 zip     = ["dep:flate2", "dep:crc32fast"]
 ico     = ["png"]
 jpeg    = []
+tiff    = ["dep:flate2"]
 zopfli  = ["dep:zopfli"]
 fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```
 
-`ico` is a thin layer over `png` (an icon is a directory plus embedded PNGs), and `jpeg` gates this
-repository's own codec, so it adds code without adding a crate. Turning a feature off removes the handler
+`ico` is a thin layer over `png` (an icon is a directory plus embedded PNGs), `jpeg` gates this
+repository's own codec, so it adds code without adding a crate, and `tiff` reuses `flate2`, which PNG, gzip
+and ZIP already bring in. Turning a feature off removes the handler
 from `--list-formats`, makes `--formats <name>` a usage error instead of a silent no-op, and reports files
 of that format as `skipped: this build has no <format> handler`.
 
@@ -97,14 +100,15 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 | `png,gzip,zip` | 832 288 | 812 |
 | `png,gzip,zip,ico` | 848 672 | 828 |
 | `png,gzip,zip,ico,jpeg` | 914 208 | 892 |
-| `png,gzip,zip,ico,jpeg,zopfli` | 1 012 576 | 988 |
+| `png,gzip,zip,ico,jpeg,tiff` | 946 976 | 924 |
+| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 1 049 440 | 1 024 |
 
 Each feature's cost is visible by subtracting the row above it: `gzip` +8 KiB, `zip` +49 KiB, `ico`
-+16 KiB, the JPEG codec +65 KiB, Zopfli +98 KiB.
++16 KiB, the JPEG codec +65 KiB, the TIFF handler +32 KiB, Zopfli +98 KiB.
 
 The deltas are what a user saves by narrowing the build, not estimates: `png,gzip` is the smallest useful
-optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, and the last row is the
-published binary.
+optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, `+tiff` adds the one
+format that is on by default, and the last row is the published binary.
 
 `jpeg` is the only feature that is *also* off at runtime by default: its handler requires an explicit
 `--formats jpeg`, because the expected gain is small and the verification is the weakest in the project

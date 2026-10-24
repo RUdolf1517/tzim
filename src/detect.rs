@@ -11,6 +11,7 @@ pub enum Format {
     Zip,
     Ico,
     Jpeg,
+    Tiff,
 }
 
 impl Format {
@@ -21,6 +22,7 @@ impl Format {
             Format::Zip => "zip",
             Format::Ico => "ico",
             Format::Jpeg => "jpeg",
+            Format::Tiff => "tiff",
         }
     }
 
@@ -31,6 +33,7 @@ impl Format {
             Format::Zip => "ZIP",
             Format::Ico => "ICO",
             Format::Jpeg => "JPEG",
+            Format::Tiff => "TIFF",
         }
     }
 }
@@ -63,6 +66,20 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     if head.len() >= 3 && head[0] == 0xff && head[1] == 0xd8 && head[2] == 0xff {
         return Some(Format::Jpeg);
     }
+    // TIFF: byte order marker, then magic 42 (classic) or 43 (BigTIFF). BigTIFF
+    // is recognised so the handler can refuse it with a reason instead of the
+    // file being reported as an unknown format.
+    if head.len() >= 4 {
+        let tiff = match (head[0], head[1]) {
+            (0x49, 0x49) => matches!((head[2], head[3]), (0x2a, 0x00) | (0x2b, 0x00)),
+            (0x4d, 0x4d) => matches!((head[2], head[3]), (0x00, 0x2a) | (0x00, 0x2b)),
+            _ => false,
+        };
+        if tiff {
+            return Some(Format::Tiff);
+        }
+    }
+
     // A local header (the usual case) or an end-of-central-directory record
     // (an empty archive). Both start with "PK".
     if head.len() >= 4
@@ -246,6 +263,11 @@ mod tests {
         assert_eq!(detect(b"PK\x07\x08"), None);
         assert_eq!(detect(&[0xff, 0xd8, 0xff, 0xe0]), Some(Format::Jpeg));
         assert_eq!(detect(&[0xff, 0xd8, 0x00]), None); // SOI without a marker
+        assert_eq!(detect(b"II*\x00\x08\x00\x00\x00"), Some(Format::Tiff));
+        assert_eq!(detect(b"MM\x00*\x00\x00\x00\x08"), Some(Format::Tiff));
+        assert_eq!(detect(b"II+\x00\x08\x00\x00\x00"), Some(Format::Tiff));
+        assert_eq!(detect(b"MM\x00+\x00\x00\x00\x08"), Some(Format::Tiff));
+        assert_eq!(detect(b"II*\x01"), None); // magic 42 in the wrong byte order
         assert_eq!(detect(b"hello, world"), None);
         assert_eq!(detect(&[]), None);
         // Truncated signatures are not a match.

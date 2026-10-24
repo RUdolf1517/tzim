@@ -165,13 +165,33 @@ was in 0.4.3.
 **Why the version moves**: a new flag and a changed feature set are observable, even though no default
 build behaves differently.
 
-### v0.7+ — research queue
+### v0.7 — TIFF, classic and strips — **implemented**
+
+**What shipped**
+
+- A classic-TIFF handler that rebuilds the file deterministically — header, IFD, out-of-line values, strips —
+  and then proves the rebuild: every entry is compared as a *resolved value* (so a moved value still
+  compares equal), and every strip is inflated and compared byte for byte.
+- Uncompressed strips become Deflate; Deflate strips are re-compressed and keep whichever result is smaller.
+  `Compression` is the only tag whose value may change, and verification allows exactly the two transitions
+  that are still lossless.
+- The accepted subset is narrow on purpose: classic `42` only, one IFD, strips not tiles, interleaved
+  samples, no predictor, `Compression` in {none, Deflate}. LZW is refused rather than re-emitted by an
+  encoder this repository would have to write and could not verify. BigTIFF, tiles, separate planes,
+  predictors, EXIF/GPS sub-IFDs and unknown *out-of-line* tags are refused with a reason; unknown tags that
+  fit in the entry itself are copied untouched.
+- `--strip-metadata` removes the textual tags only ([cli §4](cli.md#4---strip-metadata)), and the acceptance
+  rule stays "never larger".
+
+**Why the version moves**: a new format is observable. The binary grows by roughly 10 KiB, measured in
+[size-budget](size-budget.md) like every other handler.
+
+### v0.8+ — research queue
 
 Each of these requires a contract written *before* implementation:
 
 | Candidate | Open question |
 | --- | --- |
-| TIFF | Can every tag and strip layout be preserved with a pure-Rust reader/writer? |
 | FLAC | Can metadata blocks, seek tables and the stream MD5 be preserved across re-encoding? |
 | WOFF2 | Is Brotli re-encoding verifiable without the encoder itself? |
 | zlib/raw DEFLATE files | Small addition, unclear real-world value |

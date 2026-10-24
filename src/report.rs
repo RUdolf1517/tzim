@@ -238,6 +238,11 @@ pub fn print_json(
             line.push_str(",\"metadata_stripped\":true");
         }
         line.push_str(&format!(",\"duration_ms\":{}", o.duration.as_millis()));
+        line.push_str(",\"note\":");
+        match &o.note {
+            Some(note) => push_json_string(&mut line, note),
+            None => line.push_str("null"),
+        }
         line.push_str(",\"error\":");
         match (&o.status, &o.error) {
             (Status::Failed, Some(e)) => {

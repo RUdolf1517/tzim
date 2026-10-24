@@ -970,3 +970,396 @@ pub fn jpeg_with_precision(jpeg: &[u8], precision: u8) -> Vec<u8> {
     }
     panic!("no SOF0 marker in the fixture");
 }
+
+// ---------------------------------------------------------------------------
+// TIFF fixtures
+// ---------------------------------------------------------------------------
+
+/// A classic TIFF built from a description, so a failing test names a structure.
+pub struct TiffSpec {
+    pub big_endian: bool,
+    pub width: u32,
+    pub height: u32,
+    pub samples_per_pixel: u16,
+    pub bits_per_sample: u16,
+    pub photometric: u16,
+    /// 1 = none, 8 = Deflate (the strips are zlib-wrapped when read).
+    pub compression: u16,
+    pub rows_per_strip: u32,
+    pub planar: u16,
+    pub predictor: Option<u16>,
+    /// Extra ASCII tags, e.g. `(315, "artist")`.
+    pub extra_ascii: Vec<(u16, String)>,
+    pub extra_short: Vec<(u16, u16)>,
+    /// Tiles instead of strips: the layout the handler refuses.
+    pub tiled: bool,
+    /// Raw strip bytes; generated from the geometry when empty.
+    pub strips: Vec<Vec<u8>>,
+}
+
+impl Default for TiffSpec {
+    fn default() -> TiffSpec {
+        TiffSpec {
+            big_endian: false,
+            width: 64,
+            height: 64,
+            samples_per_pixel: 1,
+            bits_per_sample: 8,
+            photometric: 1,
+            compression: 1,
+            rows_per_strip: 8,
+            planar: 1,
+            predictor: None,
+            extra_ascii: Vec::new(),
+            extra_short: Vec::new(),
+            tiled: false,
+            strips: Vec::new(),
+        }
+    }
+}
+
+fn tiff_w16(out: &mut [u8], at: usize, value: u16, big: bool) {
+    let bytes = if big { value.to_be_bytes() } else { value.to_le_bytes() };
+    out[at..at + 2].copy_from_slice(&bytes);
+}
+
+fn tiff_w32(out: &mut [u8], at: usize, value: u32, big: bool) {
+    let bytes = if big { value.to_be_bytes() } else { value.to_le_bytes() };
+    out[at..at + 4].copy_from_slice(&bytes);
+}
+
+/// A zlib stream, which is what a Deflate TIFF strip is (raw DEFLATE is not).
+fn tiff_zlib(data: &[u8], level: u32) -> Vec<u8> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+fn tiff_numbers(values: &[u32], typ: u16, big: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    for value in values {
+        if typ == 3 {
+            let small = *value as u16;
+            out.extend_from_slice(&if big { small.to_be_bytes() } else { small.to_le_bytes() });
+        } else {
+            out.extend_from_slice(&if big { value.to_be_bytes() } else { value.to_le_bytes() });
+        }
+    }
+    out
+}
+
+struct TiffEntry {
+    tag: u16,
+    typ: u16,
+    count: u32,
+    raw: Vec<u8>,
+}
+
+fn tiff_row_bytes(spec: &TiffSpec) -> usize {
+    let bits = spec.width as usize * spec.samples_per_pixel as usize * spec.bits_per_sample as usize;
+    bits.div_ceil(8)
+}
+
+/// Smooth, repeating bytes: compressible, but not a constant.
+fn tiff_strip_bytes(spec: &TiffSpec, rows: u32, first_row: u32) -> Vec<u8> {
+    let row = tiff_row_bytes(spec);
+    let mut out = Vec::with_capacity(row * rows as usize);
+    for r in 0..rows {
+        for b in 0..row {
+            let v = ((b / 12) as u32 + (first_row + r) / 4) % 8;
+            out.push((v * 17) as u8);
+        }
+    }
+    out
+}
+
+/// Builds a classic TIFF: header, IFD, out-of-line values, strips, 2-byte aligned.
+pub fn build_tiff(spec: &TiffSpec) -> Vec<u8> {
+    let big = spec.big_endian;
+    assert!(matches!(spec.bits_per_sample, 8 | 16), "fixtures use 8 or 16 bits");
+
+    let mut strips: Vec<Vec<u8>> = Vec::new();
+    if spec.strips.is_empty() {
+        let mut first_row = 0u32;
+        while first_row < spec.height {
+            let rows = spec.rows_per_strip.min(spec.height - first_row);
+            strips.push(tiff_strip_bytes(spec, rows, first_row));
+            first_row += rows;
+        }
+    } else {
+        strips = spec.strips.clone();
+    }
+    if spec.compression != 1 {
+        strips = strips.iter().map(|s| tiff_zlib(s, 9)).collect();
+    }
+
+    let mut entries = vec![
+        TiffEntry {
+            tag: 256,
+            typ: 4,
+            count: 1,
+            raw: tiff_numbers(&[spec.width], 4, big),
+        },
+        TiffEntry {
+            tag: 257,
+            typ: 4,
+            count: 1,
+            raw: tiff_numbers(&[spec.height], 4, big),
+        },
+        TiffEntry {
+            tag: 258,
+            typ: 3,
+            count: spec.samples_per_pixel as u32,
+            raw: tiff_numbers(
+                &vec![spec.bits_per_sample as u32; spec.samples_per_pixel as usize],
+                3,
+                big,
+            ),
+        },
+        TiffEntry {
+            tag: 259,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[spec.compression as u32], 3, big),
+        },
+        TiffEntry {
+            tag: 262,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[spec.photometric as u32], 3, big),
+        },
+        TiffEntry {
+            tag: 277,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[spec.samples_per_pixel as u32], 3, big),
+        },
+        TiffEntry {
+            tag: 284,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[spec.planar as u32], 3, big),
+        },
+    ];
+    if let Some(predictor) = spec.predictor {
+        entries.push(TiffEntry {
+            tag: 317,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[predictor as u32], 3, big),
+        });
+    }
+    for (tag, value) in &spec.extra_short {
+        entries.push(TiffEntry {
+            tag: *tag,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[*value as u32], 3, big),
+        });
+    }
+    for (tag, value) in &spec.extra_ascii {
+        let mut raw = value.as_bytes().to_vec();
+        raw.push(0);
+        entries.push(TiffEntry {
+            tag: *tag,
+            typ: 2,
+            count: raw.len() as u32,
+            raw,
+        });
+    }
+
+    let sizes: Vec<u32> = strips.iter().map(|s| s.len() as u32).collect();
+    if spec.tiled {
+        entries.push(TiffEntry {
+            tag: 322,
+            typ: 4,
+            count: 1,
+            raw: tiff_numbers(&[spec.width], 4, big),
+        });
+        entries.push(TiffEntry {
+            tag: 323,
+            typ: 4,
+            count: 1,
+            raw: tiff_numbers(&[spec.rows_per_strip], 4, big),
+        });
+        entries.push(TiffEntry {
+            tag: 324,
+            typ: 4,
+            count: strips.len() as u32,
+            raw: tiff_numbers(&vec![0; strips.len()], 4, big),
+        });
+        entries.push(TiffEntry {
+            tag: 325,
+            typ: 4,
+            count: strips.len() as u32,
+            raw: tiff_numbers(&sizes, 4, big),
+        });
+    } else {
+        entries.push(TiffEntry {
+            tag: 273,
+            typ: 4,
+            count: strips.len() as u32,
+            raw: tiff_numbers(&vec![0; strips.len()], 4, big),
+        });
+        entries.push(TiffEntry {
+            tag: 278,
+            typ: 4,
+            count: 1,
+            raw: tiff_numbers(&[spec.rows_per_strip], 4, big),
+        });
+        entries.push(TiffEntry {
+            tag: 279,
+            typ: 4,
+            count: strips.len() as u32,
+            raw: tiff_numbers(&sizes, 4, big),
+        });
+    }
+
+    entries.sort_by_key(|e| e.tag);
+
+    let mut out = vec![0u8; 8 + 2 + entries.len() * 12 + 4];
+    let mut slots: Vec<Option<usize>> = Vec::with_capacity(entries.len());
+    for entry in &entries {
+        if entry.raw.len() > 4 {
+            let at = out.len() + (out.len() & 1);
+            out.resize(at + entry.raw.len(), 0);
+            out[at..at + entry.raw.len()].copy_from_slice(&entry.raw);
+            slots.push(Some(at));
+        } else {
+            slots.push(None);
+        }
+    }
+
+    let mut offsets: Vec<u32> = Vec::with_capacity(strips.len());
+    for strip in &strips {
+        let at = out.len() + (out.len() & 1);
+        out.resize(at, 0);
+        out.extend_from_slice(strip);
+        offsets.push(at as u32);
+    }
+
+    out[..2].copy_from_slice(if big { b"MM" } else { b"II" });
+    tiff_w16(&mut out, 2, 42, big);
+    tiff_w32(&mut out, 4, 8, big);
+    tiff_w16(&mut out, 8, entries.len() as u16, big);
+    for (index, entry) in entries.iter().enumerate() {
+        let at = 10 + index * 12;
+        tiff_w16(&mut out, at, entry.tag, big);
+        tiff_w16(&mut out, at + 2, entry.typ, big);
+        tiff_w32(&mut out, at + 4, entry.count, big);
+        match slots[index] {
+            Some(slot) => tiff_w32(&mut out, at + 8, slot as u32, big),
+            None => out[at + 8..at + 8 + entry.raw.len()].copy_from_slice(&entry.raw),
+        }
+    }
+
+    // The offsets are known only now, so the array is filled last.
+    let offsets_tag = if spec.tiled { 324 } else { 273 };
+    let index = entries.iter().position(|e| e.tag == offsets_tag).unwrap();
+    let encoded = tiff_numbers(&offsets, entries[index].typ, big);
+    match slots[index] {
+        Some(slot) => out[slot..slot + encoded.len()].copy_from_slice(&encoded),
+        None => out[10 + index * 12 + 8..][..encoded.len()].copy_from_slice(&encoded),
+    }
+
+    out
+}
+
+/// A classic header with no IFD body, for structural refusal tests.
+pub fn tiff_header(big_endian: bool, magic: u16) -> Vec<u8> {
+    let mut out = vec![0u8; 8];
+    out[..2].copy_from_slice(if big_endian { b"MM" } else { b"II" });
+    tiff_w16(&mut out, 2, magic, big_endian);
+    tiff_w32(&mut out, 4, 8, big_endian);
+    out
+}
+
+/// Every IFD entry as `(tag, type, count, resolved value bytes)`.
+pub fn parse_tiff_tags(data: &[u8]) -> Vec<(u16, u16, u32, Vec<u8>)> {
+    assert!(data.len() >= 8, "not a TIFF");
+    let big = &data[..2] == b"MM";
+    let read16 = |at: usize| -> u16 {
+        if big {
+            u16::from_be_bytes([data[at], data[at + 1]])
+        } else {
+            u16::from_le_bytes([data[at], data[at + 1]])
+        }
+    };
+    let read32 = |at: usize| -> u32 {
+        if big {
+            u32::from_be_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
+        } else {
+            u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]])
+        }
+    };
+    let ifd = read32(4) as usize;
+    let count = read16(ifd) as usize;
+    let mut out = Vec::with_capacity(count);
+    for index in 0..count {
+        let at = ifd + 2 + index * 12;
+        let tag = read16(at);
+        let typ = read16(at + 2);
+        let how_many = read32(at + 4);
+        let size = match typ {
+            1 | 2 | 6 | 7 => 1,
+            3 | 8 => 2,
+            4 | 9 | 11 => 4,
+            other => panic!("fixture uses unexpected type {other}"),
+        };
+        let len = size * how_many as usize;
+        let value = if len <= 4 {
+            data[at + 8..at + 8 + len].to_vec()
+        } else {
+            let offset = read32(at + 8) as usize;
+            data[offset..offset + len].to_vec()
+        };
+        out.push((tag, typ, how_many, value));
+    }
+    out
+}
+
+pub fn tiff_tag(data: &[u8], tag: u16) -> Option<Vec<u8>> {
+    parse_tiff_tags(data)
+        .into_iter()
+        .find(|(t, _, _, _)| *t == tag)
+        .map(|(_, _, _, value)| value)
+}
+
+pub fn tiff_compression(data: &[u8]) -> u16 {
+    let raw = tiff_tag(data, 259).expect("Compression tag");
+    match &data[..2] {
+        b"MM" => u16::from_be_bytes([raw[0], raw[1]]),
+        _ => u16::from_le_bytes([raw[0], raw[1]]),
+    }
+}
+
+/// The strips, decoded: the independent check that the pixels survived.
+pub fn tiff_strips(data: &[u8]) -> Vec<Vec<u8>> {
+    let offsets = tiff_tag(data, 273).expect("StripOffsets");
+    let sizes = tiff_tag(data, 279).expect("StripByteCounts");
+    let big = &data[..2] == b"MM";
+    let number = |raw: &[u8], index: usize| -> u32 {
+        let at = index * 4;
+        if big {
+            u32::from_be_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]])
+        } else {
+            u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]])
+        }
+    };
+    let mut out = Vec::new();
+    for index in 0..offsets.len() / 4 {
+        let start = number(&offsets, index) as usize;
+        let len = number(&sizes, index) as usize;
+        let body = &data[start..start + len];
+        if tiff_compression(data) == 1 {
+            out.push(body.to_vec());
+        } else {
+            let mut inflated = Vec::new();
+            flate2::read::ZlibDecoder::new(body)
+                .read_to_end(&mut inflated)
+                .expect("a Deflate strip decodes");
+            out.push(inflated);
+        }
+    }
+    out
+}

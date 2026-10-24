@@ -99,8 +99,8 @@ jobs:
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
           cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-full
-          # docs/size-budget.md 1: measured 988 KiB + 15 %.
-          budget=1167360
+          # docs/size-budget.md 1: measured 1 024 KiB + 15 %.
+          budget=1206856
           echo "bytes: $bytes, budget: $budget"
           test "$bytes" -le "$budget" || {
             echo "the static binary is $((bytes / 1024)) KiB, over the $((budget / 1024)) KiB budget" >&2
@@ -124,7 +124,8 @@ jobs:
             "png,gzip,zip" \
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
-            "png,gzip,zip,ico,jpeg,zopfli"
+            "png,gzip,zip,ico,jpeg,tiff" \
+            "png,gzip,zip,ico,jpeg,tiff,zopfli"
           do
             cargo build --release --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

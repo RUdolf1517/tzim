@@ -9,6 +9,36 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.7.0] - 2026-10-25 — TIFF, and a rebuild that can prove itself
+
+### Added
+
+- **TIFF**: classic TIFF (`II`/`MM`, magic `42`) with strips. Uncompressed strips are compressed with
+  Deflate; Deflate strips are re-compressed and keep whichever of the two results is smaller. The contract
+  is [guarantees §4.8](docs/guarantees.md#48-tiff-classic-baseline-strips--v07); it was written before the
+  handler, as every format contract is.
+- The file is **rebuilt** rather than patched — a TIFF stores absolute offsets, so a smaller strip moves
+  everything after it. Verification then compares what the rebuild could break: every entry as a resolved
+  *value* (not as bytes at a fixed position), the tag set, the entry order, the byte order, the strip count,
+  and every strip decoded through `flate2` and compared byte for byte. `Compression` is the only value that
+  may change, and only across the two transitions that stay lossless.
+- `tiff` joins the feature list. It reuses `flate2`, so it adds **no dependency** — only code.
+
+### Changed
+
+- Refusals are part of the format's value, so they are specific: BigTIFF, tiled layouts, more than one IFD,
+  separate planes, predictors, `SubIFDs`/EXIF/GPS sub-IFDs, and unknown *out-of-line* tags (which may be
+  offsets) are skipped with a reason and the file is left alone. LZW is refused instead of being written by
+  an encoder this repository would have to invent and could not verify. Unknown tags that fit inside the
+  entry are copied untouched.
+
+### Documentation
+
+- [formats](docs/formats.md#2-format-matrix) moves TIFF from *research* to *implemented* in the same commit
+  as the tests, and [roadmap](docs/roadmap.md) records what shipped; the research queue now starts at v0.8.
+- The honest gain is stated next to the claim: 5–30 % on uncompressed scans, 0–5 % on already-Deflate files,
+  and nothing at all for LZW — which is why the handler refuses it rather than pretending.
+
 ## [0.6.0] - 2026-10-24 — narrowing the build, and metadata on request
 
 ### Added
