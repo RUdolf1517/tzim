@@ -97,7 +97,7 @@ downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
 git clone https://github.com/RUdolf1517/tzim
 cd tzim
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.5.0
+winget install --manifest .\packaging\winget\0.6.0
 ```
 
 `LocalManifestFiles` is once, as Administrator. After microsoft/winget-pkgs accepts the manifest:

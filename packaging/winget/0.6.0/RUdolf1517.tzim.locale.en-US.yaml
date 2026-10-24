@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: RUdolf1517.tzim
+PackageVersion: 0.6.0
+PackageLocale: en-US
+Publisher: RUdolf1517
+PublisherUrl: https://github.com/RUdolf1517
+PublisherSupportUrl: https://github.com/RUdolf1517/tzim/issues
+Author: RUdolf1517
+PackageName: tzim
+PackageUrl: https://github.com/RUdolf1517/tzim
+License: MIT
+LicenseUrl: https://github.com/RUdolf1517/tzim/blob/main/LICENSE
+Copyright: Copyright (c) 2026 RUdolf1517
+ShortDescription: Lossless file optimizer - shrink the file, never the information
+Description: Optimizes PNG, APNG, gzip, ZIP archives, ICO/CUR and baseline JPEG without ever removing metadata or re-encoding lossily. If a file cannot be made smaller it is left untouched. Windows x64 only.
+Moniker: tzim
+Tags:
+  - cli
+  - compression
+  - image
+  - jpeg
+  - lossless
+  - optimizer
+  - png
+  - rust
+  - zip
+ReleaseNotesUrl: https://github.com/RUdolf1517/tzim/releases/tag/v0.6.0
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
