@@ -91,14 +91,15 @@ not done until every row passes in CI.
 | `T-NEST-02` | Optimized children satisfy their own contracts |
 | `T-NEST-03` | `--max-depth` is enforced |
 | `T-NEST-04` | Nested expansion respects the parent's size budget |
-| `T-JPG-01` | Marker inventory (type, order, payload) preserved |
-| `T-JPG-02` | `DQT` and `SOF` payloads byte-identical |
-| `T-JPG-03` | Decoded component planes bit-identical (baseline) |
-| `T-JPG-04` | Decoded component planes bit-identical (progressive) |
-| `T-JPG-05` | Restart-marker intervals preserved |
-| `T-JPG-06` | Arithmetic-coded, lossless and 12-bit inputs are refused |
-| `T-JPG-07` | Truncated or corrupt inputs are refused |
-| `T-JPG-08` | A non-smaller candidate is discarded |
+| `T-JPG-01` | Marker inventory (type, order, payload) preserved; Exif and `COM` payloads survive |
+| `T-JPG-02` | `DQT` and `SOF0` payloads byte-identical |
+| `T-JPG-03` | Every DCT coefficient identical after the rewrite (stronger than comparing pixels) |
+| `T-JPG-04` | Progressive, arithmetic, SOF1 and 12-bit inputs are refused, exit 0, file untouched |
+| `T-JPG-05` | `DRI` and the restart markers in the scan are preserved, interval unchanged |
+| `T-JPG-06` | JPEG is inert unless `--formats jpeg`; the allowlist also narrows the other handlers |
+| `T-JPG-07` | Truncated or corrupt inputs fail with exit 1 and the original is untouched |
+| `T-JPG-08` | A non-smaller candidate is discarded; a second run reports `already optimal` |
+| `T-JPG-09` | Bytes after `EOI` are preserved verbatim |
 
 ---
 

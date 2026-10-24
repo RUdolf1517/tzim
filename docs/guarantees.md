@@ -328,24 +328,53 @@ out with identical CRCs.
 
 ### 4.7. JPEG — v0.4, opt-in
 
-**Transformation.** Re-encode only the entropy-coded data with optimal Huffman tables. DCT coefficients are
-untouched, so the decoded image is bit-identical. This is what `jpegtran -optimize` does; it typically saves
-1–3 %, sometimes nothing.
+**Transformation.** Re-encode only the entropy-coded data with optimal Huffman tables. Every DCT
+coefficient, and therefore every decoded pixel, is bit-identical to the input; this is the `jpegtran
+-optimize` transformation, implemented here in safe Rust with no external codec. Typical saving is 1–3 %,
+sometimes nothing.
 
-**Preserved:** all markers as raw segments (`APPn`, `COM`, `DQT`, `SOF`, `DRI`, `DNL`, …) with their payload
-bytes and order; dimensions; sampling factors; quantization tables; component count and IDs; restart
-interval; Adobe/ICC/EXIF payloads.
+**Scope.** Baseline sequential (SOF0, 8-bit) with exactly one scan. Progressive, arithmetic-coded,
+lossless, hierarchical, 12-bit, extended-sequential (SOF1) and multi-scan files are refused, not guessed
+at. Refusal is `skipped` and exit code 0.
 
-**Allowed to change:** `DHT` tables, the entropy-coded scan data, and marker segment lengths where required.
+**Preserved:** every marker except the ones below, as a raw segment with its payload bytes and its
+position relative to the scan — `APPn` (JFIF, Exif including the embedded thumbnail, ICC, Adobe), `COM`,
+`DQT`, `SOF0`, `DRI`, and anything else present; frame dimensions and component geometry; component ids,
+sampling factors and quantization table selectors; the `SOS` header itself (component list, table
+selectors, `Ss`/`Se`, `Ah`/`Al`); the restart interval; bytes after `EOI`, byte for byte.
 
-**Verification:** decode both files with an independent decoder and compare every component plane
-bit-for-bit; compare the marker inventory (type, order, payload bytes) for all preserved markers.
+**Allowed to change:** the `DHT` segments (the tables actually used are replaced by optimal ones; tables
+defined but unused are carried over verbatim; the segments are merged into one at the position of the
+first, so the segment count may drop), the entropy-coded bytes of the scan, and the length fields that
+follow from those.
 
-**Refused:** arithmetic-coded, lossless, 12-bit and hierarchical JPEG; malformed or truncated files;
-progressive files whose scan structure cannot be reproduced exactly.
+**Refused:** any `SOF` other than SOF0; precision other than 8; more than one `SOS`; `Ss`/`Se`/`Ah`/`Al`
+not equal to 0/63/0/0; `DAC` (arithmetic conditioning); `DNL` (height deferred to after the scan); zero
+dimensions; more components than 4; sampling factors outside 1–4. A file that parses but contains one of
+these is valid, so it is reported as skipped with a precise reason and left untouched.
 
-**Default:** disabled. JPEG must be enabled explicitly with `--formats jpeg`, because the gain is small and
-the risk is the highest in the project.
+**Corrupt input:** truncated data, a marker length that runs past the end of the file, a Huffman table
+that is overfull or contains the forbidden all-ones code, an entropy stream that ends in the middle of a
+block, a restart marker where none belongs — all `failed`, exit code 1, original untouched.
+
+**Verification.** The candidate is re-parsed from bytes and decoded again. Two conditions must hold:
+
+1. **Coefficient identity.** Every DCT coefficient of every component is compared with the input's. This
+   is strictly stronger than comparing decoded pixels: identical coefficients imply identical pixels,
+   while identical pixels do not imply identical coefficients. No pixel comparison is performed, because
+   that would need a second decoder and the same result is already implied.
+2. **Structural identity.** The ordered sequence of non-`DHT` markers and their payload bytes must match
+   exactly, the frame header must match field by field, every `DHT` table that the scan does not use must
+   be carried over byte for byte, and the trailing bytes after `EOI` must be identical.
+
+If either condition fails the candidate is discarded and the original is not replaced. The residual risk
+is stated in [benchmarks](benchmarks.md): the decoder that proves the candidate readable is Tzim's own,
+so a decoder bug shared by the encoder and the checker would not be caught by this step; the structural
+comparison and the strict table validation narrow that to a genuinely malformed table, which the table
+validity checks reject before anything is written.
+
+**Default:** disabled. JPEG is processed only when `--formats` names it, because the gain is small and
+the code path is the most intricate in the project.
 
 **Verification IDs:** `T-JPG-01` … `T-JPG-08`.
 

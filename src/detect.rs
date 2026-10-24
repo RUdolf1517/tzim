@@ -10,6 +10,7 @@ pub enum Format {
     Gzip,
     Zip,
     Ico,
+    Jpeg,
 }
 
 impl Format {
@@ -19,6 +20,7 @@ impl Format {
             Format::Gzip => "gzip",
             Format::Zip => "zip",
             Format::Ico => "ico",
+            Format::Jpeg => "jpeg",
         }
     }
 
@@ -28,6 +30,7 @@ impl Format {
             Format::Gzip => "GZIP",
             Format::Zip => "ZIP",
             Format::Ico => "ICO",
+            Format::Jpeg => "JPEG",
         }
     }
 }
@@ -54,6 +57,11 @@ pub fn detect(head: &[u8]) -> Option<Format> {
         if (1..=256).contains(&count) {
             return Some(Format::Ico);
         }
+    }
+    // JPEG: SOI followed by the first marker. The third byte is always 0xFF in
+    // a valid file, which keeps ordinary binary data from matching.
+    if head.len() >= 3 && head[0] == 0xff && head[1] == 0xd8 && head[2] == 0xff {
+        return Some(Format::Jpeg);
     }
     // A local header (the usual case) or an end-of-central-directory record
     // (an empty archive). Both start with "PK".
@@ -236,6 +244,8 @@ mod tests {
         assert_eq!(detect(b"PK\x03\x04"), Some(Format::Zip));
         assert_eq!(detect(b"PK\x05\x06"), Some(Format::Zip));
         assert_eq!(detect(b"PK\x07\x08"), None);
+        assert_eq!(detect(&[0xff, 0xd8, 0xff, 0xe0]), Some(Format::Jpeg));
+        assert_eq!(detect(&[0xff, 0xd8, 0x00]), None); // SOI without a marker
         assert_eq!(detect(b"hello, world"), None);
         assert_eq!(detect(&[]), None);
         // Truncated signatures are not a match.

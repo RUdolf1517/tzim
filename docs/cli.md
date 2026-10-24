@@ -83,6 +83,9 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
+| `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`); naming `jpeg` is the only way to enable it |
+| `--nested` | off | also optimize supported files stored inside archives |
+| `--max-depth <N>` | `3` | how deep `--nested` may recurse (`0` is rejected) |
 | `--zopfli` | off | use the Zopfli encoder; much slower, smaller output |
 | `--follow-symlinks` | off | resolve and follow symbolic links |
 | `--allow-hardlinks` | off | process files that have more than one hard link |
@@ -93,16 +96,12 @@ reproducible and diffable.
 `--include` and `--exclude` take extension lists (`png,gz`), not glob patterns. Globs are deliberately not
 implemented: shell globbing already exists, and a second pattern language is a second set of edge cases.
 
-### Later versions
+`--formats` is an allowlist, not an addition: `--formats jpeg` processes JPEG and nothing else, and
+`--formats png,jpeg` processes both. Formats that are detected but not enabled are reported as `skipped`
+with the reason, and the run still exits 0. Nested files inherit the same allowlist, so a PNG inside a ZIP
+is left alone unless `png` is enabled.
 
-| Option | Version | Meaning |
-| --- | --- | --- |
-| `--formats <LIST>` | v0.3 | restrict enabled handlers (`png,gzip,zip,ico,apng,jpeg`); required to enable opt-in handlers such as `jpeg` |
-| `--nested` | v0.3 | optimize supported files inside archives |
-| `--max-depth <N>` | v0.3 | nesting depth limit, default `3` |
-
-The exact syntax of these options may still change before the version that introduces them. Everything in
-the v0.1 table is frozen.
+All options above are frozen from v0.3; the JPEG switch is the only behavioural change in v0.4.
 
 ---
 

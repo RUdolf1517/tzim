@@ -100,21 +100,37 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 **Estimate:** 4–6 days. **Risk:** medium.
 
-### v0.4 — JPEG (opt-in)
+### v0.4 — JPEG (opt-in) — **implemented**
 
-**Contents**
+**What shipped**
 
-- Lossless entropy optimization only: DCT coefficients untouched, markers preserved as raw segments.
-- Enabled exclusively via `--formats jpeg`.
-- Pixel-level verification with an independent decoder.
+- Baseline sequential (`SOF0`, 8-bit, one interleaved scan), including files with restart intervals.
+- Entropy-only re-encoding: every DCT coefficient is decoded and re-encoded with optimal Huffman tables;
+  every marker is copied as a raw segment, including Exif, ICC, `COM`, `DRI` and the bytes after `EOI`.
+- Safe Rust, no new dependency and no `unsafe` — the entropy codec is part of this repository.
+- Enabled only by `--formats jpeg`; the same flag narrows the other handlers and nested children.
 
-**Gate**
+**Scope changes against the original plan**
 
-- `T-JPG-01` … `T-JPG-08` pass on a corpus of at least 1 000 files covering baseline and progressive;
-- fuzzing of the marker and entropy readers;
-- the documentation states plainly that the typical saving is 1–3 % and sometimes zero.
+- **Progressive files are refused, not optimized.** Successive approximation and spectral selection are
+  the most error-prone part of the format, so v0.4 covers baseline only and reports `skipped` with a
+  precise reason. Progressive support is deferred to v0.4.1 and is not advertised.
+- The same applies to arithmetic coding, lossless (SOF3), hierarchical, 12-bit and SOF1 files.
+- **Verification compares DCT coefficients, not pixels.** Coefficient identity implies pixel identity, so
+  the guarantee is strictly stronger, and it does not need a second decoder. The residual risk — that a
+  shared encoder/decoder bug passes both — is stated in the contract.
 
-**Estimate:** 6–10 days. **Risk:** **high** — this is the most bug-prone codec in the project.
+**Gate status**
+
+- `T-JPG-01` … `T-JPG-09` are covered by nine integration tests and eight unit tests (including a
+  4 000-case property test of the table generator).
+- The 1 000-file corpus from the original gate is **not** available in this environment; the tests use
+  generated fixtures covering baseline, grayscale, RGB 4:4:4, restart intervals, trailing bytes and every
+  refusal path. Running a real corpus remains outstanding and is listed as such in
+  [benchmarks](benchmarks.md).
+- Fuzzing of the entropy reader is not part of CI yet.
+
+**Risk:** **high** — this is the most bug-prone codec in the project.
 
 ### v0.5+ — research queue
 

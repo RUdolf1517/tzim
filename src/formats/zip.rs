@@ -782,8 +782,8 @@ fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u3
         return Ok(None);
     }
     let format = match crate::detect::detect(child) {
-        Some(f) => f,
-        None => return Ok(None),
+        Some(f) if opts.allow.permits(f) => f,
+        _ => return Ok(None),
     };
     let deeper = Options {
         depth: opts.depth + 1,

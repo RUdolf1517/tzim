@@ -12,9 +12,10 @@ The name comes from the Hebrew צמצום (*tsimtsum*) — contraction, reductio
 
 ## Status
 
-**v0.3 implemented.** PNG, APNG, gzip, the ZIP family and ICO/CUR are supported and verified, including
-optional optimization of files stored inside archives (`--nested`). The code is tested on Linux, macOS and
-Windows in CI. Everything else in the table below is *planned*, with the version in which it is expected.
+**v0.4 implemented.** PNG, APNG, gzip, the ZIP family, ICO/CUR and — opt-in — baseline JPEG are supported
+and verified, including optional optimization of files stored inside archives (`--nested`). The code is
+tested on Linux, macOS and Windows in CI. Everything else in the table below is *planned*, with the version
+in which it is expected.
 
 - Static Linux binary: **904 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
 - 46 unit and 44 integration tests, clippy clean with `-D warnings`.
@@ -67,10 +68,14 @@ verified. See [docs/guarantees.md](docs/guarantees.md).
 | ICO / CUR | v0.3 | **implemented** | Optimize embedded PNG images; bitmap entries copied verbatim | G3 |
 | APNG | v0.3 | **implemented** | Recompress every frame, keeping chunk count and sequence numbers | G3 |
 | Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
-| JPEG | v0.4 | planned, opt-in | Entropy (Huffman) optimization only; DCT coefficients untouched | G3 |
+| JPEG | v0.4 | **implemented**, opt-in (`--formats jpeg`) | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
 | TIFF | v0.5+ | research | Recompress Deflate/LZW strips without changing tags | not specified yet |
 | FLAC | v0.5+ | research | Re-encode losslessly, preserving all metadata blocks | not specified yet |
 | PDF, WebP lossless, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
+
+JPEG is opt-in because it carries the highest risk in the project and typically saves only 1–3 %. Progressive,
+arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason rather than
+approximated; see [the contract](docs/guarantees.md#47-jpeg--v04-opt-in).
 
 Formats that are refused, and the reasoning, are listed in [docs/formats.md](docs/formats.md#5-refused-formats).
 In short: for PDF and modern image/video codecs there is no way to guarantee and verify preservation with

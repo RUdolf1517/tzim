@@ -5,10 +5,98 @@ use crate::error::{Error, Result};
 
 #[cfg(feature = "gzip")]
 pub mod gzip;
+pub mod jpeg;
 #[cfg(feature = "png")]
 pub mod png;
 #[cfg(feature = "zip")]
 pub mod zip;
+
+/// Which formats a run is allowed to process.
+///
+/// Only JPEG is off by default: it is opt-in because its gain is small and its
+/// code path is the most intricate in the project. `--formats` turns it on and
+/// can also narrow the set for everything else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Allow {
+    pub png: bool,
+    pub gzip: bool,
+    pub zip: bool,
+    pub ico: bool,
+    pub jpeg: bool,
+}
+
+impl Default for Allow {
+    fn default() -> Self {
+        Allow {
+            png: true,
+            gzip: true,
+            zip: true,
+            ico: true,
+            jpeg: false,
+        }
+    }
+}
+
+impl Allow {
+    /// Builds the set named on the command line. An empty list is an error at
+    /// the call site, not here: `--formats ""` names nothing and disables
+    /// everything, which is a legitimate (if useless) request.
+    pub fn named(names: &[String]) -> Result<Allow> {
+        let mut allow = Allow {
+            png: false,
+            gzip: false,
+            zip: false,
+            ico: false,
+            jpeg: false,
+        };
+        for name in names {
+            match name.as_str() {
+                "png" | "apng" => allow.png = true,
+                "gzip" | "gz" => allow.gzip = true,
+                "zip" => allow.zip = true,
+                "ico" | "cur" => allow.ico = true,
+                "jpeg" | "jpg" => allow.jpeg = true,
+                other => {
+                    return Err(Error::usage(format!(
+                        "unknown format `{other}`; expected png, gzip, zip, ico or jpeg"
+                    )))
+                }
+            }
+        }
+        Ok(allow)
+    }
+
+    pub fn permits(self, format: Format) -> bool {
+        match format {
+            Format::Png => self.png,
+            Format::Gzip => self.gzip,
+            Format::Zip => self.zip,
+            Format::Ico => self.ico,
+            Format::Jpeg => self.jpeg,
+        }
+    }
+
+    /// Human-readable list of the enabled formats, for messages.
+    pub fn names(self) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        if self.png {
+            out.push("png");
+        }
+        if self.gzip {
+            out.push("gzip");
+        }
+        if self.zip {
+            out.push("zip");
+        }
+        if self.ico {
+            out.push("ico");
+        }
+        if self.jpeg {
+            out.push("jpeg");
+        }
+        out
+    }
+}
 
 /// Options a handler may need. Everything here is explicit: there are no
 /// hidden defaults inside handlers that change what is written.
@@ -26,6 +114,8 @@ pub struct Options {
     pub max_depth: u32,
     /// Current nesting depth; 0 for a file given on the command line.
     pub depth: u32,
+    /// Formats this run may process; nested children obey the same set.
+    pub allow: Allow,
 }
 
 /// What a handler produced.
@@ -56,6 +146,7 @@ pub fn optimize(
         Format::Zip => zip::optimize(input, dst, opts)?,
         #[cfg(feature = "png")]
         Format::Ico => png::optimize_icon(input, dst, opts)?,
+        Format::Jpeg => jpeg::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -80,6 +171,7 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8]) -> Result<()> {
         Format::Zip => zip::verify(original, candidate),
         #[cfg(feature = "png")]
         Format::Ico => png::verify_icon(original, candidate),
+        Format::Jpeg => jpeg::verify(original, candidate),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -110,6 +202,11 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "ICO/CUR",
         "optimize embedded PNG images",
         "directory, entry fields, order and non-PNG images",
+    ));
+    rows.push((
+        "JPEG",
+        "re-encode the entropy data with optimal Huffman tables",
+        "every marker and every DCT coefficient preserved; opt-in via --formats",
     ));
     #[cfg(feature = "zip")]
     rows.push((

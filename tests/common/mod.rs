@@ -638,3 +638,330 @@ pub fn png_chunks_lossy(data: &[u8]) -> Vec<(String, Vec<u8>)> {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// JPEG fixtures
+// ---------------------------------------------------------------------------
+
+/// `(size, bits)` of a coefficient, exactly as T.81 defines the pair.
+fn jpeg_magnitude(value: i32) -> (u32, u32) {
+    let size = 32 - value.unsigned_abs().leading_zeros();
+    let bits = if value < 0 {
+        ((value - 1) as u32) & ((1u32 << size) - 1)
+    } else {
+        value as u32
+    };
+    (size, bits)
+}
+
+fn jpeg_segment(out: &mut Vec<u8>, marker: u8, payload: &[u8]) {
+    out.push(0xff);
+    out.push(marker);
+    out.extend_from_slice(&((payload.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(payload);
+}
+
+/// Bit writer for the fixture encoder: byte stuffing and restart markers
+/// included, so fixtures exercise the same edge cases as real files.
+struct JpegBits {
+    out: Vec<u8>,
+    byte: u8,
+    filled: u32,
+}
+
+impl JpegBits {
+    fn new() -> JpegBits {
+        JpegBits {
+            out: Vec::new(),
+            byte: 0,
+            filled: 0,
+        }
+    }
+
+    fn put(&mut self, value: u32, size: u32) {
+        for i in (0..size).rev() {
+            self.bit((value >> i) & 1 == 1);
+        }
+    }
+
+    fn bit(&mut self, value: bool) {
+        self.byte = (self.byte << 1) | value as u8;
+        self.filled += 1;
+        if self.filled == 8 {
+            self.flush_byte();
+        }
+    }
+
+    fn flush_byte(&mut self) {
+        self.out.push(self.byte);
+        if self.byte == 0xff {
+            self.out.push(0x00);
+        }
+        self.byte = 0;
+        self.filled = 0;
+    }
+
+    fn finish(&mut self) {
+        if self.filled > 0 {
+            let pad = 8 - self.filled;
+            self.byte = (self.byte << pad) | ((1u8 << pad) - 1);
+            self.flush_byte();
+        }
+    }
+
+    fn restart(&mut self, index: u8) {
+        self.finish();
+        self.out.push(0xff);
+        self.out.push(0xd0 + index);
+    }
+}
+
+/// A baseline JPEG (SOF0, 8-bit, one interleaved scan) whose Huffman tables are
+/// deliberately wasteful: every symbol that occurs gets an eight-bit code. A
+/// correct optimizer therefore always finds something to save.
+///
+/// `components` is 1 (grayscale) or 3 (YCbCr, all 1x1 sampling).
+pub fn build_jpeg(width: u16, height: u16, components: usize) -> Vec<u8> {
+    build_jpeg_with(width, height, components, b"tzim-test-exif-payload", b"", 0)
+}
+
+/// A baseline JPEG that uses restart markers every `interval` MCUs.
+pub fn build_jpeg_with_restart(
+    width: u16,
+    height: u16,
+    components: usize,
+    interval: u16,
+) -> Vec<u8> {
+    build_jpeg_with(
+        width,
+        height,
+        components,
+        b"tzim-test-exif-payload",
+        b"",
+        interval,
+    )
+}
+
+/// Same as [`build_jpeg`] but with bytes appended after `EOI`, which a rewrite
+/// must preserve.
+pub fn build_jpeg_with_trailing(
+    width: u16,
+    height: u16,
+    components: usize,
+    trailing: &[u8],
+) -> Vec<u8> {
+    build_jpeg_with(
+        width,
+        height,
+        components,
+        b"tzim-test-exif-payload",
+        trailing,
+        0,
+    )
+}
+
+fn build_jpeg_with(
+    width: u16,
+    height: u16,
+    components: usize,
+    app1: &[u8],
+    trailing: &[u8],
+    restart_interval: u16,
+) -> Vec<u8> {
+    assert!(components == 1 || components == 3, "1 or 3 components only");
+    assert!(width > 0 && height > 0);
+    let block_cols = (width as usize).div_ceil(8);
+    let block_rows = (height as usize).div_ceil(8);
+    let blocks = block_cols * block_rows;
+
+    let mut planes: Vec<Vec<i16>> = Vec::with_capacity(components);
+    for component in 0..components {
+        let mut plane = vec![0i16; blocks * 64];
+        for block in 0..blocks {
+            let base = block * 64;
+            let dc = ((block * 37 + component * 11) % 41) as i16 - 20;
+            plane[base] = dc;
+            if block % 3 == 0 {
+                plane[base + 1] = dc % 7;
+            }
+            if block % 5 == 0 {
+                plane[base + 9] = -(dc % 5);
+            }
+            if block % 7 == 0 {
+                plane[base + 20] = (dc % 3) + 1;
+            }
+        }
+        planes.push(plane);
+    }
+
+    // First pass: which symbols occur at all?
+    let mut dc_used = [false; 256];
+    let mut ac_used = [false; 256];
+    for plane in &planes {
+        let mut predict = 0i32;
+        for block in 0..blocks {
+            let base = block * 64;
+            let difference = plane[base] as i32 - predict;
+            predict = plane[base] as i32;
+            dc_used[jpeg_magnitude(difference).0 as usize] = true;
+            let mut run = 0usize;
+            for k in 1..64 {
+                let value = plane[base + k];
+                if value == 0 {
+                    run += 1;
+                    continue;
+                }
+                while run > 15 {
+                    ac_used[0xf0] = true;
+                    run -= 16;
+                }
+                let (size, _) = jpeg_magnitude(value as i32);
+                ac_used[(run << 4) | size as usize] = true;
+                run = 0;
+            }
+            if run > 0 {
+                ac_used[0] = true;
+            }
+        }
+    }
+
+    // Every used symbol becomes an eight-bit code, in symbol order.
+    let dc_symbols: Vec<u8> = (0..256).filter(|&s| dc_used[s]).map(|s| s as u8).collect();
+    let ac_symbols: Vec<u8> = (0..256).filter(|&s| ac_used[s]).map(|s| s as u8).collect();
+    assert!(dc_symbols.len() < 256 && ac_symbols.len() < 256);
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0xff, 0xd8]); // SOI
+
+    jpeg_segment(
+        &mut out,
+        0xe0,
+        b"JFIF\0\x01\x01\x00\x00\x01\x00\x01\x00\x00",
+    );
+    let mut exif = Vec::from(&b"Exif\0\0"[..]);
+    exif.extend_from_slice(app1);
+    jpeg_segment(&mut out, 0xe1, &exif);
+
+    let mut dqt = vec![0u8]; // table 0, all-ones quantization
+    dqt.extend_from_slice(&[1u8; 64]);
+    jpeg_segment(&mut out, 0xdb, &dqt);
+
+    let mut sof = Vec::new();
+    sof.push(8); // precision
+    sof.extend_from_slice(&height.to_be_bytes());
+    sof.extend_from_slice(&width.to_be_bytes());
+    sof.push(components as u8);
+    for component in 0..components {
+        sof.push(component as u8 + 1);
+        sof.push(0x11); // 1x1 sampling
+        sof.push(0); // quantization table 0
+    }
+    jpeg_segment(&mut out, 0xc0, &sof);
+
+    let mut dht = Vec::new();
+    dht.push(0x00); // DC table 0
+    let mut dc_counts = [0u8; 16];
+    dc_counts[7] = dc_symbols.len() as u8;
+    dht.extend_from_slice(&dc_counts);
+    dht.extend_from_slice(&dc_symbols);
+    dht.push(0x10); // AC table 0
+    let mut ac_counts = [0u8; 16];
+    ac_counts[7] = ac_symbols.len() as u8;
+    dht.extend_from_slice(&ac_counts);
+    dht.extend_from_slice(&ac_symbols);
+    jpeg_segment(&mut out, 0xc4, &dht);
+
+    jpeg_segment(&mut out, 0xfe, b"tzim fixture comment");
+
+    if restart_interval > 0 {
+        jpeg_segment(&mut out, 0xdd, &restart_interval.to_be_bytes());
+    }
+
+    let mut sos = Vec::new();
+    sos.push(components as u8);
+    for component in 0..components {
+        sos.push(component as u8 + 1);
+        sos.push(0x00); // DC table 0, AC table 0
+    }
+    sos.push(0); // Ss
+    sos.push(63); // Se
+    sos.push(0); // Ah/Al
+    jpeg_segment(&mut out, 0xda, &sos);
+
+    // Entropy-coded data: eight-bit codes for every symbol.
+    let dc_code = |symbol: u8| dc_symbols.iter().position(|&s| s == symbol).unwrap() as u32;
+    let ac_code = |symbol: u8| ac_symbols.iter().position(|&s| s == symbol).unwrap() as u32;
+    let mut bits = JpegBits::new();
+    let mut predicts = vec![0i32; components];
+    let mut restart_index = 0u8;
+    for block in 0..blocks {
+        if restart_interval > 0 && block > 0 && block % restart_interval as usize == 0 {
+            bits.restart(restart_index);
+            restart_index = (restart_index + 1) & 7;
+            for predict in predicts.iter_mut() {
+                *predict = 0;
+            }
+        }
+        for component in 0..components {
+            let base = block * 64;
+            let plane = &planes[component];
+            let difference = plane[base] as i32 - predicts[component];
+            predicts[component] = plane[base] as i32;
+            let (size, value) = jpeg_magnitude(difference);
+            bits.put(dc_code(size as u8), 8);
+            if size > 0 {
+                bits.put(value, size);
+            }
+            let mut run = 0usize;
+            for k in 1..64 {
+                let coefficient = plane[base + k];
+                if coefficient == 0 {
+                    run += 1;
+                    continue;
+                }
+                while run > 15 {
+                    bits.put(ac_code(0xf0), 8);
+                    run -= 16;
+                }
+                let (size, value) = jpeg_magnitude(coefficient as i32);
+                bits.put(ac_code(((run << 4) | size as usize) as u8), 8);
+                bits.put(value, size);
+                run = 0;
+            }
+            if run > 0 {
+                bits.put(ac_code(0x00), 8);
+            }
+        }
+    }
+    bits.finish();
+    out.extend_from_slice(&bits.out);
+
+    out.extend_from_slice(&[0xff, 0xd9]); // EOI
+    out.extend_from_slice(trailing);
+    out
+}
+
+/// Replaces the frame-header marker (`FF C0`) with another SOF marker, which is
+/// enough to describe a progressive or arithmetic file for the refusal paths.
+pub fn jpeg_with_sof_marker(jpeg: &[u8], marker: u8) -> Vec<u8> {
+    let mut out = jpeg.to_vec();
+    for i in 0..out.len().saturating_sub(1) {
+        if out[i] == 0xff && out[i + 1] == 0xc0 {
+            out[i + 1] = marker;
+            return out;
+        }
+    }
+    panic!("no SOF0 marker in the fixture");
+}
+
+/// Changes the sample precision byte of the frame header.
+pub fn jpeg_with_precision(jpeg: &[u8], precision: u8) -> Vec<u8> {
+    let mut out = jpeg.to_vec();
+    for i in 0..out.len().saturating_sub(1) {
+        if out[i] == 0xff && out[i + 1] == 0xc0 {
+            out[i + 4] = precision;
+            return out;
+        }
+    }
+    panic!("no SOF0 marker in the fixture");
+}

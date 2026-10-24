@@ -40,7 +40,7 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | ICO / CUR | v0.3 | implemented | Optimize embedded PNGs | equals the embedded PNG gain | medium | [§4.4](guarantees.md#44-ico--cur--v03) |
 | APNG | v0.3 | implemented | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
-| JPEG (opt-in) | v0.4 | planned | Huffman table optimization only | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
+| JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
 | TIFF | v0.5+ | research | Deflate/LZW strip recompression, tags untouched | 5–30 % on uncompressed scans | high | not written yet |
 | FLAC | v0.5+ | research | Lossless re-encode, all metadata blocks preserved | 0–3 % | high | not written yet |
 

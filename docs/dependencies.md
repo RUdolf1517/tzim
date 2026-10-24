@@ -94,11 +94,34 @@ Additional requirements:
 | `crc32fast` | yes | no | checksums | yes |
 | `png` | yes | no | independent verification decoder | yes |
 
-Four direct dependencies, one of them optional. That is the entire runtime tree for v0.1.
+Four direct dependencies, one of them optional. **v0.4 added none**: the JPEG handler is written in this
+repository (see §2.6).
 
-**Planned addition:** the JPEG handler (v0.4) will need an independent JPEG decoder for verification. No
-crate has been selected yet; it will be reviewed and documented here, with its size measured, before any
-JPEG code is merged.
+### 2.6 JPEG: why there is no JPEG dependency
+
+The v0.1 plan said the JPEG handler would need an independent decoder. That assumption turned out to be
+wrong, and the reasoning matters because this is the one place where the project writes a codec by hand
+instead of using a vetted crate.
+
+- **Pixel decoders cannot do this job.** `jpeg-decoder`, `zune-jpeg` and `image` return pixels. The
+  transformation is defined on *DCT coefficients*; going through pixels means an IDCT followed by an FDCT,
+  which is lossy and forbidden by the invariant. A decoder that exposes coefficients is required, not
+  merely convenient.
+- **The crates that do expose coefficients are C libraries.** `mozjpeg-sys` and `turbojpeg` wrap
+  libjpeg-turbo and do export `jpeg_read_coefficients` / `jpeg_write_coefficients`. Using them would mean
+  (a) `unsafe` FFI, which `[lints.rust] unsafe_code = "forbid"` rejects; (b) a C toolchain on Linux, macOS
+  and Windows plus the musl cross-build used for the size measurement; (c) a build that is no longer
+  offline-and-`--offline`; (d) several hundred KiB of C object code in a binary with a 2 200 KiB budget.
+  Each of those contradicts a rule in §1.
+- **What is left is a bounded, testable amount of code.** The handler is a marker parser, a canonical
+  Huffman decoder, an encoder with the same table construction the standard specifies in Annex K.2, and a
+  coefficient-comparison verifier. It is roughly 1 100 lines of safe Rust with no `unsafe`, and every table
+  it generates is validated before use (no overfull space, no duplicate symbols, no all-ones code), then
+  exercised by a 4 000-case property test.
+- **Verification is stronger, not weaker.** Because both encode and decode live here, the verifier can
+  compare coefficients rather than pixels — a condition that implies pixel identity but is not implied by
+  it. The residual risk (a bug shared by encoder and decoder) is recorded in
+  [guarantees](guarantees.md#47-jpeg--v04-opt-in) and [benchmarks](benchmarks.md).
 
 ---
 
@@ -114,6 +137,8 @@ JPEG code is merged.
 | `anyhow` / `thiserror` | one `enum Error` with `Display`; error chains are not part of our public interface |
 | `zip` | its writer does not guarantee preservation of every extra field, the archive order, or a prepended prefix; our contract requires byte-level fidelity (see [formats](formats.md#5-refused-formats)) |
 | `oxipng` | pulls `libdeflater` (C), `indexmap`, `rgb`, `rustc-hash`, `log`; and verifying oxipng with oxipng would defeat the independence requirement |
+| `mozjpeg-sys`, `turbojpeg` | C codecs behind `unsafe` FFI; they do expose DCT coefficients, but they break the no-`unsafe` rule, need a C toolchain on three platforms plus musl, and add hundreds of KiB (see §2.6) |
+| `jpeg-decoder`, `zune-jpeg` | correct and fast, but they return pixels; re-encoding from pixels would be lossy |
 | `image` | a large umbrella crate; we need one decoder for one format |
 | `libc` / `windows-sys` | not needed: `std` exposes permissions, timestamps and rename; platform-specific metadata we do not preserve anyway (see [safety](safety.md#3-metadata)) |
 | `log` / `env_logger` | a small stderr printer is enough; logging frameworks are not part of the binary |

@@ -7,6 +7,32 @@ All notable changes to this project are documented here. The format follows
 The v0.1 code is complete and tested in CI, but no release artifacts have been published yet. Planned
 releases are described in [docs/roadmap.md](docs/roadmap.md).
 
+## [0.4.0] - unreleased
+
+### Added
+
+- **JPEG (opt-in, `--formats jpeg`).** Entropy-coded data is decoded to DCT coefficients and re-encoded with
+  optimal Huffman tables (Annex K.2, lengths limited to 16 bits, all-ones code excluded). No coefficient
+  changes, so the decoded image is bit-identical. Every other marker — Exif, ICC, `COM`, `DQT`, `SOF0`,
+  `DRI`, the `SOS` header and any bytes after `EOI` — is copied as a raw segment.
+- Baseline sequential only: progressive, arithmetic-coded, lossless, hierarchical, 12-bit, SOF1 and
+  multi-scan files are refused (`skipped`, exit 0) with a reason. Restart intervals are supported and
+  preserved, including the `RSTn` markers inside the scan.
+- Verification compares **every DCT coefficient** of every component, plus the ordered marker sequence,
+  the frame header, unused Huffman tables and the trailing bytes. Coefficient identity implies pixel
+  identity, so no second decoder is involved.
+- The Huffman table generator is covered by a 4 000-case property test that validates every table it
+  produces (no overfull code space, no duplicates, no all-ones code, every used symbol encodable).
+- `--formats <LIST>`: an allowlist over `png`, `gzip`, `zip`, `ico`, `jpeg`. JPEG is off unless named;
+  nested children inherit the same allowlist.
+- Nine integration tests for JPEG and one for the allowlist.
+
+### Changed
+
+- Documentation: `docs/guarantees.md` §4.7 rewritten as the actual contract, `docs/dependencies.md` §2.6
+  records why this codec is hand-written instead of delegated to a crate.
+- No new dependencies and no `unsafe`; the dependency count stays at four.
+
 ## [0.3.0] - unreleased
 
 ### Added

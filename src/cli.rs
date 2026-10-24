@@ -2,6 +2,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
+use crate::formats::Allow;
 
 /// Parsed command line.
 #[derive(Debug)]
@@ -30,6 +31,7 @@ pub struct Args {
     pub max_ratio: u64,
     pub nested: bool,
     pub max_depth: u32,
+    pub allow: Allow,
     pub zopfli: bool,
     pub follow_symlinks: bool,
     pub allow_hardlinks: bool,
@@ -61,6 +63,7 @@ impl Default for Args {
             max_ratio: DEFAULT_MAX_RATIO,
             nested: false,
             max_depth: 3,
+            allow: Allow::default(),
             zopfli: false,
             follow_symlinks: false,
             allow_hardlinks: false,
@@ -102,6 +105,8 @@ OPTIONS:
         --max-ratio <N>        refuse archives with a ratio above N:1 (default: 1000)
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
+        --formats <LIST>       only process these formats: png, gzip, zip, ico, jpeg
+                               JPEG is off by default: name it here to enable it
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link
@@ -213,6 +218,14 @@ pub fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command> {
             "--max-pixels" => out.max_pixels = parse_u64(&name, &take_value(inline)?)?,
             "--max-uncompressed" => out.max_uncompressed = parse_u64(&name, &take_value(inline)?)?,
             "--max-ratio" => out.max_ratio = parse_u64(&name, &take_value(inline)?)?,
+            "--formats" => {
+                let v = take_value(inline)?;
+                let names = split_list(&v);
+                if names.is_empty() {
+                    return Err(Error::usage("`--formats` needs at least one format name"));
+                }
+                out.allow = Allow::named(&names)?;
+            }
             "--nested" => out.nested = true,
             "--max-depth" => {
                 let v = take_value(inline)?;
@@ -308,6 +321,25 @@ mod tests {
         let args = parse_ok(&["optimize", "--jobs=3", "--", "--weird-name.png"]);
         assert_eq!(args.jobs, 3);
         assert_eq!(args.paths, vec![PathBuf::from("--weird-name.png")]);
+    }
+
+    #[test]
+    fn formats_flag_narrows_and_enables_jpeg() {
+        let args = parse_ok(&["optimize", "--formats", "jpeg,png", "x.jpg"]);
+        assert!(args.allow.jpeg && args.allow.png);
+        assert!(!args.allow.zip && !args.allow.ico && !args.allow.gzip);
+        // JPEG is off unless it is named.
+        let plain = parse_ok(&["optimize", "x.jpg"]);
+        assert!(!plain.allow.jpeg && plain.allow.png);
+    }
+
+    #[test]
+    fn rejects_unknown_format_name() {
+        let args: Vec<OsString> = ["optimize", "--formats", "jpeg,bmp", "x"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert!(parse(args.into_iter()).is_err());
     }
 
     #[test]

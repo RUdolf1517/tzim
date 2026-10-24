@@ -1090,3 +1090,170 @@ fn nested_does_not_touch_signed_archives() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
+
+// ---------------------------------------------------------------------------
+// JPEG (v0.4, opt-in)
+// ---------------------------------------------------------------------------
+
+fn has(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|w| w == needle)
+}
+
+#[test]
+fn jpeg_baseline_is_optimized_and_then_stable() {
+    let ws = Workspace::new("jpeg-basic");
+    let original = build_jpeg(64, 48, 3);
+    let path = ws.write("photo.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let after = std::fs::read(&path).unwrap();
+    assert!(
+        after.len() < original.len(),
+        "expected a smaller file: {} -> {}",
+        original.len(),
+        after.len()
+    );
+    assert!(has(&after, b"tzim-test-exif-payload"), "Exif payload lost");
+    assert!(has(&after, b"tzim fixture comment"), "comment lost");
+    assert_eq!(&after[..2], &[0xff, 0xd8]);
+    assert_eq!(&after[after.len() - 2..], &[0xff, 0xd9]);
+
+    // The tables were the only wasteful thing, so a second run has nothing left.
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.jpg"], &ws.path);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(stdout.contains("already optimal"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), after);
+}
+
+#[test]
+fn jpeg_is_inert_without_the_formats_flag() {
+    let ws = Workspace::new("jpeg-opt-in");
+    let original = build_jpeg(32, 32, 1);
+    let path = ws.write("photo.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "photo.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert!(stdout.contains("not enabled"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_progressive_is_skipped() {
+    let ws = Workspace::new("jpeg-progressive");
+    let original = jpeg_with_sof_marker(&build_jpeg(32, 32, 3), 0xc2);
+    let path = ws.write("progressive.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "progressive.jpg"], &ws.path);
+    assert_eq!(code, 0, "a refusal is not a failure: {stdout} {stderr}");
+    assert!(stdout.contains("baseline"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_arithmetic_is_skipped() {
+    let ws = Workspace::new("jpeg-arithmetic");
+    let original = jpeg_with_sof_marker(&build_jpeg(32, 32, 3), 0xc9);
+    let path = ws.write("arithmetic.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "arithmetic.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("SOF9") || stdout.contains("arithmetic"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_twelve_bit_is_skipped() {
+    let ws = Workspace::new("jpeg-12bit");
+    let original = jpeg_with_precision(&build_jpeg(32, 32, 1), 12);
+    let path = ws.write("twelve.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "twelve.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("12-bit"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_truncated_file_fails_and_is_untouched() {
+    let ws = Workspace::new("jpeg-truncated");
+    let full = build_jpeg(64, 64, 3);
+    let original = full[..full.len() / 2].to_vec();
+    let path = ws.write("broken.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "broken.jpg"], &ws.path);
+    assert_eq!(code, 1, "a corrupt file is a failure: {stdout} {stderr}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_grayscale_is_optimized() {
+    let ws = Workspace::new("jpeg-gray");
+    let original = build_jpeg(48, 40, 1);
+    let path = ws.write("gray.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "gray.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(std::fs::read(&path).unwrap().len() < original.len());
+
+    let (code, stdout, _) = run(&["optimize", "--formats", "jpeg", "gray.jpg"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("already optimal"), "{stdout}");
+}
+
+#[test]
+fn jpeg_trailing_bytes_after_eoi_are_preserved() {
+    let ws = Workspace::new("jpeg-trailing");
+    let trailing = b"TRAILING-BYTES-AFTER-EOI";
+    let original = build_jpeg_with_trailing(32, 32, 3, trailing);
+    let path = ws.write("trailing.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "trailing.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let after = std::fs::read(&path).unwrap();
+    assert!(after.len() < original.len());
+    assert!(after.ends_with(trailing), "trailing bytes were not preserved");
+}
+
+#[test]
+fn formats_flag_restricts_other_formats_too() {
+    let ws = Workspace::new("formats-restrict");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("photo.png", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "photo.png"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn jpeg_restart_intervals_are_preserved() {
+    let ws = Workspace::new("jpeg-restart");
+    let original = build_jpeg_with_restart(64, 64, 3, 3);
+    let path = ws.write("restart.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["optimize", "--formats", "jpeg", "restart.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let after = std::fs::read(&path).unwrap();
+    assert!(after.len() < original.len());
+
+    // DRI (interval 3) must survive verbatim, and the scan must still use RSTn.
+    assert!(has(&after, &[0xff, 0xdd, 0x00, 0x04, 0x00, 0x03]), "DRI lost");
+    assert!(
+        after.windows(2).any(|w| w == [0xff, 0xd0]),
+        "restart markers lost"
+    );
+
+    let (code, stdout, _) = run(&["optimize", "--formats", "jpeg", "restart.jpg"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("already optimal"), "{stdout}");
+}

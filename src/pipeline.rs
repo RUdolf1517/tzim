@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::cli::Args;
 use crate::detect;
 use crate::error::{Error, Result};
-use crate::formats::{self, Cand, Options};
+use crate::formats::{self, Allow, Cand, Options};
 use crate::replace::{self, Snapshot, TempFile};
 use crate::report::{Outcome, Status};
 
@@ -22,6 +22,7 @@ pub struct Config {
     pub max_ratio: u64,
     pub nested: bool,
     pub max_depth: u32,
+    pub allow: Allow,
     pub min_size: u64,
     pub max_size: u64,
     pub allow_hardlinks: bool,
@@ -39,6 +40,7 @@ impl Config {
             max_ratio: args.max_ratio,
             nested: args.nested,
             max_depth: args.max_depth,
+            allow: args.allow,
             min_size: args.min_size,
             max_size: args.max_size,
             allow_hardlinks: args.allow_hardlinks,
@@ -115,6 +117,17 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     };
     outcome.format = Some(format);
 
+    if !cfg.allow.permits(format) {
+        outcome.status = Status::Skipped;
+        let enabled = cfg.allow.names();
+        outcome.note = Some(format!(
+            "{} is not enabled for this run (use --formats; enabled: {})",
+            format.name(),
+            if enabled.is_empty() { "none".to_string() } else { enabled.join(", ") }
+        ));
+        return Ok(());
+    }
+
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut temp = TempFile::create(parent)?;
 
@@ -143,6 +156,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         nested: cfg.nested,
         max_depth: cfg.max_depth,
         depth: 0,
+        allow: cfg.allow,
     };
 
     // The input is read once: handlers work on bytes, which is also what nested
@@ -202,6 +216,7 @@ mod tests {
             max_ratio: 1000,
             nested: false,
             max_depth: 3,
+            allow: Allow::default(),
             min_size: 0,
             max_size: 2 * 1024 * 1024 * 1024,
             allow_hardlinks: false,
