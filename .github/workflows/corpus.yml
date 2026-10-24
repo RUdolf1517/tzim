@@ -1,0 +1,90 @@
+name: corpus
+
+# Real-file regression run. The fixtures under tests/ are synthetic and small;
+# this job is the one that sees what the format handlers do to files nobody on
+# this project wrote.
+#
+# See .github/scripts/corpus-fetch.sh for the pinned sources and their checksums
+# and .github/corpus-allowlist.txt for the files that are corrupt by design.
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/corpus*.sh"
+      - ".github/corpus-allowlist.txt"
+      - ".github/workflows/corpus.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  corpus:
+    name: real files
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Run the corpus
+        id: run
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          bash .github/scripts/corpus.sh target/release/tzim 2>&1 | tee /tmp/tzim-corpus.log
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "${RUNNER_TEMP}/tzim-corpus/summary.md" ]; then
+            cat "${RUNNER_TEMP}/tzim-corpus/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The corpus run did not reach the gate; see the log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-run
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/tzim-corpus/summary.md
+            ${{ runner.temp }}/tzim-corpus/run1.json
+            ${{ runner.temp }}/tzim-corpus/run2.json
+            ${{ runner.temp }}/tzim-corpus/run1.err
+
+      - name: Publish the numbers
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-corpus/summary.md" corpus report
+
+      - name: Publish the log
+        if: steps.run.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-corpus.log corpus
+
+      - name: Fail the job
+        if: steps.run.outcome == 'failure'
+        shell: bash
+        run: exit 1

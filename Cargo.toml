@@ -1,6 +1,6 @@
 [package]
 name = "tzim"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Lossless file optimizer: shrink the file, never the information"
@@ -9,6 +9,14 @@ repository = "https://github.com/RUdolf1517/tzim"
 readme = "README.md"
 keywords = ["lossless", "optimization", "png", "gzip", "jpeg"]
 categories = ["command-line-utilities", "compression"]
+
+[lib]
+name = "tzim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tzim"
+path = "src/main.rs"
 
 [dependencies]
 crc32fast = { version = "1.5", optional = true }
@@ -22,6 +30,8 @@ gzip = ["dep:flate2", "dep:crc32fast"]
 png = ["dep:png", "dep:flate2", "dep:crc32fast"]
 zip = ["dep:flate2", "dep:crc32fast"]
 zopfli = ["dep:zopfli"]
+# Exposes the parsers to the fuzz targets in fuzz/. Never enabled for a release.
+fuzz-api = []
 
 [profile.release]
 opt-level = 3

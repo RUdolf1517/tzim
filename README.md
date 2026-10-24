@@ -17,7 +17,7 @@ and verified, including optional optimization of files stored inside archives (`
 tested on Linux, macOS and Windows in CI. Everything else in the table below is *planned*, with the version
 in which it is expected.
 
-- Static Linux binary: **976 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
+- Static Linux binary: **980 KiB** (measured, every runtime feature, musl). See [docs/benchmarks.md](docs/benchmarks.md).
 - 56 unit and 54 integration tests, clippy clean with `-D warnings`.
 - Prebuilt binaries: see [Releases](https://github.com/RUdolf1517/tzim/releases) and [docs/releases.md](docs/releases.md).
 
@@ -93,7 +93,7 @@ cargo install --path .
 # smallest build: PNG and gzip only, no Zopfli encoder
 cargo build --release --no-default-features --features png,gzip
 
-# static Linux binary, matching the measured 976 KiB artifact
+# static Linux binary, matching the measured 980 KiB artifact
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 

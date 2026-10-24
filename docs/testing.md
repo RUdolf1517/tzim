@@ -177,14 +177,54 @@ Each hook has a test asserting the outcome, the original hash, exit code and tem
 - idempotence: `optimize(optimize(x)) == optimize(x)` in terms of size and status;
 - parser robustness: arbitrary bytes never panic, only produce `Err`.
 
-### Fuzzing (`cargo-fuzz`, nightly, separate crate)
+### Real-file corpus
 
-Targets: PNG chunk walker, gzip header/body splitter, ZIP central-directory reader, and (from v0.4) the JPEG
-marker/entropy reader. The properties are: no panic, no unbounded allocation, no integer overflow, and
-termination inside a time budget. The seed corpus is derived from the fixtures; a short smoke run (60 s per
-target) executes in CI on Linux, and longer runs are performed before a release.
+Fixtures prove that the handlers handle what the authors thought of. The corpus proves what they do to files
+nobody here wrote. `.github/scripts/corpus-fetch.sh` downloads four pinned upstream archives, checks each
+SHA-256, and assembles the images into one tree; the run is `.github/scripts/corpus.sh`, CI job `corpus`.
 
-Fuzz artefacts are not committed; the corpus is minimised and stored only if it stays small.
+| Source | Pinned | Checksum (SHA-256, first 16) | Files used |
+| --- | --- | --- | --- |
+| `pnggroup/libpng` | `v1.6.44` | `0ef5b633d0c65f78` | 51 from `contrib/pngsuite` |
+| `libjpeg-turbo/libjpeg-turbo` | `3.1.0` | `35fec2e1ddfb05ec` | 4 from `testimages` |
+| `image-rs/image` | `v0.25.6` | `e547553fc4e4353b` | 22 from `tests/images` |
+| `python-pillow/Pillow` | `11.3.0` | `fa4aca745b1e1c73` | 495 from `Tests/images` |
+
+Plus four containers built on the spot from those files with `gzip -9` and `zip -9`, so the gzip and ZIP
+handlers are exercised on real payloads. The corpus is downloaded, never committed: it is 9 MiB of other
+people's files, and a URL plus a checksum says more than a binary blob in review.
+
+The run executes the binary twice over the tree and gates on four properties, none of which is a fixture
+assertion in disguise:
+
+| Property | Failure means |
+| --- | --- |
+| No unexpected `failed` status | a real file that used to work no longer does, or a valid file is being refused |
+| No `verify` or `internal` error, on any file | the handler produced a candidate its own contract rejected, or the code is broken |
+| Nothing rewritten on the second pass, byte-identical manifest | the rewrite is not a fixed point |
+| The set of refused files is unchanged | a construct that used to be supported silently stopped being supported |
+
+Files that are corrupt in the upstream archive are listed by name in `.github/corpus-allowlist.txt`, with the
+reason recorded. A file that fails without being listed is an error, and a listed file that stops failing
+raises a warning so that the list cannot rot into a set of broad patterns hiding real problems.
+
+### Fuzzing (`cargo-fuzz`, nightly, separate workspace)
+
+`fuzz/` is a separate Cargo workspace so that `libfuzzer-sys` and the sanitizer runtime never become
+dependencies of the binary. Two targets, both reached through the `fuzz-api` feature of the library, which no
+release build enables:
+
+| Target | Reaches |
+| --- | --- |
+| `jpeg_decode` | the JPEG marker parser, the layout analysis and the entropy decoder |
+| `roundtrip` | detection, the handler for the detected format, and verification of the candidate |
+
+The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
+and — for `roundtrip` — that any candidate reported as accepted is smaller than the input and passes
+verification. The seed corpus is the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is
+part of CI (`fuzz.yml`); longer runs are performed before a release.
+
+Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored.
 
 ---
 
@@ -200,7 +240,9 @@ Fuzz artefacts are not committed; the corpus is minimised and stored only if it 
 | `audit` | ubuntu-latest | `cargo audit` |
 | `musl` | ubuntu-latest | static `x86_64-unknown-linux-musl` build; `file` must report "statically linked" |
 | `size` | ubuntu-latest | binary-size gate (see [size budget](size-budget.md#6-ci-gate)) |
-| `fuzz-smoke` | ubuntu-latest, nightly | 60 s per target, optional on pull requests, mandatory on `main` |
+| `corpus` | ubuntu-latest | downloads the pinned corpus, runs the binary over it twice, gates on §3 |
+| `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
+| `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
 
 Release jobs build Linux (gnu and musl), macOS (x86_64 and aarch64) and Windows (x86_64) artifacts, and
 publish them with checksums.

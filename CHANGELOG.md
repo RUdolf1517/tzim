@@ -4,10 +4,40 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**v0.4.0 is the first published release.** Versions 0.1 to 0.3 were development milestones: they exist as
+**v0.4.0 was the first published release.** Versions 0.1 to 0.3 were development milestones: they exist as
 commits, were tested in CI, and were never tagged or packaged. Everything in them is contained in 0.4.0.
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
+
+## [0.4.1] - 2026-10-24 — the evidence behind the claims, no functional change
+
+### Added
+
+- **A real-file corpus in CI** (`corpus.yml`): four pinned upstream archives — libpng 1.6.44,
+  libjpeg-turbo 3.1.0, image-rs 0.25.6, Pillow 11.3.0 — each verified by SHA-256 and assembled into 572
+  images plus four gzip and ZIP containers built from them. The binary runs over the tree twice; the job
+  fails on any `failed` status that is not a known-corrupt upstream fixture, on any `verify` or `internal`
+  error, and on any file still being rewritten on the second pass.
+- **Fuzz targets** (`fuzz/`, `cargo-fuzz`, nightly): `jpeg_decode` covers the marker parser, the layout
+  analysis and the entropy decoder; `roundtrip` covers detection, the handler and verification for every
+  format. Sixty seconds per target on pull requests that touch the parsers, longer before a release.
+- **Comparative benchmarks** (`bench.yml`) against oxipng 10.2.1, optipng 0.7.8 and jpegtran (libjpeg-turbo
+  2.1.5) on copies of the same corpus, reporting wall clock, peak RSS and bytes saved.
+- The format handlers are a library now (`src/lib.rs`), so the fuzz targets can reach the parsers. The entry
+  points exist only behind the `fuzz-api` feature, which no release build enables.
+
+### Changed
+
+- `docs/benchmarks.md` §3 reports measured results instead of "not measured yet", and §4 shrinks to the two
+  gaps that are still real.
+- Release, size and benchmark builds use default features. `--all-features` would compile the fuzz entry
+  points into the binary that is measured and shipped.
+- Measured static binary: 980 KiB (+4 KiB, a linker page boundary, not new behaviour). Still four crates.
+
+### Fixed
+
+- Nothing user-visible. No format handler changed, and no file that was optimized by 0.4.0 is treated
+  differently by 0.4.1.
 
 ## [0.4.0] - 2026-10-24 — first published release
 

@@ -1,0 +1,89 @@
+name: fuzz
+
+# Smoke run of the cargo-fuzz targets in fuzz/. The targets live in their own
+# workspace so that libfuzzer-sys and the sanitizer runtime never become
+# dependencies of the binary.
+#
+# Sixty seconds per target on every pull request is a tripwire, not a proof. It
+# catches the class of defect that a hand-written parser produces — an unchecked
+# length, an index past a slice, an allocation sized by an attacker's number.
+# Longer runs are done before a release.
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds per target"
+        required: false
+        default: "60"
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  smoke:
+    name: fuzz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Seed corpus
+        shell: bash
+        run: |
+          # Two small pinned archives: the PNG and JPEG suites that the corpus run
+          # uses. They give libFuzzer valid structures to mutate instead of
+          # waiting for random bytes to reach a deep branch.
+          work="${RUNNER_TEMP}/fuzz-seed"
+          mkdir -p "$work"
+          curl -fsSL -o "$work/libpng.tar.gz" \
+            https://codeload.github.com/pnggroup/libpng/tar.gz/refs/tags/v1.6.44
+          echo "0ef5b633d0c65f780c4fced27ff832998e71478c13b45dfb6e94f23a82f64f7c  $work/libpng.tar.gz" | sha256sum -c --quiet -
+          curl -fsSL -o "$work/libjpeg-turbo.tar.gz" \
+            https://codeload.github.com/libjpeg-turbo/libjpeg-turbo/tar.gz/refs/tags/3.1.0
+          echo "35fec2e1ddfb05ecf6d93e50bc57c1e54bc81c16d611ddf6eff73fff266d8285  $work/libjpeg-turbo.tar.gz" | sha256sum -c --quiet -
+          tar xzf "$work/libpng.tar.gz" -C "$work"
+          tar xzf "$work/libjpeg-turbo.tar.gz" -C "$work"
+          mkdir -p fuzz/corpus/roundtrip fuzz/corpus/jpeg_decode
+          cp "$work"/libpng-1.6.44/contrib/pngsuite/*.png fuzz/corpus/roundtrip/
+          cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/roundtrip/
+          cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/jpeg_decode/
+          echo "seeds: $(find fuzz/corpus -type f | wc -l)"
+
+      - name: Run targets
+        shell: bash
+        run: |
+          seconds="${{ github.event.inputs.seconds || '60' }}"
+          status=0
+          for target in jpeg_decode roundtrip; do
+            echo "::group::${target}, ${seconds}s"
+            cargo +nightly fuzz run "$target" -- \
+              -max_total_time="$seconds" -print_final_stats=1 || status=1
+            echo "::endgroup::"
+          done
+          exit "$status"
+
+      - name: Keep findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/

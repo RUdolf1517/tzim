@@ -114,7 +114,7 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 - **Progressive files are refused, not optimized.** Successive approximation and spectral selection are
   the most error-prone part of the format, so v0.4 covers baseline only and reports `skipped` with a
-  precise reason. Progressive support is deferred to v0.4.1 and is not advertised.
+  precise reason. Progressive support is deferred and is not advertised.
 - The same applies to arithmetic coding, lossless (SOF3), hierarchical, 12-bit and SOF1 files.
 - **Verification compares DCT coefficients, not pixels.** Coefficient identity implies pixel identity, so
   the guarantee is strictly stronger, and it does not need a second decoder. The residual risk — that a
@@ -124,11 +124,12 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 - `T-JPG-01` … `T-JPG-09` are covered by nine integration tests and eight unit tests (including a
   4 000-case property test of the table generator).
-- The 1 000-file corpus from the original gate is **not** available in this environment; the tests use
-  generated fixtures covering baseline, grayscale, RGB 4:4:4, restart intervals, trailing bytes and every
-  refusal path. Running a real corpus remains outstanding and is listed as such in
-  [benchmarks](benchmarks.md).
-- Fuzzing of the entropy reader is not part of CI yet.
+- The corpus gate is met, one release later: 572 real images from four pinned upstream archives run
+  through the binary in CI, with any new failure, any verification failure and any second-pass rewrite
+  treated as a build break. See [testing](testing.md#real-file-corpus) and
+  [benchmarks](benchmarks.md#31-the-real-file-corpus).
+- Fuzzing is in CI too: `fuzz/` holds two `cargo-fuzz` targets, one of them the entropy reader, and a
+  sixty-second-per-target smoke run gates pull requests that touch the parsers.
 
 **Risk:** **high** — this is the most bug-prone codec in the project.
 

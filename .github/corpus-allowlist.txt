@@ -1,0 +1,42 @@
+# Files that are corrupt on purpose in the pinned upstream archives.
+#
+# The corpus run treats a `failed` status as an error unless the file name
+# matches a pattern below. Every entry names a file that a human has confirmed
+# to be broken upstream; a broad pattern would hide real regressions, so the gate
+# also warns when an entry stops matching anything.
+#
+# Nothing else may appear here. A valid file that fails is a bug in Tzim.
+#
+# Two kinds of entry exist, and they are not the same thing:
+#
+#   broken  — the bytes violate the format. Tzim refuses the file and says so.
+#             libjpeg and Pillow often accept these by concealing the damage
+#             (resynchronising at the next marker, guessing the pixel value).
+#             Tzim will not: repairing a file is a lossy decision.
+#
+#   refused — the file is fine but uses a construct the handler declines, such
+#             as a progressive scan. These are reported as `skipped`, not
+#             `failed`, so they do not need an entry here.
+#
+# Format: one shell glob matched against the corpus file name (basename).
+
+# --- Pillow 11.3.0, Tests/images -------------------------------------------
+# PNG fixtures for Pillow's own error handling.
+pillow-broken.png
+pillow-broken_data_stream.png
+pillow-truncated_end_chunk.png
+pillow-truncated_image.png
+pillow-apng_syntax_num_frames_zero.png
+pillow-unknown_compression_method.png
+pillow-tRNS_null_1x1.png
+
+# JPEG fixtures with damage that libjpeg conceals. ImageMagick reports them as
+# "Corrupt JPEG data: N extraneous bytes before marker", which is the same
+# conclusion this project reaches by a different route.
+pillow-truncated_jpeg.jpg
+pillow-truncated_app14.jpg
+pillow-hopper_bad_exif.jpg
+pillow-jpeg_ff00_header.jpg
+pillow-junk_jpeg_header.jpg
+pillow-photoshop-200dpi-broken.jpg
+pillow-ultrahdr.jpg
