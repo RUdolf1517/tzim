@@ -98,7 +98,9 @@ files before anything is touched.
   `-i`, `--list-formats` and `--check-deps` were added. The old verb is still accepted, so upgrading never
   breaks a script; it is simply undocumented. The formula and the winget manifest for 0.5.0 were pinned in
   a follow-up PR from the hashes in the release notes, which is the only order that never publishes a hash
-  for a file that does not exist yet.
+  for a file that does not exist yet. v0.6.0 and v0.7.0 follow the same order.
+- **v0.6.0 and v0.7.0 add flags and formats, not changes.** `--strip-metadata` is opt-in and off by default;
+  TIFF joins the handlers. Neither release changes the output of a command that worked before.
 
 ## 5. Release process
 
@@ -106,7 +108,7 @@ files before anything is touched.
 2. The version in `Cargo.toml` and the top `CHANGELOG.md` section are updated in the same pull request.
 3. A GitHub release is created from a tag on `main`. Publishing it triggers
    `.github/workflows/release.yml`, which builds the three archives and the two Linux packages,
-   smoke-tests each binary (`--version`, `formats`), and uploads everything with `SHA256SUMS`.
+   smoke-tests each binary (`--version`, `--list-formats`), and uploads everything with `SHA256SUMS`.
 4. The SHA-256 of the macOS and Linux archives is copied into `Formula/tzim.rb` and its `version` is
    bumped. Until that commit lands, `brew install` serves the previous release — the tap never points at a
    version whose hashes are invented.

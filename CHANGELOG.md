@@ -32,6 +32,12 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   an encoder this repository would have to invent and could not verify. Unknown tags that fit inside the
   entry are copied untouched.
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.7.0/` are pinned to the published v0.7.0 artifacts and their
+  SHA-256, copied from the release notes after the build — the order that never publishes a hash for a file
+  that does not exist yet.
+
 ### Documentation
 
 - [formats](docs/formats.md#2-format-matrix) moves TIFF from *research* to *implemented* in the same commit
