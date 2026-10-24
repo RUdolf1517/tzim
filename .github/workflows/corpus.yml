@@ -70,6 +70,13 @@ jobs:
             ${{ runner.temp }}/tzim-corpus/run2.json
             ${{ runner.temp }}/tzim-corpus/run1.err
 
+      - name: Publish the numbers
+        if: success()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-corpus/summary.md" corpus report
+
       - name: Publish the log
         if: steps.run.outcome == 'failure'
         shell: bash

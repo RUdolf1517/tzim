@@ -29,14 +29,12 @@ pillow-truncated_image.png
 pillow-apng_syntax_num_frames_zero.png
 pillow-unknown_compression_method.png
 pillow-tRNS_null_1x1.png
-pillow-xmp_tags_orientation_exiftool.png
 
 # JPEG fixtures with damage that libjpeg conceals. ImageMagick reports them as
 # "Corrupt JPEG data: N extraneous bytes before marker", which is the same
 # conclusion this project reaches by a different route.
 pillow-truncated_jpeg.jpg
 pillow-truncated_app14.jpg
-pillow-truncated_exif_dpi.jpg
 pillow-hopper_bad_exif.jpg
 pillow-jpeg_ff00_header.jpg
 pillow-junk_jpeg_header.jpg

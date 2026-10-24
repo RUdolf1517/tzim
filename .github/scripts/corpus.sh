@@ -124,7 +124,10 @@ failed_names = set(os.path.basename(r["path"]) for r in failed)
 listed = [name for name in all_names if allowed(name)]
 healed = sorted(set(listed) - failed_names)
 if healed:
-    print(f"::warning::{len(healed)} allowlisted file(s) did not fail, e.g. {healed[0]}; the list can be tightened")
+    print(
+        f"::warning::{len(healed)} allowlisted file(s) did not fail, so the entry can go: "
+        + ", ".join(healed[:10])
+    )
 
 # A file that is still corrupt on the second pass fails again; that is not a
 # change on disk, it is the same refusal. Only a file that is rewritten twice

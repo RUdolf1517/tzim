@@ -11,14 +11,18 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | `52a33cb` |
+| Commit | `4fe47f9` |
 | Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release --all-features` (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
-| Features in the binary | all |
-| **Size** | **1 000 288 bytes (976 KiB)** |
+| Profile | `--release`, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, Zopfli) |
+| Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
+| **Size** | **1 004 384 bytes (980 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
 | Provisional budget for this profile | 2 200 KiB |
-| Headroom | 1 224 KiB |
+| Headroom | 1 196 KiB |
+
+The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
+feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
+binary would measure code that never ships.
 
 Growth by version, with **no new dependency lines at any step** — four direct crates since v0.1. The JPEG
 handler in v0.4 adds code rather than a crate, because no Rust JPEG library exposes DCT coefficients (see
@@ -30,6 +34,10 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.2 | ZIP family | 868 KiB (+36 KiB) |
 | v0.3 | APNG frames, ICO/CUR, nested archives | 904 KiB (+36 KiB) |
 | v0.4 | baseline JPEG entropy codec (opt-in) | 976 KiB (+72 KiB) |
+| v0.4.1 | library split so the parsers can be fuzzed; no new code paths | 980 KiB (+4 KiB) |
+
+The last row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
+binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
 
 The binary is statically linked, contains no C code, and requires no runtime beyond the OS.
 
@@ -56,14 +64,44 @@ order of magnitude while carrying an independent verification decoder.
 
 ---
 
-## 3. Compression results
+## 3. Compression results — measured
 
-**Not measured yet.** A fair comparison needs the same corpus processed by Tzim, `oxipng`, `optipng`,
-`zopflipng` and `gzip -9` on identical hardware, and the development sandbox has neither the tools nor a
-Rust toolchain. Publishing a guess here would be worse than publishing nothing.
+### 3.1 The real-file corpus
 
-What can be said from measurements that do exist (stage-1 analysis, Python + zlib, real files shipped by a
-Linux distribution):
+Four pinned upstream archives, assembled by `.github/scripts/corpus-fetch.sh` (URLs and checksums in
+[testing.md](testing.md#real-file-corpus)), 572 images plus 4 containers built from them with `gzip -9` and
+`zip -9`. CI job `corpus`, one pass over the tree, run `40119891574`.
+
+| Metric | Value |
+| --- | --- |
+| Files | 576 |
+| Optimized | 398 |
+| Already optimal | 156 |
+| Unsupported | 0 |
+| Refused (progressive/arithmetic/12-bit JPEG, by contract) | 8 |
+| Failed (corrupt upstream fixtures, see allowlist) | 14 |
+| Bytes before | 9 048 514 |
+| Bytes after | 8 669 301 |
+| **Saved** | **379 213 (4.19 %)** |
+| Files rewritten on a second pass | 0 |
+
+Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files.
+
+The 156 "already optimal" files are the honest part of this number: these are files that upstream projects
+already compressed well, and leaving them alone is the contract working, not the tool failing.
+
+### 3.2 Against the established tools
+
+Below is the same corpus through Tzim and the reference tools, one machine, copies of the same files. The
+timed comparison is capped at files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte;
+the ratio for the whole corpus is the table above.
+
+PLACEHOLDER_BENCH
+
+### 3.3 Older spot measurements
+
+Before the corpus existed, the numbers below came from a stage-1 analysis (Python + zlib) on files shipped
+by a Linux distribution. They are kept because they explain where the gains come from, not as a claim:
 
 | Corpus | Method | Result |
 | --- | --- | --- |
@@ -82,14 +120,13 @@ tool and the README says so.
 
 | Measurement | Why it is missing | Planned |
 | --- | --- | --- |
-| Ratio per format on a fixed public corpus | needs the external tools in the same environment | v0.2 |
-| Wall-clock time, single job and parallel | same | v0.2 |
-| Peak memory (RSS) per format | same | v0.2 |
-| Regression tracking across releases | needs a stable corpus in CI | v0.2 |
-| Windows and macOS binary sizes | only the Linux musl artifact is measured today | v0.2 |
+| Windows and macOS binary sizes | the artifact is built and smoke-tested on both, but only the Linux musl bytes are recorded | v0.5 |
+| Regression tracking across releases | the corpus is stable and gated, but nothing plots the trend over time | v0.5 |
+| A ratio comparison on files above 200 KiB | `oxipng -o max` takes minutes per megabyte; the timed run is capped | not planned |
+| Peak RSS for ZIP and ICO separately | the benchmark measures per tool, not per handler | v0.5 |
 
-The procedure for closing these gaps is fixed in [size-budget.md](size-budget.md#4-measurement-procedure) and
-[testing.md](testing.md#5-benchmarks). Every row above must be filled before v0.2 is tagged.
+Everything else that used to be listed here is now measured: ratio per format on a fixed corpus, wall clock
+single-job and parallel, peak RSS, and the corpus itself as a stable target.
 
 ---
 
