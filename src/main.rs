@@ -97,7 +97,7 @@ fn run_optimize(args: &cli::Args) -> Result<i32> {
     if args.json {
         report::print_json(&outcomes, &summary, args.dry_run);
     } else {
-        report::print_human(&outcomes, &summary, args.quiet);
+        report::print_human(&outcomes, &summary, args.quiet, args.dry_run);
     }
 
     let mut code = report::exit_code(&outcomes);

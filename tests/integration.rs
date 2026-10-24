@@ -76,7 +76,7 @@ fn dry_run_does_not_modify_anything() {
 
     let (code, stdout, stderr) = run(&["optimize", "photo.png", "--dry-run"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("would optimize"), "{stdout}");
+    assert!(stdout.contains("dry run"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original, "file must be untouched");
 
     // No temporary file may survive a dry run.
@@ -357,7 +357,8 @@ fn include_and_exclude_filters() {
         ..Default::default()
     };
     let png = ws.write("a.png", &build_png(&spec));
-    let gz = ws.write("b.gz", &build_gzip(b"hello hello hello", None, None, 0, 1));
+    let payload = b"the quick brown fox jumps over the lazy dog\n".repeat(500);
+    let gz = ws.write("b.gz", &build_gzip(&payload, None, None, 0, 1));
     let png_before = std::fs::read(&png).unwrap();
     let gz_before = std::fs::read(&gz).unwrap();
 

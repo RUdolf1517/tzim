@@ -147,7 +147,7 @@ pub fn exit_code(outcomes: &[Outcome]) -> i32 {
     0
 }
 
-pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool) {
+pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool, dry_run: bool) {
     if !quiet {
         let width = outcomes
             .iter()
@@ -171,12 +171,12 @@ pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool) {
                     } else {
                         100.0 * (o.before as f64 - o.after as f64) / o.before as f64
                     };
-                    format!(
-                        "{} -> {}  {:+.1}%",
-                        size(o.before),
-                        size(o.after),
-                        -pct
-                    )
+                    let suffix = if o.status == Status::WouldOptimize {
+                        "  (dry run)"
+                    } else {
+                        ""
+                    };
+                    format!("{} -> {}  {:+.1}%{suffix}", size(o.before), size(o.after), -pct)
                 }
                 _ => match (&o.note, &o.error) {
                     (_, Some(e)) if o.status == Status::Failed => format!("failed: {e}"),
@@ -188,8 +188,9 @@ pub fn print_human(outcomes: &[Outcome], summary: &Summary, quiet: bool) {
         }
     }
 
+    let action = if dry_run { "would optimize" } else { "optimized" };
     println!(
-        "Summary: {} files, {} optimized, {} saved, {} already optimal, {} unsupported, {} skipped, {} failed, {:.2} s",
+        "Summary: {} files, {} {action}, {} saved, {} already optimal, {} unsupported, {} skipped, {} failed, {:.2} s",
         summary.files,
         summary.optimized + summary.would_optimize,
         size(summary.before.saturating_sub(summary.after)),
