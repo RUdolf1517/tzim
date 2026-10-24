@@ -9,6 +9,27 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter
+
+No format, flag, guarantee or output byte changed. The corpus writes 379 177 bytes in
+both 0.7.0 and 0.7.1 builds.
+
+### Changed
+
+- **Release profile**: this crate is compiled with `opt-level = "s"`, its dependencies — DEFLATE, PNG,
+  Zopfli, where the time is spent — stay at `3`. Measured on 694 real files: −104 KiB for +3.6 % runtime.
+  Optimising the whole tree instead would have saved 124 KiB and cost 11 %. Numbers and rejected variants
+  (thin LTO, `opt-level = "z"`, `codegen-units = 16`, `gc-sections`, `force-unwind-tables=no`) are recorded in
+  [size budget §5](docs/size-budget.md#5-options-considered).
+- **`src/report.rs`** formats sizes, percentages and durations with integer arithmetic instead of the
+  general `core::fmt` path: −20 KiB, byte-identical output, with boundary tests on the unit thresholds.
+- **Size budget** tightened from 1 178 KiB to 1 036 KiB, so CI refuses growth 142 KiB earlier.
+
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.7.1/` are pinned to the published v0.7.1 artifacts and their
+  SHA-256, copied from the release notes after the build.
+
 ## [0.7.0] - 2026-10-25 — TIFF, and a rebuild that can prove itself
 
 ### Added

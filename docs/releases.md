@@ -98,7 +98,10 @@ files before anything is touched.
   `-i`, `--list-formats` and `--check-deps` were added. The old verb is still accepted, so upgrading never
   breaks a script; it is simply undocumented. The formula and the winget manifest for 0.5.0 were pinned in
   a follow-up PR from the hashes in the release notes, which is the only order that never publishes a hash
-  for a file that does not exist yet. v0.6.0 and v0.7.0 follow the same order.
+  for a file that does not exist yet. v0.6.0, v0.7.0 and v0.7.1 follow the same order.
+- **v0.7.1 is a build change.** The same source, compiled with a smaller optimisation level for this crate
+  and full optimisation kept for the codecs, produces a binary 124 KiB smaller that writes byte-identical
+  output. Nothing was removed, and the corpus proves it: 379 177 bytes written before and after.
 - **v0.6.0 and v0.7.0 add flags and formats, not changes.** `--strip-metadata` is opt-in and off by default;
   TIFF joins the handlers. Neither release changes the output of a command that worked before.
 
