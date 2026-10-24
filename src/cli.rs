@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn rejects_missing_paths() {
-        let args: Vec<OsString> = [].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = Vec::new();
         assert!(parse(args.into_iter()).is_err());
     }
 
@@ -399,7 +399,7 @@ mod tests {
         // 0.1-0.4 documentation and scripts say `tzim optimize <path>`.
         let args = parse_ok(&["optimize", "photo.png"]);
         assert_eq!(args.paths, vec![PathBuf::from("photo.png")]);
-        assert!(parse(&[OsString::from("optimize")].into_iter()).is_err());
+        assert!(parse([OsString::from("optimize")].into_iter()).is_err());
     }
 
     #[test]
