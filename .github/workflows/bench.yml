@@ -63,24 +63,17 @@ jobs:
             echo "The benchmark did not reach the report step; see the log." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Publish the numbers
-        if: steps.measure.outcome == 'success'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-bench/summary.md" bench report
-
       - name: Annotate the numbers
         if: always()
         shell: bash
         run: |
           summary="${RUNNER_TEMP}/tzim-bench/summary.md"
           if [ -f "$summary" ]; then
-            # One annotation carrying the whole table: %%0A is a newline. The step
+            # One annotation carrying the whole table: %0A is a newline. The step
             # summary is only visible on the run page; this makes the numbers
             # reachable from the API too, which is how they get written down.
             printf '::notice::'
-            awk 'NR > 1 { printf "%%0A" } { printf "%%s", $0 }' "$summary"
+            awk '{ if (NR > 1) printf "%s", "%0A"; printf "%s", $0 }' "$summary"
             printf '\n'
           fi
 
