@@ -58,10 +58,9 @@ fn parse(data: &[u8]) -> Result<Image> {
         return Err(Error::parse("jpeg: the file does not start with an SOI marker"));
     }
     let mut segments = Vec::new();
-    let mut trailing = Vec::new();
     let mut pos = 2usize;
 
-    loop {
+    let trailing = loop {
         // A marker may be preceded by any number of 0xFF fill bytes.
         while pos + 1 < data.len() && data[pos] == 0xff && data[pos + 1] == 0xff {
             pos += 1;
@@ -78,8 +77,7 @@ fn parse(data: &[u8]) -> Result<Image> {
         pos += 2;
 
         if marker == EOI {
-            trailing = data[pos..].to_vec();
-            break;
+            break data[pos..].to_vec();
         }
         if marker == SOI || marker == 0x01 || marker == 0x00 || (0xd0..=0xd7).contains(&marker) {
             return Err(Error::parse(format!(
@@ -113,7 +111,7 @@ fn parse(data: &[u8]) -> Result<Image> {
                 entropy: None,
             });
         }
-    }
+    };
 
     Ok(Image { segments, trailing })
 }
@@ -464,6 +462,7 @@ impl HuffDec {
 
 /// Builds a table from per-symbol code lengths, checking that the result is
 /// legal before returning it.
+#[allow(clippy::needless_range_loop)]
 fn table_from_lengths(vals: &[u8], lengths: &[u8]) -> Result<Huff> {
     if vals.is_empty() || vals.len() != lengths.len() {
         return Err(Error::internal("jpeg: table lengths do not match the symbol list"));
