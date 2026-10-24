@@ -97,7 +97,7 @@ downloads `tzim-x86_64-pc-windows-msvc.zip` from Releases:
 git clone https://github.com/RUdolf1517/tzim
 cd tzim
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.7.0
+winget install --manifest .\packaging\winget\0.7.1
 ```
 
 `LocalManifestFiles` is once, as Administrator. After microsoft/winget-pkgs accepts the manifest:
@@ -231,7 +231,7 @@ documentation is checked against:
 
 ```
 $ tzim -i
-tzim 0.7.0 — shrink the file, never the information
+tzim 0.7.1 — shrink the file, never the information
 ...
 Formats in this build: PNG, gzip, ICO/CUR, JPEG, ZIP
 ...
