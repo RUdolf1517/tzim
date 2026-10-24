@@ -4,10 +4,12 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The v0.1 code is complete and tested in CI, but no release artifacts have been published yet. Planned
-releases are described in [docs/roadmap.md](docs/roadmap.md).
+**v0.4.0 is the first published release.** Versions 0.1 to 0.3 were development milestones: they exist as
+commits, were tested in CI, and were never tagged or packaged. Everything in them is contained in 0.4.0.
+Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
+[docs/releases.md](docs/releases.md).
 
-## [0.4.0] - unreleased
+## [0.4.0] - 2026-10-24 — first published release
 
 ### Added
 
@@ -34,7 +36,7 @@ releases are described in [docs/roadmap.md](docs/roadmap.md).
 - No new dependencies and no `unsafe`; the dependency count stays at four. Measured static binary size:
   976 KiB (+72 KiB over v0.3).
 
-## [0.3.0] - unreleased
+## [0.3.0] - development milestone, shipped in 0.4.0
 
 ### Added
 
@@ -60,7 +62,7 @@ releases are described in [docs/roadmap.md](docs/roadmap.md).
   possible without a second read.
 - Measured static binary size: 904 KiB (+36 KiB over v0.2, still no new dependencies).
 
-## [0.2.0] - unreleased
+## [0.2.0] - development milestone, shipped in 0.4.0
 
 ### Added
 
@@ -84,7 +86,7 @@ releases are described in [docs/roadmap.md](docs/roadmap.md).
   exit `0`) instead of failures.
 - Measured static binary size: 868 KiB (+36 KiB over v0.1, no new dependencies).
 
-## [0.1.0] - unreleased
+## [0.1.0] - development milestone, shipped in 0.4.0
 
 ### Added
 

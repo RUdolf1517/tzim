@@ -1,0 +1,116 @@
+name: release
+
+# Builds the shipped artifacts. Triggered when a release is published, so the
+# release notes can be written first; the binaries are attached to it a few
+# minutes later. Nothing here is built by hand.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing release tag to build artifacts for
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - name: macos-aarch64
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tooling
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --all-features --target ${{ matrix.target }}
+
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/tzim"
+          if [ -f "${bin}.exe" ]; then bin="${bin}.exe"; fi
+          "$bin" --version
+          "$bin" formats
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.event.release.tag_name }}"
+          name="tzim-${tag}-${{ matrix.name }}"
+          bin="target/${{ matrix.target }}/release/tzim"
+          mkdir -p dist
+
+          if [ -f "${bin}.exe" ]; then
+            cp "${bin}.exe" dist/tzim.exe
+            (cd dist && 7z a "../${name}.zip" tzim.exe > /dev/null)
+            asset="${name}.zip"
+          else
+            cp "$bin" dist/tzim
+            chmod +x dist/tzim
+            (cd dist && tar czf "../${name}.tar.gz" tzim)
+            asset="${name}.tar.gz"
+          fi
+
+          echo "Built ${asset} ($(stat -c %s "$asset" 2>/dev/null || stat -f %z "$asset") bytes)"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          ls -l
+          sha256sum ./* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"

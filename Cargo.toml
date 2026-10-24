@@ -1,13 +1,13 @@
 [package]
 name = "tzim"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Lossless file optimizer: shrink the file, never the information"
 license = "MIT"
 repository = "https://github.com/RUdolf1517/tzim"
 readme = "README.md"
-keywords = ["lossless", "optimization", "png", "gzip", "cli"]
+keywords = ["lossless", "optimization", "png", "gzip", "jpeg"]
 categories = ["command-line-utilities", "compression"]
 
 [dependencies]

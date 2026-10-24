@@ -19,7 +19,7 @@ in which it is expected.
 
 - Static Linux binary: **976 KiB** (measured, all features, musl). See [docs/benchmarks.md](docs/benchmarks.md).
 - 56 unit and 54 integration tests, clippy clean with `-D warnings`.
-- No release artifacts have been published yet; build from source (below).
+- Prebuilt binaries: see [Releases](https://github.com/RUdolf1517/tzim/releases) and [docs/releases.md](docs/releases.md).
 
 See [docs/roadmap.md](docs/roadmap.md) for the version plan and [docs/formats.md](docs/formats.md) for the
 admission criteria a format must meet before it may be listed as supported.
@@ -93,12 +93,13 @@ cargo install --path .
 # smallest build: PNG and gzip only, no Zopfli encoder
 cargo build --release --no-default-features --features png,gzip
 
-# static Linux binary, matching the measured 832 KiB artifact
+# static Linux binary, matching the measured 976 KiB artifact
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-The tool builds as a single static binary with no C toolchain and no runtime dependencies. Prebuilt
-binaries for Linux, macOS and Windows will be published with the first tagged release.
+The tool builds as a single static binary with no C toolchain and no runtime dependencies. Each release
+ships `linux-x86_64` (musl, static), `macos-aarch64` and `windows-x86_64` archives plus `SHA256SUMS`, all
+built and smoke-tested by CI; what is *not* provided is listed in [docs/releases.md](docs/releases.md).
 
 ## Usage
 
