@@ -308,9 +308,9 @@ pub fn size(bytes: u64) -> String {
     if bytes < 1024 {
         return format!("{bytes} B");
     }
-    let mut unit = 0;
+    let mut unit = 1;
     let mut scale = 1024u64;
-    while bytes / scale >= 1024 && unit + 2 < UNITS.len() {
+    while bytes / scale >= 1024 && unit + 1 < UNITS.len() {
         scale *= 1024;
         unit += 1;
     }
@@ -402,7 +402,11 @@ mod tests {
     fn sizes_use_binary_units() {
         assert_eq!(size(0), "0 B");
         assert_eq!(size(512), "512 B");
+        assert_eq!(size(1024), "1.00 KiB");
         assert_eq!(size(1536), "1.50 KiB");
+        assert_eq!(size(1_048_576), "1.00 MiB");
+        assert_eq!(size(1_048_575), "1024.00 KiB");
+        assert_eq!(size(1024 * 1024 * 1024 + 512 * 1024), "1.00 GiB");
     }
 
     #[test]

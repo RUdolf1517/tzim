@@ -187,6 +187,7 @@ jobs:
           }
           speed "opt=3 (baseline)" opt3
           speed "opt=s" opts CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+          cat "$out" >> /tmp/tzim-profile.txt
           cat "$out"
 
       - name: Does a hello world pay for the same backtrace code
