@@ -9,6 +9,8 @@ use crate::formats::Allow;
 pub enum Command {
     Optimize(Args),
     Formats,
+    Info,
+    CheckDeps,
     Help,
     Version,
 }
@@ -77,16 +79,19 @@ pub const HELP: &str = "\
 tzim - shrink the file, never the information
 
 USAGE:
-    tzim optimize [OPTIONS] <PATH>...
-    tzim formats
+    tzim [OPTIONS] <PATH>...
+    tzim --list-formats
+    tzim --info
+    tzim --check-deps
     tzim --help
     tzim --version
 
 PATHS:
-    A regular file, a directory, or a mix of both. Directories are processed
-    at the top level unless --recursive is given. Symbolic links are skipped
-    unless --follow-symlinks is given. Because a directory is never necessary
-    to process a single file, a bare file path is a complete input object.
+    A regular file, a directory, or a mix of both. A bare file path is a
+    complete input object, so a single file never needs a wrapper directory,
+    and files, directories and duplicates may be mixed in one run.
+    Directories are processed at the top level unless --recursive is given.
+    Symbolic links are skipped unless --follow-symlinks is given.
 
 OPTIONS:
     -r, --recursive            descend into directories
@@ -114,6 +119,13 @@ OPTIONS:
                                when running as root, replace files owned by others
         --no-fsync             skip fsync (faster, less durable)
 
+INFORMATION:
+    -i, --info                 what this program is: version, promise, links
+        --list-formats         the handlers compiled into this build
+        --check-deps           external programs needed at run time (none)
+    -h, --help                 this text
+    -V, --version              the version, one line
+
 EXIT CODES:
     0  success (including files that were already optimal, skipped or unsupported)
     1  at least one file failed; the others were still processed
@@ -125,28 +137,25 @@ Tzim never removes metadata, never re-encodes lossily and never converts
 formats. If the result is not strictly smaller, the original is left alone.
 ";
 
-pub fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command> {
-    let first = match args.next() {
-        Some(a) => a,
-        None => return Err(Error::usage("no command given; try `tzim --help`")),
-    };
-
-    match first.to_str() {
-        Some("--help") | Some("-h") => return Ok(Command::Help),
-        Some("--version") | Some("-V") => return Ok(Command::Version),
-        Some("formats") => return Ok(Command::Formats),
-        Some("optimize") => {}
-        Some(other) if other.starts_with('-') => {
-            return Err(Error::usage(format!("unknown option `{other}`")));
-        }
-        Some(other) => {
-            return Err(Error::usage(format!(
-                "unknown command `{other}`; expected `optimize`, `formats`, `--help` or `--version`"
-            )));
-        }
-        None => return Err(Error::usage("command is not valid UTF-8")),
+pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
+    let mut argv: Vec<OsString> = args.collect();
+    if argv.is_empty() {
+        return Err(Error::usage("no paths given; try `tzim --help`"));
     }
 
+    // `tzim optimize file` was the shape before 0.5. Paths come first now, and
+    // the old verb is still accepted so that scripts and documentation written
+    // against 0.1-0.4 keep working. `formats` likewise survives as an alias.
+    if argv[0].to_str() == Some("optimize") {
+        argv.remove(0);
+    } else if argv[0].to_str() == Some("formats") {
+        return Ok(Command::Formats);
+    }
+    if argv.is_empty() {
+        return Err(Error::usage("no paths given; try `tzim --help`"));
+    }
+
+    let mut args = argv.into_iter();
     let mut out = Args::default();
     let mut only_paths = false;
 
@@ -239,6 +248,9 @@ pub fn parse(mut args: impl Iterator<Item = OsString>) -> Result<Command> {
             }
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
+            "-i" | "--info" => return Ok(Command::Info),
+            "--list-formats" => return Ok(Command::Formats),
+            "--check-deps" => return Ok(Command::CheckDeps),
             _ => return Err(Error::usage(format!("unknown option `{name}`"))),
         }
     }
@@ -291,7 +303,7 @@ mod tests {
 
     #[test]
     fn minimal_command() {
-        let args = parse_ok(&["optimize", "a.png"]);
+        let args = parse_ok(&["a.png"]);
         assert_eq!(args.paths.len(), 1);
         assert!(!args.recursive);
         assert_eq!(args.max_size, DEFAULT_MAX_SIZE);
@@ -300,7 +312,6 @@ mod tests {
     #[test]
     fn flags_and_values() {
         let args = parse_ok(&[
-            "optimize",
             "-r",
             "--dry-run",
             "--jobs",
@@ -318,24 +329,24 @@ mod tests {
 
     #[test]
     fn inline_value_and_double_dash() {
-        let args = parse_ok(&["optimize", "--jobs=3", "--", "--weird-name.png"]);
+        let args = parse_ok(&["--jobs=3", "--", "--weird-name.png"]);
         assert_eq!(args.jobs, 3);
         assert_eq!(args.paths, vec![PathBuf::from("--weird-name.png")]);
     }
 
     #[test]
     fn formats_flag_narrows_and_enables_jpeg() {
-        let args = parse_ok(&["optimize", "--formats", "jpeg,png", "x.jpg"]);
+        let args = parse_ok(&["--formats", "jpeg,png", "x.jpg"]);
         assert!(args.allow.jpeg && args.allow.png);
         assert!(!args.allow.zip && !args.allow.ico && !args.allow.gzip);
         // JPEG is off unless it is named.
-        let plain = parse_ok(&["optimize", "x.jpg"]);
+        let plain = parse_ok(&["x.jpg"]);
         assert!(!plain.allow.jpeg && plain.allow.png);
     }
 
     #[test]
     fn rejects_unknown_format_name() {
-        let args: Vec<OsString> = ["optimize", "--formats", "jpeg,bmp", "x"]
+        let args: Vec<OsString> = ["--formats", "jpeg,bmp", "x"]
             .iter()
             .map(OsString::from)
             .collect();
@@ -344,19 +355,19 @@ mod tests {
 
     #[test]
     fn rejects_unknown_option() {
-        let args: Vec<OsString> = ["optimize", "--nope", "x"].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = ["--nope", "x"].iter().map(OsString::from).collect();
         assert!(parse(args.into_iter()).is_err());
     }
 
     #[test]
     fn rejects_missing_paths() {
-        let args: Vec<OsString> = ["optimize"].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = Vec::new();
         assert!(parse(args.into_iter()).is_err());
     }
 
     #[test]
     fn rejects_zero_jobs() {
-        let args: Vec<OsString> = ["optimize", "--jobs", "0", "x"].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = ["--jobs", "0", "x"].iter().map(OsString::from).collect();
         assert!(parse(args.into_iter()).is_err());
     }
 
@@ -366,5 +377,43 @@ mod tests {
         assert!(matches!(parse(args.into_iter()), Ok(Command::Help)));
         let args: Vec<OsString> = ["--version"].iter().map(OsString::from).collect();
         assert!(matches!(parse(args.into_iter()), Ok(Command::Version)));
+    }
+
+    fn command(items: &[&str]) -> Command {
+        let args: Vec<OsString> = items.iter().map(OsString::from).collect();
+        parse(args.into_iter()).expect("parse should succeed")
+    }
+
+    #[test]
+    fn a_bare_path_is_the_whole_command() {
+        let args = parse_ok(&["photo.png"]);
+        assert_eq!(args.paths, vec![PathBuf::from("photo.png")]);
+
+        let args = parse_ok(&["a.png", "b.gz", "-r"]);
+        assert!(args.recursive);
+        assert_eq!(args.paths.len(), 2);
+    }
+
+    #[test]
+    fn the_old_verb_is_still_accepted() {
+        // 0.1-0.4 documentation and scripts say `tzim optimize <path>`.
+        let args = parse_ok(&["optimize", "photo.png"]);
+        assert_eq!(args.paths, vec![PathBuf::from("photo.png")]);
+        assert!(parse([OsString::from("optimize")].into_iter()).is_err());
+    }
+
+    #[test]
+    fn information_commands_do_not_need_paths() {
+        assert!(matches!(command(&["-i"]), Command::Info));
+        assert!(matches!(command(&["--info"]), Command::Info));
+        assert!(matches!(command(&["--check-deps"]), Command::CheckDeps));
+        assert!(matches!(command(&["--list-formats"]), Command::Formats));
+        assert!(matches!(command(&["formats"]), Command::Formats));
+    }
+
+    #[test]
+    fn a_path_that_starts_with_a_dash_needs_a_separator() {
+        let args = parse_ok(&["--", "-weird-name.png"]);
+        assert_eq!(args.paths, vec![PathBuf::from("-weird-name.png")]);
     }
 }

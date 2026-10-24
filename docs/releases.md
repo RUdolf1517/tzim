@@ -22,6 +22,7 @@ network access.
 | --- | --- | --- |
 | `tzim-x86_64-unknown-linux-musl.tar.gz` | `x86_64-unknown-linux-musl` | statically linked, no libc dependency, runs on any Linux with a 3.2+ kernel |
 | `tzim-aarch64-apple-darwin.tar.gz` | `aarch64-apple-darwin` | Apple silicon |
+| `tzim-x86_64-apple-darwin.tar.gz` | `x86_64-apple-darwin` | Intel Macs |
 | `tzim-x86_64-pc-windows-msvc.zip` | `x86_64-pc-windows-msvc` | needs the Visual C++ 2015–2022 redistributable, which Windows normally has |
 | `tzim_amd64.deb` | Debian, Ubuntu | the same static musl binary; the package declares no dependency at all |
 | `tzim.x86_64.rpm` | Fedora, RHEL | the same static musl binary |
@@ -65,22 +66,20 @@ published build, so it never guesses a wrong binary. `TZIM_VERSION`, `TZIM_INSTA
 sha256sum -c SHA256SUMS          # or: shasum -a 256 -c, on macOS
 tar xzf tzim-x86_64-unknown-linux-musl.tar.gz
 ./tzim --version                 # prints tzim <version>
-./tzim formats                   # lists the handlers compiled into this binary
+./tzim --list-formats            # lists the handlers compiled into this binary
 ```
 
-`tzim formats` is the honest answer to "what does this build actually support": it is generated from the
+`tzim --list-formats` is the honest answer to "what does this build actually support": it is generated from the
 same table the documentation is checked against, so a format that is not compiled in cannot appear there.
 
-Optional sanity check on your own data: run `tzim optimize --dry-run -r <dir>` first. It performs every
+Optional sanity check on your own data: run `tzim --dry-run -r <dir>` first. It performs every
 step except the final rename, so it reports exactly what would change and proves the parser accepts your
 files before anything is touched.
 
 ## 4. What is deliberately not provided
 
-- **No Linux aarch64 and no macOS x86_64 binaries.** Each one is a cross-compilation setup that has to be
-  tested rather than guessed; until there is a reason and a way to verify the result, the matrix stays
-  small. Both are one command from source (`cargo build --release`), and `install.sh` falls back to exactly
-  that.
+- **No Linux aarch64 binary.** It needs its own runner and a musl cross-toolchain; neither is wired up yet.
+  `cargo build --release` covers it, and `install.sh` falls back to exactly that.
 - **No MSI, no `.exe` installer.** Windows gets a zip and a winget manifest whose installer type is `zip`
   with a portable nested binary: nothing is written outside the user's package store.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
