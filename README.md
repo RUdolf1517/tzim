@@ -42,13 +42,19 @@ curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh | s
 On a platform without a published build it falls back to `cargo install --git` instead of guessing a
 binary.
 
-**Homebrew** (no Rust). Third-party tap — Homebrew 6+ [tap trust](https://docs.brew.sh/Tap-Trust). A fully
-qualified name trusts only this formula:
+**Homebrew** (no Rust). Third-party tap — Homebrew 6+ [tap trust](https://docs.brew.sh/Tap-Trust).
 
 ```bash
 brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim
 brew install RUdolf1517/tzim/tzim
 ```
+
+`RUdolf1517/tzim/tzim` is `user/tap/formula`. A trailing slash (`brew install RUdolf1517/tzim/`) names
+no formula and fails with *No available formula or cask with the name "rudolf1517/tzim/"*.
+
+Only two platforms have a published build: macOS on Apple silicon and Linux x86_64. On an Intel Mac or
+ARM Linux the formula has no URL, and `brew install` cannot help — use the script above or
+`cargo install --git` there.
 
 After that, short name:
 
