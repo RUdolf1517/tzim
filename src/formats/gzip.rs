@@ -210,7 +210,7 @@ pub fn verify(original: &Path, candidate: &Path) -> Result<()> {
     if a[..info_a.header_len] != b[..info_b.header_len] {
         return Err(Error::verify("gzip header was not preserved"));
     }
-    if &a[a.len() - TRAILER..] != &b[b.len() - TRAILER..] {
+    if a[a.len() - TRAILER..] != b[b.len() - TRAILER..] {
         return Err(Error::verify("gzip trailer was not preserved"));
     }
     if info_a.payload_len != info_b.payload_len || info_a.crc != info_b.crc {

@@ -157,8 +157,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     }
 
     if replace::changed_since(path, &snapshot) {
-        return Err(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(Error::Io(std::io::Error::other(
             "the file changed while it was being processed",
         )));
     }

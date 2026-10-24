@@ -67,6 +67,8 @@ pub fn verify(format: Format, original: &Path, candidate: &Path, opts: &Options)
 
 /// Static description of what the build supports, for `tzim formats`.
 pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
+    // The pushes below are `#[cfg]`-gated, so the vector cannot be built as a literal.
+    #[allow(clippy::vec_init_then_push)]
     let mut rows = Vec::new();
     #[cfg(feature = "png")]
     rows.push((

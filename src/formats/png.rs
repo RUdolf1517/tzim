@@ -51,7 +51,7 @@ impl Header {
     /// Bytes in one scanline, excluding the filter byte.
     fn row_bytes(self) -> usize {
         let bits = self.width as usize * self.channels() * self.depth as usize;
-        (bits + 7) / 8
+        bits.div_ceil(8)
     }
 
     fn pixels(self) -> u64 {

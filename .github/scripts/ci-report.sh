@@ -9,7 +9,8 @@ set -uo pipefail
 log_file="${1:?usage: ci-report.sh <log-file> <label>}"
 label="${2:?usage: ci-report.sh <log-file> <label>}"
 
-marker="<!-- tzim-ci:${label} -->"
+sha="${GITHUB_SHA:-local}"
+marker="<!-- tzim-ci:${label}:${sha:0:7} -->"
 
 if [ ! -f "$log_file" ]; then
     echo "no log file at $log_file; nothing to report"

@@ -139,6 +139,14 @@ fn expand_dir(
     problems: &mut Vec<(PathBuf, Error)>,
     depth: usize,
 ) {
+    if depth > 64 {
+        problems.push((
+            path.to_path_buf(),
+            Error::limit("directory nesting deeper than 64 levels; refused"),
+        ));
+        return;
+    }
+
     let entries = match fs::read_dir(path) {
         Ok(rd) => rd,
         Err(e) => {

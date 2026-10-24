@@ -55,7 +55,7 @@ fn print_formats() {
         println!("Rebuild with `--features png,gzip`.");
         return;
     }
-    println!("{:<6} {:<46} {}", "FORMAT", "TRANSFORMATION", "PRESERVED");
+    println!("{:<6} {:<46} PRESERVED", "FORMAT", "TRANSFORMATION");
     for (name, transformation, preserved) in rows {
         println!("{name:<6} {transformation:<46} {preserved}");
     }

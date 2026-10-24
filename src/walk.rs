@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::Args;
 use crate::detect;
@@ -68,12 +68,12 @@ pub fn scan(args: &Args) -> Scan {
     }
 }
 
-fn wanted(path: &PathBuf, args: &Args) -> bool {
+fn wanted(path: &Path, args: &Args) -> bool {
     let ext = detect::extension(path).unwrap_or_default();
-    if !args.exclude.is_empty() && args.exclude.iter().any(|e| *e == ext) {
+    if args.exclude.contains(&ext) {
         return false;
     }
-    if !args.include.is_empty() && !args.include.iter().any(|e| *e == ext) {
+    if !args.include.is_empty() && !args.include.contains(&ext) {
         return false;
     }
     true
@@ -121,22 +121,28 @@ mod tests {
 
     #[test]
     fn include_and_exclude_filters() {
-        let mut args = Args::default();
-        args.include = vec!["png".into()];
-        assert!(wanted(&PathBuf::from("a.png"), &args));
-        assert!(!wanted(&PathBuf::from("a.gz"), &args));
+        let included = Args {
+            include: vec!["png".into()],
+            ..Default::default()
+        };
+        assert!(wanted(Path::new("a.png"), &included));
+        assert!(!wanted(Path::new("a.gz"), &included));
 
-        args.include.clear();
-        args.exclude = vec!["gz".into()];
-        assert!(wanted(&PathBuf::from("a.png"), &args));
-        assert!(!wanted(&PathBuf::from("a.gz"), &args));
+        let excluded = Args {
+            exclude: vec!["gz".into()],
+            ..Default::default()
+        };
+        assert!(wanted(Path::new("a.png"), &excluded));
+        assert!(!wanted(Path::new("a.gz"), &excluded));
     }
 
     #[test]
     fn exclude_wins_over_include() {
-        let mut args = Args::default();
-        args.include = vec!["png".into()];
-        args.exclude = vec!["png".into()];
-        assert!(!wanted(&PathBuf::from("a.png"), &args));
+        let args = Args {
+            include: vec!["png".into()],
+            exclude: vec!["png".into()],
+            ..Default::default()
+        };
+        assert!(!wanted(Path::new("a.png"), &args));
     }
 }
