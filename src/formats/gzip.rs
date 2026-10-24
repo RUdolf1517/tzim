@@ -172,6 +172,12 @@ fn recompress(body: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     Ok(encoder.finish()?)
 }
 
+/// The header `--strip-metadata` writes: no optional fields, MTIME zeroed, and
+/// `XFL`/`OS` kept because they describe the encoder rather than the file.
+fn stripped_header(data: &[u8]) -> [u8; 10] {
+    [0x1f, 0x8b, data[2], 0, 0, 0, 0, 0, data[8], data[9]]
+}
+
 pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
     let info = inspect(data)?;
 
@@ -185,23 +191,42 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
     }
     let _ = (info.payload_len, info.crc);
 
-    let total = info.header_len as u64 + best.len() as u64 + TRAILER as u64;
-    if total >= data.len() as u64 {
+    let original_header = &data[..info.header_len];
+    let header: Vec<u8> = if opts.strip_metadata {
+        stripped_header(data).to_vec()
+    } else {
+        original_header.to_vec()
+    };
+
+    let total = header.len() as u64 + best.len() as u64 + TRAILER as u64;
+    // Stripping can leave the length unchanged — zeroing MTIME costs nothing —
+    // so the flag, not the size, decides whether such a rewrite is worth writing.
+    let worth_writing =
+        total < data.len() as u64 || (opts.strip_metadata && total == data.len() as u64 && header.as_slice() != original_header);
+    if !worth_writing {
         return Ok(Cand::NoGain);
     }
 
-    dst.write_all(&data[..info.header_len])?;
+    dst.write_all(&header)?;
     dst.write_all(&best)?;
     // The trailer is copied verbatim: it was proven to match the payload above.
     dst.write_all(&data[data.len() - TRAILER..])?;
     Ok(Cand::Written(total))
 }
 
-pub fn verify(a: &[u8], b: &[u8]) -> Result<()> {
+pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
     let info_a = inspect(a).map_err(|e| Error::verify(format!("original: {e}")))?;
     let info_b = inspect(b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
 
-    if a[..info_a.header_len] != b[..info_b.header_len] {
+    if opts.strip_metadata {
+        // Exactly one header is acceptable: the stripped one. Anything else —
+        // a surviving FNAME, a stale MTIME — is a failure, not a variation.
+        if b[..info_b.header_len] != stripped_header(a)[..] {
+            return Err(Error::verify(
+                "gzip header is not the stripped header requested by --strip-metadata",
+            ));
+        }
+    } else if a[..info_a.header_len] != b[..info_b.header_len] {
         return Err(Error::verify("gzip header was not preserved"));
     }
     if a[a.len() - TRAILER..] != b[b.len() - TRAILER..] {

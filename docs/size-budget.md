@@ -62,18 +62,37 @@ Notes:
 
 ## 3. Feature matrix
 
-Every format family is an opt-in feature; the default is `full`.
+One feature per handler family, exactly as `Cargo.toml` declares them. `default` is what the published
+binaries are built with; everything else is a way to build a smaller tool for a narrower job.
 
-```
-default = ["png", "gzip", "zip", "ico", "apng"]
-png     = []            # PNG + APNG engine, needs flate2, crc32fast, png
-gzip    = []            # gzip container, needs flate2, crc32fast
-zip     = []            # ZIP rewriter, needs flate2, crc32fast
+```toml
+default = ["png", "gzip", "zip", "ico", "jpeg", "zopfli"]
+png     = ["dep:png", "dep:flate2", "dep:crc32fast"]
+gzip    = ["dep:flate2", "dep:crc32fast"]
+zip     = ["dep:flate2", "dep:crc32fast"]
 ico     = ["png"]
-apng    = ["png"]
-jpeg    = []            # opt-in at runtime too: requires --formats jpeg
+jpeg    = []
 zopfli  = ["dep:zopfli"]
+fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```
+
+`ico` is a thin layer over `png` (an icon is a directory plus embedded PNGs), and `jpeg` gates this
+repository's own codec, so it adds code without adding a crate. Turning a feature off removes the handler
+from `--list-formats`, makes `--formats <name>` a usage error instead of a silent no-op, and reports files
+of that format as `skipped: this build has no <format> handler`.
+
+Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one build per row
+(`ci` job `binary size`, step `Feature matrix`):
+
+FEATURE_MATRIX_TABLE
+
+The deltas are what a user saves by narrowing the build, not estimates: `png,gzip` is the smallest useful
+optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, and the last row is the
+published binary.
+
+`jpeg` is the only feature that is *also* off at runtime by default: its handler requires an explicit
+`--formats jpeg`, because the expected gain is small and the verification is the weakest in the project
+([guarantees §2.6](guarantees.md#26-verification-independence)).
 
 Build examples:
 
@@ -81,17 +100,12 @@ Build examples:
 # smallest useful build
 cargo build --release --no-default-features --features png,gzip
 
-# everything except the optional encoder
-cargo build --release --no-default-features --features png,gzip,zip
+# everything except JPEG and the optional encoder
+cargo build --release --no-default-features --features png,gzip,zip,ico
 
-# maximum compression
-cargo build --release --features zopfli
+# the published binary
+cargo build --release
 ```
-
-`jpeg` is the only feature that is also disabled at runtime by default: its handler requires an explicit
-`--formats jpeg`, because the expected gain is small and the risk is the highest in the project.
-
----
 
 ## 4. Measurement procedure
 

@@ -31,6 +31,7 @@ pub struct Args {
     pub max_pixels: u64,
     pub max_uncompressed: u64,
     pub max_ratio: u64,
+    pub strip_metadata: bool,
     pub nested: bool,
     pub max_depth: u32,
     pub allow: Allow,
@@ -63,6 +64,7 @@ impl Default for Args {
             max_pixels: DEFAULT_MAX_PIXELS,
             max_uncompressed: DEFAULT_MAX_UNCOMPRESSED,
             max_ratio: DEFAULT_MAX_RATIO,
+            strip_metadata: false,
             nested: false,
             max_depth: 3,
             allow: Allow::default(),
@@ -197,6 +199,7 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
         match name.as_str() {
             "-r" | "--recursive" => out.recursive = true,
             "-n" | "--dry-run" => out.dry_run = true,
+            "--strip-metadata" => out.strip_metadata = true,
             "-q" | "--quiet" => out.quiet = true,
             "--json" => out.json = true,
             "--fail-fast" => out.fail_fast = true,

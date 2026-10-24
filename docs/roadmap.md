@@ -149,7 +149,23 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 No handler changed, no byte of output changed, and every guarantee in the tables is the same object it
 was in 0.4.3.
 
-### v0.6+ — research queue
+### v0.6 — narrowing the build, and metadata on request — **implemented**
+
+**What shipped**
+
+- One feature per handler (`jpeg` and `ico` were the missing two), and a CI matrix that measures what each
+  one costs instead of asserting it. A `png,gzip` build is the smallest useful optimizer; the published
+  binary is unchanged in content.
+- `--strip-metadata`, with a per-format list, its own guarantee class (G4) and a fuzz target. The flag
+  exists because users otherwise reach for a tool that strips silently; here it is explicit, printed on
+  every line it rewrites, and it never touches colour-defining chunks.
+- The verification model was documented honestly: JPEG and ZIP verify with code from this repository, and
+  the document now says so, along with what that cannot catch.
+
+**Why the version moves**: a new flag and a changed feature set are observable, even though no default
+build behaves differently.
+
+### v0.7+ — research queue
 
 Each of these requires a contract written *before* implementation:
 

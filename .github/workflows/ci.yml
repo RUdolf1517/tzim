@@ -95,7 +95,42 @@ jobs:
           cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/tzim-size.log
           ls -l target/x86_64-unknown-linux-musl/release/tzim
           file target/x86_64-unknown-linux-musl/release/tzim
-          stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim
+          bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+          echo "$bytes" > /tmp/tzim-size-bytes.txt
+          # Keep the shipping binary: the matrix below overwrites the path.
+          cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-full
+          budget=2252800
+          echo "bytes: $bytes, budget: $budget"
+          test "$bytes" -le "$budget" || {
+            echo "the static binary is $((bytes / 1024)) KiB, over the $((budget / 1024)) KiB budget" >&2
+            exit 1
+          }
+
+      # What each handler costs. Measured, not inferred: the numbers in
+      # docs/size-budget.md come from this table.
+      - name: Feature matrix
+        id: matrix
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          out=/tmp/tzim-features.txt
+          printf '%-38s %10s %8s\n' "features" "bytes" "KiB" > "$out"
+          printf '%-38s %10s %8s\n' "--------------------------------------" "----------" "--------" >> "$out"
+          for features in \
+            "png" \
+            "png,gzip" \
+            "png,gzip,zip" \
+            "png,gzip,zip,ico" \
+            "png,gzip,zip,ico,jpeg" \
+            "png,gzip,zip,ico,jpeg,zopfli"
+          do
+            cargo build --release --target x86_64-unknown-linux-musl \
+              --no-default-features --features "$features" 2>&1 | tail -2
+            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+            printf '%-38s %10s %8s\n' "$features" "$bytes" "$((bytes / 1024))" >> "$out"
+          done
+          cat "$out"
 
       - name: Report size
         if: steps.size.outcome == 'success'
@@ -104,13 +139,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           {
-            bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
+            bytes=$(cat /tmp/tzim-size-bytes.txt)
             deps=$(cargo tree --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
             echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
             echo "normal dependency lines: ${deps}"
             echo
+            echo "feature builds:"
+            cat /tmp/tzim-features.txt 2>/dev/null || echo "(the matrix step did not run)"
+            echo
             echo "sections:"
-            llvm-size -A target/x86_64-unknown-linux-musl/release/tzim 2>/dev/null | head -12 || true
+            llvm-size -A /tmp/tzim-full 2>/dev/null | head -12 || true
           } | tee /tmp/tzim-size-report.txt
           bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size report
 

@@ -7,7 +7,7 @@
 Shrink the file, never the information.  
 One CLI for provably lossless optimization — PNG · APNG · gzip · ZIP · ICO/CUR · JPEG.
 
-[Install](#install) · [Usage](#usage) · [Information](#information) · [Guarantees](#guarantees) · [Formats](#formats) · [Docs](#documentation) · [Name](#the-name)
+[Install](#install) · [Usage](#usage) · [Information](#information) · [Guarantees](#guarantees) · [Metadata](#metadata) · [Formats](#formats) · [Docs](#documentation) · [Name](#the-name)
 
 [![license](https://img.shields.io/badge/license-MIT-0b3d91?style=flat-square)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-111111?style=flat-square)](#install)
@@ -37,8 +37,9 @@ question is whether it can be made smaller without changing what it says. If it 
 | | | |
 | --- | --- | --- |
 | [Install](#install) — [binary](#binary-no-rust) · [Homebrew](#homebrew) · [apt](#debian--ubuntu) · [dnf](#fedora--rhel) · [winget](#windows) · [cargo](#cargo) | [Usage](#usage) — [exit codes](#exit-codes) · [flags](#flags) | [Information](#information) — `-i`, `--list-formats`, `--check-deps` |
-| [Guarantees](#guarantees) | [Formats](#formats) | [What it will never do](#what-tzim-will-never-do) |
-| [Documentation](#documentation) | [The name](#the-name) | [License](#license) |
+| [Guarantees](#guarantees) | [Metadata](#metadata) | [Formats](#formats) |
+| [What it will never do](#what-tzim-will-never-do) | [Documentation](#documentation) | [License](#license) |
+| [The name](#the-name) | | |
 
 ## Install
 
@@ -156,6 +157,7 @@ tzim image.png --zopfli                  # best ratio, 10-100x slower
 tzim ./files -r --json                   # one JSON object per file
 tzim backup.zip --nested                 # also optimize supported files inside
 tzim photo.jpg --formats jpeg            # JPEG is opt-in
+tzim ./site -r --strip-metadata          # also drop text, comments, timestamps
 tzim -- -weird-name.png                  # a path that starts with a dash
 ```
 
@@ -194,6 +196,8 @@ tzim [OPTIONS] <PATH>...
       --min-size / --max-size           size window (default: 0 .. 2 GiB)
       --max-pixels <N>                  skip larger images
       --max-uncompressed / --max-ratio  decompression-bomb guards for ZIP
+      --strip-metadata       remove text, comments, timestamps and Exif that do
+                             not affect the content (not lossless, see below)
       --nested               optimize supported files inside archives
       --max-depth <N>        nesting limit (default: 3)
       --formats <LIST>       png, gzip, zip, ico, jpeg
@@ -227,10 +231,11 @@ documentation is checked against:
 
 ```
 $ tzim -i
-tzim 0.5.0 — shrink the file, never the information
+tzim 0.6.0 — shrink the file, never the information
 ...
 Formats in this build: PNG, gzip, ICO/CUR, JPEG, ZIP
 ...
+  G4  metadata removed on request, and only with --strip-metadata
 ```
 
 ## Guarantees
@@ -243,6 +248,7 @@ is checked mechanically before a file is replaced.
 | **G1 — byte-identical** | The output is identical to the input. | `already_optimal`, `unsupported`, `skipped`, every failure, every `--dry-run`. |
 | **G2 — exactly reversible** | The original can be reconstructed bit-for-bit. | Not used. It needs a container and a second decoding step, which conflicts with "the output is a normal file of the same type". |
 | **G3 — format-equivalent** | Bytes differ; every piece of content and every significant property is preserved by an explicit per-format contract, and verified. | All real optimizations. |
+| **G4 — metadata removed on request** | Content, names, order and every significant property survive; a fixed list of embedded metadata is removed because it was asked for. | `--strip-metadata` only. |
 
 > **Tzim never performs an irreversible or lossy transformation.**
 
@@ -253,6 +259,46 @@ is checked mechanically before a file is replaced.
 - No fallback to a lossy path when lossless yields nothing.
 - If the result is not strictly smaller, the file is untouched and reported as `already_optimal`.
 - If optimization, verification or the write fails, the original stays byte-for-byte unchanged.
+
+## Metadata
+
+Two different things are called metadata, and Tzim treats them differently.
+
+**Inside the file** — Exif, ICC profiles, XMP, text chunks, comments, ZIP extra fields — is content as far as
+this tool is concerned. It survives byte for byte, by default, always:
+
+```
+$ tzim shot.jpg --formats jpeg
+shot.jpg  JPEG   3.2 MiB -> 3.1 MiB  +2.1%        # Exif and ICC still there
+```
+
+If you want it gone, say so. `--strip-metadata` removes a fixed list and nothing else:
+
+| Format | Removed | Kept |
+| --- | --- | --- |
+| PNG, APNG | `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf` | ICC, `sRGB`, `gAMA`, `cHRM`, `pHYs`, `tRNS`, APNG control chunks, unknown chunks |
+| gzip | `FNAME`, `FCOMMENT`, `FEXTRA`, `FHCRC`, `MTIME` | `XFL`, `OS`, payload, CRC-32 |
+| ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
+| JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, every coefficient |
+| ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+
+`--strip-metadata` is the one request that makes the output differ from the input in more than its encoding,
+so it is never on by default, never implied by another flag, and every line it rewrites says
+`(metadata stripped)`. Colours never shift: the chunks and markers that tell a viewer how to interpret the
+pixels are always kept.
+
+**On the filesystem** — the file is replaced, not edited, so its inode is new. What that means:
+
+| Property | Kept |
+| --- | --- |
+| permission bits, mtime, atime | yes, applied to the new file before the rename |
+| Windows read-only attribute | yes; a read-only file is skipped rather than replaced |
+| owner and group | only if they would not change — a file owned by another user is skipped unless you ask otherwise |
+| ACLs, extended attributes, alternate data streams | **no** |
+| birth time, ctime, inode number, hard links, sparse regions | **no** |
+
+If access control matters on a file, back it up before running any optimizer, including this one. The full
+list is in [docs/safety.md](docs/safety.md#3-metadata).
 
 ## Formats
 
@@ -274,7 +320,9 @@ rather than approximated. Why the other formats are refused is in
 
 ## What tzim will never do
 
-- Remove EXIF, ICC profiles, comments, thumbnails, vendor chunks, ZIP extra fields or archive comments.
+- Remove EXIF, ICC profiles, comments, thumbnails, vendor chunks, ZIP extra fields or archive comments —
+  unless you pass `--strip-metadata`, which removes a fixed, documented list and leaves ICC profiles,
+  colour hints and anything it cannot interpret in place.
 - Re-encode images, audio or video in a lossy way.
 - Convert a file to another format.
 - Minify HTML, CSS, JavaScript, SVG or XML.

@@ -5,11 +5,44 @@ use crate::error::{Error, Result};
 
 #[cfg(feature = "gzip")]
 pub mod gzip;
+#[cfg(feature = "jpeg")]
 pub mod jpeg;
 #[cfg(feature = "png")]
 pub mod png;
 #[cfg(feature = "zip")]
 pub mod zip;
+
+/// Whether this build contains a handler for `format`.
+pub const fn compiled(format: Format) -> bool {
+    match format {
+        Format::Png => cfg!(feature = "png"),
+        Format::Gzip => cfg!(feature = "gzip"),
+        Format::Zip => cfg!(feature = "zip"),
+        Format::Ico => cfg!(feature = "ico"),
+        Format::Jpeg => cfg!(feature = "jpeg"),
+    }
+}
+
+/// The formats this build can handle, in the order `--list-formats` prints them.
+pub fn compiled_names() -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if cfg!(feature = "png") {
+        out.push("png");
+    }
+    if cfg!(feature = "gzip") {
+        out.push("gzip");
+    }
+    if cfg!(feature = "zip") {
+        out.push("zip");
+    }
+    if cfg!(feature = "ico") {
+        out.push("ico");
+    }
+    if cfg!(feature = "jpeg") {
+        out.push("jpeg");
+    }
+    out
+}
 
 /// Which formats a run is allowed to process.
 ///
@@ -26,12 +59,14 @@ pub struct Allow {
 }
 
 impl Default for Allow {
+    /// Everything this build can do, except JPEG: it is opt-in because its gain
+    /// is small and its code path is the most intricate in the project.
     fn default() -> Self {
         Allow {
-            png: true,
-            gzip: true,
-            zip: true,
-            ico: true,
+            png: cfg!(feature = "png"),
+            gzip: cfg!(feature = "gzip"),
+            zip: cfg!(feature = "zip"),
+            ico: cfg!(feature = "ico"),
             jpeg: false,
         }
     }
@@ -50,18 +85,27 @@ impl Allow {
             jpeg: false,
         };
         for name in names {
-            match name.as_str() {
-                "png" | "apng" => allow.png = true,
-                "gzip" | "gz" => allow.gzip = true,
-                "zip" => allow.zip = true,
-                "ico" | "cur" => allow.ico = true,
-                "jpeg" | "jpg" => allow.jpeg = true,
+            let (format, slot) = match name.as_str() {
+                "png" | "apng" => (Format::Png, &mut allow.png),
+                "gzip" | "gz" => (Format::Gzip, &mut allow.gzip),
+                "zip" => (Format::Zip, &mut allow.zip),
+                "ico" | "cur" => (Format::Ico, &mut allow.ico),
+                "jpeg" | "jpg" => (Format::Jpeg, &mut allow.jpeg),
                 other => {
                     return Err(Error::usage(format!(
                         "unknown format `{other}`; expected png, gzip, zip, ico or jpeg"
                     )))
                 }
+            };
+            if !compiled(format) {
+                let built = compiled_names();
+                return Err(Error::usage(format!(
+                    "this build has no {} handler (compiled: {})",
+                    format.id(),
+                    if built.is_empty() { "none".to_string() } else { built.join(", ") }
+                )));
             }
+            *slot = true;
         }
         Ok(allow)
     }
@@ -108,6 +152,12 @@ pub struct Options {
     pub max_uncompressed: u64,
     /// Maximum uncompressed-to-compressed ratio for a ZIP archive.
     pub max_ratio: u64,
+    /// Remove metadata that does not affect the content, on request.
+    ///
+    /// This is the only option that makes the output differ from the input in
+    /// something other than its encoding. It is off unless the user asks, and
+    /// what it removes is a fixed list per format, kept next to the handler.
+    pub strip_metadata: bool,
     /// Optimize supported files stored inside archives.
     pub nested: bool,
     /// How deep nested processing may go.
@@ -144,8 +194,9 @@ pub fn optimize(
         Format::Gzip => gzip::optimize(input, dst, opts)?,
         #[cfg(feature = "zip")]
         Format::Zip => zip::optimize(input, dst, opts)?,
-        #[cfg(feature = "png")]
+        #[cfg(feature = "ico")]
         Format::Ico => png::optimize_icon(input, dst, opts)?,
+        #[cfg(feature = "jpeg")]
         Format::Jpeg => jpeg::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
@@ -159,19 +210,24 @@ pub fn optimize(
     Ok(cand)
 }
 
-/// Checks a candidate against its contract, using decoders that are independent
-/// of the code that wrote it.
-pub fn verify(format: Format, original: &[u8], candidate: &[u8]) -> Result<()> {
+/// Checks a candidate against its contract.
+///
+/// How independent the checker is differs per format, and `docs/guarantees.md`
+/// says which is which: PNG and gzip are decoded by crates written by someone
+/// else, while ZIP and JPEG are compared by parsers from this repository. In no
+/// case does verification reuse the encoder that produced the candidate.
+pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
     match format {
         #[cfg(feature = "png")]
-        Format::Png => png::verify(original, candidate),
+        Format::Png => png::verify(original, candidate, opts),
         #[cfg(feature = "gzip")]
-        Format::Gzip => gzip::verify(original, candidate),
+        Format::Gzip => gzip::verify(original, candidate, opts),
         #[cfg(feature = "zip")]
-        Format::Zip => zip::verify(original, candidate),
-        #[cfg(feature = "png")]
-        Format::Ico => png::verify_icon(original, candidate),
-        Format::Jpeg => jpeg::verify(original, candidate),
+        Format::Zip => zip::verify(original, candidate, opts),
+        #[cfg(feature = "ico")]
+        Format::Ico => png::verify_icon(original, candidate, opts),
+        #[cfg(feature = "jpeg")]
+        Format::Jpeg => jpeg::verify(original, candidate, opts),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -197,12 +253,13 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "recompress the DEFLATE body",
         "header preserved byte for byte (.gz, .tgz, .svgz)",
     ));
-    #[cfg(feature = "png")]
+    #[cfg(feature = "ico")]
     rows.push((
         "ICO/CUR",
         "optimize embedded PNG images",
         "directory, entry fields, order and non-PNG images",
     ));
+    #[cfg(feature = "jpeg")]
     rows.push((
         "JPEG",
         "re-encode the entropy data with optimal Huffman tables",

@@ -87,15 +87,17 @@ Additional requirements:
 
 ### 2.5 Summary
 
-| Crate | Direct | Optional | Purpose | In the binary |
+| Crate | Direct | Compiled by | Purpose | In the binary |
 | --- | --- | --- | --- | --- |
-| `flate2` | yes | no | DEFLATE decode/encode | yes |
-| `zopfli` | yes | yes (`--zopfli`, feature `zopfli`) | strongest encoder | only with the feature |
-| `crc32fast` | yes | no | checksums | yes |
-| `png` | yes | no | independent verification decoder | yes |
+| `flate2` | yes | features `png`, `gzip`, `zip` | DEFLATE decode/encode | with any of those |
+| `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
+| `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
+| `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
 
-Four direct dependencies, one of them optional. **v0.4 added none**: the JPEG handler is written in this
-repository (see §2.6).
+Four direct dependencies, all of them behind a feature: **every dependency is optional**, which is what
+makes the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) meaningful. A build with
+`--no-default-features --features png` compiles exactly `png`, `flate2` and `crc32fast`, and nothing else.
+The JPEG and ICO handlers add code, not crates. **v0.4 and v0.6 added none**: see §2.6 for JPEG.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 

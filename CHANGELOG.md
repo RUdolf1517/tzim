@@ -9,6 +9,44 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.6.0] - 2026-10-24 — narrowing the build, and metadata on request
+
+### Added
+
+- **`--strip-metadata`**: removes a fixed, documented list of embedded metadata — PNG text and `tIME`/
+  `eXIf`, the gzip name/comment/extra/mtime, ZIP comments and DOS timestamps, JPEG `APP1`/`APP13`/`COM` —
+  and nothing else. ICC profiles, colour hints, unknown chunks and every pixel, coefficient, payload and
+  name stay. Off by default; the only transformation that is not G3, so it gets its own class, G4
+  ([guarantees §2.7](docs/guarantees.md#27-g4--metadata-removed-on-request)).
+- **Features per handler**: `jpeg` and `ico` join `png`, `gzip`, `zip` and `zopfli`, so a build can drop
+  what it will never see. The default set is unchanged and still ships every handler.
+- The fuzz target `strip` covers the removal paths, and CI measures every feature combination
+  (`ci` job `binary size`, step `Feature matrix`) instead of only the full build.
+
+### Changed
+
+- **For packagers, not users:** JPEG used to be compiled in unconditionally. A build with
+  `--no-default-features --features png,gzip` is now smaller and no longer handles JPEG; `--formats jpeg`
+  on such a build is a usage error that names the handlers it does have, instead of a silent no-op.
+  `ico = ["png"]`, so the two cannot be split.
+- With `--strip-metadata` the acceptance rule becomes "never larger" instead of "strictly smaller":
+  zeroing a timestamp removes metadata without removing bytes. A larger candidate is still refused under
+  every flag.
+
+### Documentation
+
+- [guarantees](docs/guarantees.md) now names the **verification level** of every format: an independent
+  decoder (PNG, gzip, ZIP payloads), a separate reader (none yet) or a shared implementation (JPEG
+  coefficients, ZIP structure), with what a shared checker cannot catch. The strongest claim in the old
+  text — "verification never relies on the code that produced the candidate" — was true only for PNG and
+  gzip, and is now replaced by the table.
+- [size-budget](docs/size-budget.md#3-feature-matrix) lists the feature set as `Cargo.toml` declares it and
+  the measured size of each combination; [dependencies](docs/dependencies.md) says that all four crates are
+  behind features.
+- [safety](docs/safety.md#3-metadata) and the README now separate **content** metadata (preserved, or
+  removed on request) from **filesystem** metadata (mode and times preserved; owner, ACLs and extended
+  attributes not), because conflating them is how a user loses an ACL.
+
 ## [0.5.0] - 2026-10-24 — the file is the command
 
 ### Changed — breaking
