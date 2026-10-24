@@ -19,10 +19,6 @@ tzim --version
 tree. A path is never mistaken for a command, so a file called `optimize` needs no special handling beyond
 the usual `--` when it starts with a dash.
 
-The 0.1–0.4 spelling `tzim optimize <PATH>...` is still accepted, so scripts and notes written against the
-older releases keep working; it is no longer documented anywhere else. `tzim formats` likewise survives as
-an alias of `--list-formats`.
-
 ---
 
 ## 1. Input objects
@@ -256,3 +252,13 @@ tzim "Photo 2024 (копия).png" "иконки/логотип.svgz"
 - New flags are additive and default to the previous behaviour.
 - Removing or renaming a flag, or changing an exit code, requires a major version bump.
 - The JSON schema is versioned with `schema`; fields may be added, not removed or repurposed.
+
+### One exception, already made
+
+v0.5.0 removed the `optimize` subcommand, which is exactly the kind of change the rules above forbid — the
+interface became simpler and it was worth the break once, at 0.x, rather than never.
+
+`tzim optimize <PATH>...` is still accepted: a leading `optimize` is stripped before parsing, so no script
+written against 0.1–0.4 breaks. `tzim formats` survives the same way as an alias of `--list-formats`. Both
+are compatibility shims, not documented commands, and they will be removed only when a major version makes
+that free.
