@@ -458,12 +458,11 @@ fn deny_reason(archive: &Archive<'_>, d: &[u8]) -> Option<String> {
                     || ends_with_ignore_case(tail, ".ec")
                     || ends_with_ignore_case(tail, "documentsignatures.xml")
                     || ends_with_ignore_case(tail, "macrosignatures.xml"))
-                {
-                    return Some(format!(
-                        "zip: signed archive (`{}` present) — recompression would invalidate the signature",
-                        String::from_utf8_lossy(name)
-                    ));
-                }
+            {
+                return Some(format!(
+                    "zip: signed archive (`{}` present) — recompression would invalidate the signature",
+                    String::from_utf8_lossy(name)
+                ));
             }
         }
         if starts_with_ignore_case(name, "_xmlsignatures/") {
