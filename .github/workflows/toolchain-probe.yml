@@ -1,0 +1,15 @@
+name: toolchain probe
+on:
+  push:
+    branches: [arena/37db9077-tzim]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+          uname -a
+          nproc
