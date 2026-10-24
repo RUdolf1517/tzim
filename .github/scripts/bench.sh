@@ -23,6 +23,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 bin="${1:?usage: bench.sh <tzim-binary> [work-dir]}"
+# Absolute, and exported: each measurement runs in a fresh `bash -c`, which does
+# not inherit shell variables unless they are in the environment.
+bin="$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
+export bin
 work="${2:-${RUNNER_TEMP:-/tmp}/tzim-bench}"
 max_bytes=204800
 
