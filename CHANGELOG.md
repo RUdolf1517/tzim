@@ -9,6 +9,19 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.4.3] - 2026-10-24 — checksums where they can be read
+
+### Changed
+
+- The release workflow writes the `SHA256SUMS` block into the release notes and into a check annotation,
+  replacing any previous block instead of appending. The asset alone is not reachable from the release
+  page, and "copy the hash into the formula" should not need a download of the file being described.
+
+### Fixed
+
+- v0.4.2's notes were built by the previous workflow and carry no checksum block; the assets and
+  `SHA256SUMS` were correct. Nothing else differs.
+
 ## [0.4.2] - 2026-10-24 — install from a package manager
 
 ### Added
