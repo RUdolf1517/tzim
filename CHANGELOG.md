@@ -34,7 +34,9 @@ The binary is the same size.
   sides of a comparison is indistinguishable from the end of the frame loop, so that is not a verdict this
   program can rely on. `png::check_frame_sequence` now requires `fcTL`/`fdAT` to number themselves 0, 1, 2, …
   with no gaps and the number of `fcTL` chunks to equal the frame count `acTL` declares. A broken animation is
-  `failed`, exit 1, and nothing is written.
+  `failed`, exit 1, and nothing is written. The real-file corpus had the evidence: twelve of Pillow's own
+  negative APNG fixtures were being rewritten and reported as `optimized`, and they are now `failed` and listed
+  in `.github/corpus-allowlist.txt` with that reason.
 
 ### Added
 

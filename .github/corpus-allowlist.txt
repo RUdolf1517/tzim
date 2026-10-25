@@ -28,6 +28,22 @@ pillow-truncated_end_chunk.png
 pillow-truncated_image.png
 pillow-apng_syntax_num_frames_zero.png
 pillow-unknown_compression_method.png
+# Pillow's negative APNG fixtures: each one breaks the frame numbering or the
+# acTL frame count on purpose, which is what Pillow's own tests check. Until
+# 0.12.1 nothing in Tzim validated the sequence, so these twelve were rewritten
+# and reported as optimized; the check that refuses them is what found them.
+pillow-apng_chunk_no_fctl.png
+pillow-apng_chunk_repeat_fctl.png
+pillow-apng_sequence_fdat_fctl.png
+pillow-apng_sequence_gap.png
+pillow-apng_sequence_reorder.png
+pillow-apng_sequence_reorder_chunk.png
+pillow-apng_sequence_repeat.png
+pillow-apng_sequence_repeat_chunk.png
+pillow-apng_sequence_start.png
+pillow-apng_syntax_num_frames_high.png
+pillow-apng_syntax_num_frames_invalid.png
+pillow-apng_syntax_num_frames_low.png
 pillow-tRNS_null_1x1.png
 
 # JPEG fixtures with damage that libjpeg conceals. ImageMagick reports them as
