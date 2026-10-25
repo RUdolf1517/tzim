@@ -987,7 +987,10 @@ fn the_memory_budget_boundary_is_exact() {
 
     // One byte less than it needs: skipped before it is read, untouched.
     let one_less = (cost - 1).to_string();
-    let (code, stdout, stderr) = run(&["above.png", "--memory-budget", &one_less, "--json"], &ws.path);
+    let (code, stdout, stderr) = run(
+        &["above.png", "--memory-budget", &one_less, "--json"],
+        &ws.path,
+    );
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("\"status\":\"skipped\""),
