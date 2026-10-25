@@ -254,22 +254,28 @@ what the tool can read:
   receive it, and the `installer` job installs the published release and then proves a doctored archive is
   refused.
 
-### v0.11.1 — the first patch after the audit — **planned**
+### v0.12 — the audit, answered — **implemented**
 
-One user-visible defect and three decisions, no new features:
+An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues. The release answers them, and the one
+behaviour it changes is a defect:
 
-- **The equal-size candidate stops being an internal error** (#26, #44): one predicate, `size_ok`, used by the
-  pipeline, both handlers and both fuzz targets. Today `tzim x.gz --strip-metadata` on an already-optimal file
-  whose body recompresses to the same length reports `internal error` and exits `1`.
-- **A weak signature never produces `failed`** (O1): a zlib header that decodes nothing is `unsupported`; one
+- **The equal-size candidate stops being an internal error** (#26, #44): one predicate, `formats::size_ok`,
+  used by the pipeline, the verification dispatcher and both fuzz targets.
+- **The verifiers are tested** (#43): `tests/verification.rs` gives every one of them a candidate that must be
+  refused.
+- **Documents and code agree in the same release**: [guarantees §3.1](guarantees.md#31-what-verified-actually-compares--and-what-it-does-not)
+  says what "verified" compares, [safety §1](safety.md#1-algorithm) is the algorithm that runs, and
+  `T-FS-*` / `T-STRIP-*` rows are in [testing §2](testing.md#2-traceability) with the test behind each one.
+- **Seven traceability rows that had no test have one**; three say so in the row and give the reason (#49).
+
+The tag was cut from `main` after those tests failed before the fix and passed after it.
+
+### v0.12.1 — the two decisions that are still open — **planned**
+
+- **A weak signature never produces `failed`** (#52): a zlib header that decodes nothing is `unsupported`; one
   that decodes and then breaks is still `failed`, so a truncated stream keeps its corruption signal.
-- **A memory budget** (O2): the limit becomes bytes rather than files, and a file above it is `skipped` with a
+- **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
   reason instead of being read.
-- **Documents and code agree** in the same release: [guarantees §3.1](guarantees.md#31-what-verified-actually-compares--and-what-it-does-not)
-  says what "verified" compares, and `T-FS-*` / `T-STRIP-*` rows are in
-  [testing §2](testing.md#2-traceability).
-
-The tag is cut from `main` only after those tests fail before the fix and pass after it.
 
 ### v0.12+ — the queue after this
 
