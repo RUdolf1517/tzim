@@ -28,6 +28,7 @@ const MIN_STREAM: usize = 2 + 2 + TRAILER;
 /// 32 KiB, and a decoder that honours the header would reject them.
 const FULL_WINDOW_CINFO: u8 = 7;
 
+#[derive(Debug)]
 struct Inspected {
     /// The two header bytes, kept so that "copied verbatim" can be checked.
     header: [u8; 2],
