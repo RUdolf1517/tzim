@@ -426,9 +426,9 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
         if matches!(compression, COMPRESSION_DEFLATE | COMPRESSION_ADOBE_DEFLATE) {
             return Err(Error::refused(format!(
                 "tiff: FillOrder {fill_order} with Deflate strips cannot be decoded by libtiff, and \
-                 re-compressing cannot repair it: the bits of the compressed data are reversed, \
-                 which is what tzim 0.7 to 0.12.1 wrote. Restore this file from a backup or from \
-                 its original source"
+                 re-compressing cannot repair it: the bits of the compressed data are reversed. \
+                 That is the combination tzim 0.7 to 0.12.1 produced. Restore this file from a \
+                 backup or from its original source"
             )));
         }
         return Err(Error::refused(format!(
