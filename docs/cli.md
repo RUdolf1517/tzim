@@ -365,6 +365,8 @@ While the work is in progress Tzim draws one line on **stderr**:
 - it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
   into noise. The counters, the clock and the running total are the information;
 - the saved total counts the files that have finished, so it only grows;
+- the clock is seconds with two decimals, and switches to `m s` after a minute — `3600.00 s` is correct and
+  reads like a machine talking to itself;
 - it is erased before the first result is printed, so the report never shares a row with it.
 
 It is drawn only when **all** of these hold: stderr is a terminal, the run has at least one file, and

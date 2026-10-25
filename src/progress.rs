@@ -127,10 +127,16 @@ pub fn line_text(frame: usize, done: usize, total: usize, saved: u64, elapsed: D
     out
 }
 
-/// Seconds with two decimals, the same shape the summary uses.
+/// Seconds with two decimals while the number is still small, minutes and
+/// seconds after that: `3600.00 s` is technically correct and reads like a
+/// machine talking to itself.
 fn duration(elapsed: Duration) -> String {
-    let hundredths = (elapsed.as_micros() + 5_000) / 10_000;
-    format!("{}.{:02} s", hundredths / 100, hundredths % 100)
+    if elapsed < Duration::from_secs(60) {
+        let hundredths = (elapsed.as_micros() + 5_000) / 10_000;
+        return format!("{}.{:02} s", hundredths / 100, hundredths % 100);
+    }
+    let secs = elapsed.as_secs();
+    format!("{} m {} s", secs / 60, secs % 60)
 }
 
 #[cfg(test)]
@@ -163,11 +169,22 @@ mod tests {
     }
 
     #[test]
+    fn the_clock_switches_to_minutes() {
+        assert_eq!(duration(Duration::from_millis(999)), "1.00 s");
+        assert_eq!(duration(Duration::from_secs(12)), "12.00 s");
+        assert_eq!(duration(Duration::from_millis(59_999)), "60.00 s");
+        assert_eq!(duration(Duration::from_secs(60)), "1 m 0 s");
+        assert_eq!(duration(Duration::from_secs(3_600)), "60 m 0 s");
+    }
+
+    #[test]
     fn a_line_stays_short() {
-        // 40 characters is the width of a narrow terminal minus a cursor; a line
-        // that fits everywhere cannot wrap and cannot leave debris behind.
-        let text = line_text(0, 694, 694, 2_130_943, Duration::from_secs(3600));
-        assert!(text.chars().count() <= 40, "{text}");
+        // The worst case the counters can produce: every file done, an hour on
+        // the clock, a saved total in the hundreds of gigabytes. 48 columns
+        // leaves room for a cursor in a narrow terminal, so the line can never
+        // wrap and leave debris behind.
+        let text = line_text(0, 9_999, 9_999, 999 * 1024 * 1024 * 1024, Duration::from_secs(3_599));
+        assert!(text.chars().count() <= 48, "{} columns: {text}", text.chars().count());
     }
 
     #[test]
