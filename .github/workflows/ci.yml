@@ -262,9 +262,12 @@ jobs:
           # pipeline look like a failure.
           kind="$(file -b target/x86_64-unknown-linux-musl/release/tzim)"
           echo "$kind"
+          # `file` says "static-pie linked" for the position-independent static
+          # binary the musl target now produces, and "statically linked" for the
+          # older form. Both mean the same thing here: no interpreter, no libc.
           case "$kind" in
-            *"statically linked"*) ;;
-            *) echo "the musl build is not statically linked" >&2; exit 1 ;;
+            *"statically linked"* | *"static-pie linked"*) ;;
+            *) echo "the musl build is not statically linked: $kind" >&2; exit 1 ;;
           esac
           bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
           echo "$bytes" > /tmp/tzim-size-bytes.txt

@@ -67,5 +67,14 @@ incremental = false
 [profile.release.package."*"]
 opt-level = 3
 
+# The progress line is drawn at most ten times a second and does no work that a
+# file's bytes depend on, so it is the one place where the smaller setting costs
+# nothing. Measured, not assumed: docs/size-budget.md §5.2.
+[profile.release.package.console]
+opt-level = "s"
+
+[profile.release.package.indicatif]
+opt-level = "s"
+
 [lints.rust]
 unsafe_code = "forbid"

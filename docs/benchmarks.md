@@ -68,10 +68,11 @@ order of magnitude while carrying an independent verification decoder.
 
 | Metric | Value |
 | --- | --- |
-| Unit tests | 56 |
-| Integration tests (real binary, real files) | 54 (52 on Windows, where two tests are Unix-only) |
-| Platforms | Linux, macOS, Windows — all green at `52a33cb` |
+| Unit tests | 101 |
+| Integration tests (real binary, real files) | 89 (87 on Windows, where two tests are Unix-only) |
+| Platforms | Linux, macOS, Windows — all green on the v0.10.0 pull request |
 | Clippy | `-D warnings`, clean |
+| Rustfmt | clean, from v0.10.0 (the tree had never been formatted as a whole) |
 | Exit codes covered by tests | 0, 1, 2 (4 is covered by a unit test on an injected verification error) |
 
 ---
