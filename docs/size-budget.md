@@ -7,7 +7,8 @@ measured, so this document defines the budget, the build profile, and the exact 
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
 > **Measured: 1 049 440 bytes (1 024 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`), v0.10.0. Per-feature measurements are in §3; the profile that got
+> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`), unchanged from v0.10.0 through the whole v0.11.0 distribution
+> work: packaging adds no code to the binary. Per-feature measurements are in §3; the profile that got
 > here is in §2, and what it cost in speed is in §5.
 > **The progress line is 96 KiB of that** — a tenth of the binary, and the largest single addition since the
 > PNG decoder. It is the one dependency granted since v0.1, and the trade is recorded rather than smoothed
@@ -26,7 +27,7 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 | `png` | `png` | 804 KiB | 926 KiB |
 | `core` | `png,gzip` | 808 KiB | 931 KiB |
 | `+zip` | `png,gzip,zip` | 848 KiB | 977 KiB |
-| `images` | `png,gzip,zip,ico` | 856 KiB | 986 KiB |
+| `images` | `png,gzip,zip,ico` | 860 KiB | 990 KiB |
 | `+jpeg` | `png,gzip,zip,ico,jpeg` | 912 KiB | 1 050 KiB |
 | `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 940 KiB | 1 082 KiB |
 | `+zlib` | `png,gzip,zip,ico,jpeg,tiff,zlib` | 940 KiB | 1 082 KiB |
@@ -122,14 +123,14 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 | `png` | 824 096 | 804 |
 | `png,gzip` | 828 192 | 808 |
 | `png,gzip,zip` | 869 152 | 848 |
-| `png,gzip,zip,ico` | 877 344 | 856 |
+| `png,gzip,zip,ico` | 881 440 | 860 |
 | `png,gzip,zip,ico,jpeg` | 934 688 | 912 |
 | `png,gzip,zip,ico,jpeg,tiff` | 963 360 | 940 |
 | `png,gzip,zip,ico,jpeg,tiff,zlib` | 963 360 | 940 |
 | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | 1 049 440 | 1 024 |
 
 Each feature's cost is visible by subtracting the row above it: `gzip` +4 KiB, `zip` +40 KiB, `ico`
-+8 KiB, the JPEG codec +56 KiB, the TIFF handler +28 KiB, Zopfli +84 KiB. The zlib row is identical to the
++12 KiB, the JPEG codec +52 KiB, the TIFF handler +28 KiB, Zopfli +84 KiB. The zlib row is identical to the
 TIFF row in v0.10.0: the handler is 4 KiB and the linker absorbed it into the same page, which is a reminder
 that these are measured bytes and not an accounting identity.
 

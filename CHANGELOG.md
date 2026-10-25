@@ -47,6 +47,13 @@ exist at all.
 - The `.deb` and `.rpm` description now lists the formats the binary actually has: it had been stuck at the
   v0.4 set, without TIFF and without zlib.
 
+### Size
+
+- **+0 bytes.** 1 049 440 bytes (1 024 KiB), the same number as v0.10.0: this release adds packaging, a
+  manual page and an architecture that is built from the same source. One feature row moved by 4 KiB because
+  the linker crossed a page boundary, which is recorded in [size-budget §3](docs/size-budget.md#3-feature-matrix)
+  rather than smoothed over.
+
 ### Fixed
 
 - **`--strip-metadata` was accepted by the parser and missing from `--help`** since v0.6. It is documented
