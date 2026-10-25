@@ -1764,7 +1764,7 @@ fn colour_is_absent_in_a_pipe_and_present_when_forced() {
 
     let (code, forced, _) = run(&["--color=always", "--dry-run", "a.png"], &ws.path);
     assert_eq!(code, 0);
-    assert!(forced.contains('\u{1b}['), "--color=always must colour: {forced:?}");
+    assert!(forced.contains("\u{1b}["), "--color=always must colour: {forced:?}");
 
     let (code, never, _) = run(&["--color=never", "--dry-run", "a.png"], &ws.path);
     assert_eq!(code, 0);
