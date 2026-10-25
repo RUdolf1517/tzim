@@ -11,21 +11,28 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.9.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
-| Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release`, `opt-level = "s"` for this crate and `3` for its dependencies, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
+| Commit | v0.10.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Target | `x86_64-unknown-linux-musl` (static-pie, no libc dependency, no interpreter) |
+| Profile | `--release`, `opt-level = "s"` for this crate and for `indicatif`/`console`, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **951 136 bytes (928 KiB)** |
-| Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Budget for this profile | 1 069 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 141 KiB |
+| **Size** | **1 049 440 bytes (1 024 KiB)** |
+| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 19 |
+| Budget for this profile | 1 179 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
+| Headroom | 155 KiB |
+
+Of those 1 024 KiB, **96 KiB is the progress line**: `indicatif` and `console`, added in v0.10.0 at the user's
+request. Sixteen of those were recovered by compiling the two crates at `opt-level = "s"` instead of the
+wildcard `3` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)), and the rest is the
+price of not writing a bar, a spinner and a terminal-width-aware redraw by hand
+([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
 binary would measure code that never ships.
 
-Growth by version, with **no new dependency lines at any step** — four direct crates since v0.1. The JPEG
-handler in v0.4 adds code rather than a crate, because no Rust JPEG library exposes DCT coefficients (see
+Growth by version. **No new dependency lines at any step until v0.10.0**, which adds the progress line's
+five on Linux — the first dependency granted since v0.1. The JPEG handler in v0.4 adds code rather than a
+crate, because no Rust JPEG library exposes DCT coefficients (see
 [dependencies](dependencies.md#26-jpeg-why-there-is-no-jpeg-dependency)):
 
 | Version | Contents added | Binary |
@@ -41,6 +48,7 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.7.1 | release profile: `-Os` for this crate, `-O3` for the codecs; no behaviour change | 900 KiB (−124 KiB) |
 | v0.8.0 | colour, progress line, buffered report, `IsTerminal` — interface, not handlers | 920 KiB (+20 KiB) |
 | v0.9.0 | zlib handler: DEFLATE recompression, header and Adler-32 preserved; no new crate | 928 KiB (+8 KiB) |
+| v0.10.0 | progress line drawn by `indicatif`, not by hand; CI and benchmark honesty; no handler changed | 1 024 KiB (+96 KiB) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.

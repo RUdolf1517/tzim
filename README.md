@@ -8,7 +8,7 @@
 
 [![ci](https://github.com/RUdolf1517/tzim/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/RUdolf1517/tzim/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/RUdolf1517/tzim?style=flat-square&color=0b3d91)](https://github.com/RUdolf1517/tzim/releases/latest)
-[![binary](https://img.shields.io/badge/static%20binary-1027%20KiB-111111?style=flat-square)](docs/size-budget.md)
+[![binary](https://img.shields.io/badge/static%20binary-1024%20KiB-111111?style=flat-square)](docs/size-budget.md)
 [![license](https://img.shields.io/badge/license-MIT-0b3d91?style=flat-square)](LICENSE)
 
 [Install](#install) · [Usage](#usage) · [Formats](#formats) · [Why tzim](#why-tzim) · [Guarantees](#guarantees) · [Docs](#documentation)
