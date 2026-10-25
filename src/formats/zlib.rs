@@ -103,18 +103,36 @@ fn inspect(data: &[u8]) -> Result<Inspected> {
 ///
 /// `total_in` is compared with the body length so that a second stream or any
 /// trailing bytes are refused rather than silently dropped.
+///
+/// The first failure is classified by how far the stream got, and that is the
+/// whole point of this function (#52). RFC 1950's header check is what
+/// detection has to go on — two bytes divisible by 31 — and it is satisfied by
+/// 1 random two-byte sequence in 1984, so a tree of 2000 unrelated files has a
+/// ~63 % chance of containing one. If such a file decodes **nothing** before
+/// failing, the header was a coincidence: that is `unsupported`, not a failure,
+/// and the run keeps its exit code. If it decodes **at least one byte** and
+/// then breaks, the data really was a DEFLATE stream, and that stays `failed`
+/// with exit 1 — a truncated `.zlib` must not hide behind exit 0.
 fn inflate(body: &[u8]) -> Result<(u64, u32)> {
     let mut decoder = flate2::read::DeflateDecoder::new(body);
     let mut adler = Adler32::new();
     let mut buffer = [0u8; 64 * 1024];
     let mut total: u64 = 0;
     loop {
-        let n = decoder.read(&mut buffer)?;
-        if n == 0 {
-            break;
+        match decoder.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                adler.update(&buffer[..n]);
+                total += n as u64;
+            }
+            Err(_) if total == 0 => {
+                return Err(Error::unsupported(
+                    "zlib: the header passes the container's check but nothing decodes; this is \
+                     not a zlib stream (the file is untouched)",
+                ));
+            }
+            Err(e) => return Err(Error::Io(e)),
         }
-        adler.update(&buffer[..n]);
-        total += n as u64;
     }
     if decoder.total_in() != body.len() as u64 {
         return Err(Error::refused(
@@ -390,10 +408,47 @@ mod tests {
     }
 
     #[test]
-    fn a_truncated_stream_is_a_parse_error() {
+    fn a_truncated_stream_is_a_failure() {
         let data = build(&compressible(5000), 6);
         let err = inspect(&data[..data.len() / 2]).unwrap_err();
         assert!(matches!(err, Error::Parse(_) | Error::Io(_)), "{err}");
+    }
+
+    /// The half of #52 that must not move: a stream that really was DEFLATE and
+    /// then ends early stays a failure, even though it is truncated.
+    #[test]
+    fn a_truncated_stream_that_decoded_bytes_is_still_a_failure() {
+        let data = build(&compressible(50_000), 6);
+        let cut = data.len() * 3 / 4;
+        let err = inspect(&data[..cut]).unwrap_err();
+        assert!(
+            !matches!(err, Error::Unsupported(_)),
+            "a stream that produced bytes and then broke is corruption, not a coincidence: {err}"
+        );
+        assert!(matches!(err, Error::Parse(_) | Error::Io(_)), "{err}");
+    }
+
+    /// The other half of #52: two bytes that satisfy RFC 1950's check are not a
+    /// stream. Random bytes hit that check once in 1984, so without this a tree
+    /// of a few thousand files fails the run for no reason.
+    #[test]
+    fn a_coincidental_header_that_decodes_nothing_is_unsupported() {
+        let mut data = vec![0x78, 0x9c];
+        // BFINAL = 1, BTYPE = 3: a reserved block type, so the decoder fails
+        // without producing a byte.
+        data.extend_from_slice(&[0xff; 16]);
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+
+        // The fixture is worthless unless detection really calls it zlib: a
+        // file the detector ignores is reported `unsupported` for the other
+        // reason, and the test would pass without the handler running at all.
+        assert_eq!(
+            crate::detect::detect(&data),
+            Some(crate::detect::Format::Zlib),
+            "the fixture must pass detection's header check"
+        );
+        let err = inspect(&data).unwrap_err();
+        assert!(matches!(err, Error::Unsupported(_)), "{err}");
     }
 
     #[test]

@@ -145,13 +145,25 @@ and they are never interchangeable:
 
 | Word | Meaning | Exit |
 | --- | --- | --- |
-| `unsupported` | there is no handler for this content at all — a text file, or a format this build does not carry | `0` |
+| `unsupported` | there is no handler for this content at all — a text file, a format this build does not carry, or a handler that proved the signature a coincidence (a zlib header, see below) | `0` |
 | `skipped` | a handler exists, and the run declines: `--formats` does not enable it, a policy refused the input (a signed archive, ZIP64, a progressive JPEG), or a limit was reached | `0` |
 | `failed` | the content claims to be a supported format and is corrupt, or the filesystem refused the operation | `1` |
 
 So `--formats gzip` over a directory of PNGs reports every PNG as `skipped: PNG is not enabled for this
 run (use --formats; enabled: gzip)` and touches nothing. It is not `unsupported` (this build has a PNG
 handler) and it is not `failed` (nothing is wrong with the file).
+
+The one way `unsupported` carries a note is a **weak signature proven wrong by the handler**. zlib is the
+only format detected by a check rather than a magic number: 1 random two-byte pair in 1984 satisfies it, so a
+tree of 2000 unrelated files has a ~63 % chance of containing one. Such a file decodes to nothing, and the
+line reads
+
+```
+receipt.bin      -      unsupported: zlib: the header passes the container's check but nothing decodes; this is not a zlib stream (the file is untouched)
+```
+
+Exit `0`, and the file is byte-identical afterwards. A `.zlib` that decoded at least one byte and then broke
+is `failed` with exit `1` — that is corruption, and the two cases are never merged.
 
 All options above are frozen from v0.3; the JPEG switch is the only behavioural change in v0.4.
 
@@ -182,8 +194,9 @@ Rules:
 - the summary is the last line, because that is where the eye goes after a long run.
 
 Statuses shown to humans: `optimized`, `would optimize` (dry run), `already optimal`, `unsupported`,
-`skipped: <reason>`, `failed: <reason>`. Only the last two carry a reason; the others are the whole message,
-and a note that merely repeated the status word (`unsupported: unsupported format`) was removed.
+`skipped: <reason>`, `failed: <reason>`. Only the last two carry a reason, plus the `unsupported` case where
+a handler overruled the detector (see the table in §2); the others are the whole message, and a note that
+merely repeated the status word (`unsupported: unsupported format`) was removed.
 
 In a terminal, colour marks the outcome and nothing else: the status word (green for a rewrite, dim for
 "nothing to do", yellow for a skip, red for a failure), the saving percentage, and the saved total in the
@@ -217,7 +230,7 @@ Field rules:
 | `metadata_stripped` | bool | present and `true` only when `--strip-metadata` rewrote this file |
 | `duration_ms` | integer | wall time spent on this file |
 | `note` | string or null | why the file landed in this status: the refusal reason for `skipped`, the filesystem reason for a skipped replacement |
-| `error` | object or null | present **only** with `"status":"failed"`, otherwise `null`: `{"kind": "...", "message": "..."}`. `kind` is one of `io`, `parse`, `verify`, `internal` — there is no `unsupported`, `limit` or `refused` kind in this object, because those inputs are not failures: a refusal is a `skipped` status with the reason in `note`, and an unsupported format is the `unsupported` status with no note |
+| `error` | object or null | present **only** with `"status":"failed"`, otherwise `null`: `{"kind": "...", "message": "..."}`. `kind` is one of `io`, `parse`, `verify`, `internal` — never `unsupported`, `limit` or `refused`, because those are not failures: a refusal is a `skipped` status with the reason in `note`, and unsupported content is the `unsupported` status, with the reason in `note` only when a handler overruled the detector |
 | `schema` | integer | present in the summary only; bumped on breaking schema changes |
 | `dry_run` | boolean | present in the summary only |
 

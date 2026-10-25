@@ -38,16 +38,28 @@ used in review; a format is not done until every row has a test that passes in C
 row names it. A row whose assertion has **no** test says so in the row itself rather than looking covered: the
 table is evidence, not a plan.
 
-Six rows that said nothing at all in 0.11.0 now name the test that pins them — `--zopfli` never worse than the
-default (`T-PNG-09`), gzip `FCOMMENT` (`T-GZ-01`) and `FHCRC` (`T-GZ-02`), ZIP unknown methods and multi-disk
-archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that runs past the end of an ICO
-(`T-ICO-04`). Three still have no test:
+Every row now names a test. The nine rows that said nothing in 0.11.0 were closed in two passes: six in
+0.12.0 — `--zopfli` never worse than the default (`T-PNG-09`), gzip `FCOMMENT` (`T-GZ-01`) and `FHCRC`
+(`T-GZ-02`), ZIP unknown methods and multi-disk archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a
+directory that runs past the end of an ICO (`T-ICO-04`) — and three in 0.12.1: an interlaced PNG
+(`T-PNG-04`, which needed Adam7 in the fixture builder), an inconsistent frame sequence (`T-APNG-05`, which
+needed the check to exist at all) and the nested size budget (`T-NEST-04`, removed — see below).
 
-| Row | What is missing |
-| --- | --- |
-| `T-PNG-04` | no interlaced fixture exists, so "recompression only" is never observed |
-| `T-APNG-05` | inconsistent frame sequences are refused by the `png` crate before the handler sees them, and no fixture gets past that |
-| `T-NEST-04` | `--max-depth` is tested; the per-entry size budget for nested expansion is not |
+Two of the three needed code, not only a test. `PngSpec` could not write an interlaced file, so
+"recompression only" was a claim about a path no fixture reached; it writes Adam7 now, and it applies the
+scanline filter it is asked for instead of announcing it in the row's first byte. And the APNG frame sequence
+was not validated anywhere in this program: the writer copies `fcTL`/`fdAT` number for number, and the `png`
+crate was the only thing that refused a broken sequence — which is not a guard this program may rely on,
+because a decode that stops on both sides of a comparison is indistinguishable from the end of the frame loop.
+`png::check_frame_sequence` now refuses it before anything is written.
+
+`T-NEST-04` is **deleted**, and the reason belongs where the row was. It asserted that "nested expansion
+respects the parent's size budget", and there is no such budget: `zip::check_limits` refuses the archive when
+the **sum** of the declared uncompressed sizes exceeds `--max-uncompressed`, before anything is decompressed,
+and `zip::inflate_entry` refuses an entry whose data disagrees with its own declared size. A child handed to
+`nested_child` is therefore never larger than the limit, and the per-entry check there is defence in depth that
+cannot fire. Testing it would have meant calling a private function out of order — a test of the guard, not of
+the behaviour. `docs/cli.md` and `guarantees.md` describe the limit that does exist.
 
 ### PNG
 
@@ -55,8 +67,8 @@ archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that ru
 | --- | --- |
 | `T-PNG-01` | All non-IDAT chunks (including an unknown/private chunk) are byte-identical, in the same order |
 | `T-PNG-02` | IHDR payload is byte-identical |
-| `T-PNG-03` | Decoded pixels are identical for the images the fixture builder produces: 8-bit RGBA, non-interlaced. Other colour types and bit depths are not tested — gray, gray+alpha, RGB, palette at 1/2/4/8 bits and 16-bit are rewritten by the corpus without complaint, but nothing re-decodes them. The filter unit test covers bytes-per-pixel 1 to 8 (`filters_roundtrip_for_all_types`), not only RGBA8's four |
-| `T-PNG-04` | Interlaced images: recompression only, pixels identical. **No test**: `PngSpec` cannot write an interlaced file |
+| `T-PNG-03` | Decoded pixels are identical for the images the fixture builder produces: 8-bit RGBA, interlaced or not, with every scanline filter from 0 to 4 (`t_png_03_every_scanline_filter_round_trips`). Other colour types and bit depths are not tested — gray, gray+alpha, RGB, palette at 1/2/4/8 bits and 16-bit are rewritten by the corpus without complaint, but nothing re-decodes them. The filter unit test covers bytes-per-pixel 1 to 8 (`filters_roundtrip_for_all_types`), not only RGBA8's four |
+| `T-PNG-04` | Interlaced images: recompression only, pixels identical — `t_png_04_an_interlaced_image_is_recompressed_and_pixels_are_identical` (Adam7 fixture, odd dimensions, every non-IDAT chunk byte-identical) |
 | `T-PNG-05` | APNG: `acTL`/`fcTL`/`fdAT` untouched; default image pixels identical |
 | `T-PNG-06` | Corrupted inputs (bad CRC, truncated, missing IEND, bytes after IEND) are refused |
 | `T-PNG-07` | A candidate that is not smaller is discarded; file unchanged, status `already_optimal` |
@@ -103,11 +115,10 @@ archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that ru
 | `T-APNG-02` | Every `fcTL` preserved, in order |
 | `T-APNG-03` | Every frame decodes identically (pixels and frame metadata) |
 | `T-APNG-04` | The default image is optimized and verified |
-| `T-APNG-05` | Inconsistent frame sequences are refused. **No test**: the `png` crate refuses them first, so the handler's own check is unreachable from a fixture |
+| `T-APNG-05` | Inconsistent frame sequences are refused — `t_apng_05_an_inconsistent_frame_sequence_is_refused` (one `fdAT` renumbered, its CRC repaired so the refusal is about the sequence and not a checksum) |
 | `T-NEST-01` | A child that fails verification is stored unmodified |
 | `T-NEST-02` | Optimized children satisfy their own contracts |
 | `T-NEST-03` | `--max-depth` is enforced |
-| `T-NEST-04` | Nested expansion respects the parent's size budget. **No test**: `--max-depth` is tested, the per-entry budget is not |
 | `T-JPG-01` | Marker inventory (type, order, payload) preserved; Exif and `COM` payloads survive |
 | `T-JPG-02` | `DQT` and `SOF0` payloads byte-identical |
 | `T-JPG-03` | Every DCT coefficient identical after the rewrite (stronger than comparing pixels) |
@@ -130,6 +141,7 @@ archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that ru
 | `T-ZL-06` | `FDICT` set: not treated as zlib at all — `unsupported`, untouched |
 | `T-ZL-07` | a declared window below 32 KiB is `skipped` with a reason, untouched |
 | `T-ZL-08` | trailing data after the stream is `skipped`, untouched; a false positive never writes |
+| `T-ZL-09` | a header that passes the container's check with no decodable data behind it is `unsupported`, exit `0`, untouched — and a stream that decoded bytes and then broke is still `failed`, exit `1` (`a_coincidental_zlib_header_is_unsupported_and_never_written`, `a_truncated_zlib_stream_is_still_a_failure`, plus the unit tests in `src/formats/zlib.rs`) |
 
 The unit tests in `src/formats/zlib.rs` also pin the Adler-32 against `zlib`'s own values, including a 1 MiB
 input that exercises the overflow bound.
@@ -195,6 +207,12 @@ the "not covered" table in §3 and in issue #35, not here.
 | `T-FS-08` | A directory is walked recursively when asked, and only then | `directory_is_processed_recursively` |
 | `T-FS-09` | A directory argument without `-r` stays at the top level | `a_directory_argument_without_recursive_stays_at_the_top_level` |
 | `T-FS-10` | `--dry-run` writes nothing and leaves no temporary file behind | `dry_run_does_not_modify_anything` |
+| `T-FS-11` | A FIFO is skipped as "not a regular file" and is never opened for writing (its mtime is unchanged) | `t_fs_11_a_fifo_is_skipped_and_never_opened` |
+| `T-FS-12` | A character device (`/dev/null`) is skipped, not read | `t_fs_12_a_device_node_is_skipped` |
+| `T-FS-13` | A full disk is `failed` with the original intact and no `.tzim-*.tmp` left behind. Gated on `TZIM_TEST_FULL_DISK`, which CI points at a 2 MiB tmpfs; without it the test prints that it was skipped | `t_fs_13_a_full_disk_is_a_failure_with_nothing_left_behind` |
+| `T-FS-14` | A symlink cycle under `--follow-symlinks` terminates at the 64-level depth limit, `skipped`, exit `0`, with the reason printed | `t_fs_14_a_symlink_cycle_terminates_at_the_depth_limit` |
+| `T-FS-15` | A directory the process cannot write to is `failed` with the original intact; skipped-with-a-reason if the process is root, because 0555 would not bind | `t_fs_15_a_read_only_directory_is_a_failure_and_the_file_survives` |
+| `T-FS-16` | A tree deeper than 64 levels is refused at the limit while the files above it are still processed | `t_fs_16_a_tree_deeper_than_sixty_four_levels_is_refused` |
 
 ### `--strip-metadata`
 
@@ -219,12 +237,13 @@ observable result.
 
 ### Unit tests
 
-- PNG scanline filters: encode/decode round-trip for the five filter types at bytes-per-pixel 4 only
-  (`filters_roundtrip_for_all_types`), plus a refilter test that rebuilds a filtered stream from pixels.
-  No test covers bpp 1, 2, 3, 6 or 8, where the `a`/`b`/`c` neighbours differ; no property test exists.
+- PNG scanline filters: encode/decode round-trip for the five filter types at every bytes-per-pixel value the
+  format allows, 1 to 8 (`filters_roundtrip_for_all_types`), plus a refilter test that rebuilds a filtered
+  stream from pixels. The integration side runs all five filters through the binary
+  (`t_png_03_every_scanline_filter_round_trips`).
 - Argument parser: every flag, combinations, `--`, conflicting flags, missing values.
-- Size formatting, and column alignment for ASCII paths. Alignment is computed per character, not per display
-  column, so a path with wide (CJK) or combining characters can misalign a column; no test covers that.
+- Size formatting, and column alignment for ASCII paths. Alignment is measured in display cells, and a test
+  pins the table for CJK and combining characters (`display_width_counts_cells_not_characters`).
 - JSON escaping: control characters, quotes, backslashes, non-UTF-8 paths.
 - gzip header parse/serialise round-trip, including all flags.
 - ZIP structure reader/writer: offsets, descriptors, EOCD, comments.
@@ -309,14 +328,14 @@ they are tracked as work in issue #35, not silently assumed:
 
 | Scenario | Why it matters |
 | --- | --- |
-| read-only directory | the candidate cannot be created; the expected outcome is `failed` with the original intact |
-| symlink loop in a tree | the depth guard should terminate the walk; nothing asserts the message or the exit code |
-| FIFO / device node | must be skipped and never opened for writing |
-| disk full (small tmpfs) | `failed`, original intact, no temporary file left |
 | file modified during processing | `failed`, original intact (the I5 path) |
 | `SIGKILL` during processing | original intact; a `.tzim-*.tmp` may remain |
 | empty file, 1-byte file | `unsupported` |
-| very deep directory tree | traversal terminates within the 64-level limit |
+
+The rows that left this table in 0.12.1 are `T-FS-11` … `T-FS-16` above: a FIFO, a device node, a full disk
+(behind an env var), a symlink cycle, a read-only directory and a 70-level tree. Each one was also the reason
+its row was listed here, so the list is now the three scenarios that need a signal or a clock, not a
+filesystem.
 
 ### Failure injection
 
@@ -432,8 +451,8 @@ mechanisms cover them.
 
 **Drift assertions** (`tests/packaging.rs`, part of `cargo test`). Every long option in `--help` must appear in
 `man/tzim.1` and in all three completions; the man page's `.TH` line must carry the crate version; every
-target in the release matrix must be fetchable by `install.sh` (Windows excepted, which is a zip and a winget
-manifest); the Linux packaging script must ship the man page and the completions for both architectures; the
+target in the release matrix must be fetchable by `install.sh` (Windows excepted: it ships a zip, not a shell
+installer); the Linux packaging script must ship the man page and the completions for both architectures; the
 formula must install more than a binary; and `install.sh` must fetch `SHA256SUMS` and handle both `sha256sum`
 and `shasum`.
 

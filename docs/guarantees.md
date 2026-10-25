@@ -411,8 +411,11 @@ unchanged.
 **Verification:** decode every frame of both files independently and compare frame metadata and pixel bytes;
 compare all control chunks byte for byte.
 
-**Refused:** malformed frame sequences (`fcTL`/`fdAT` counts inconsistent with `acTL`), frames whose data
-does not decode.
+**Refused (failed, exit 1):** malformed frame sequences — `fcTL` and `fdAT` number themselves 0, 1, 2, … in
+file order with no gaps, and the number of `fcTL` chunks must be the frame count `acTL` declares. This is
+checked structurally on the input before anything is written; the `png` crate refuses such a file while
+decoding too, but a decode that stops on both sides of a comparison is indistinguishable from the end of the
+frame loop, so the crate is not something this program may rely on for that verdict (#49).
 
 **Verification:** the candidate is re-parsed, every non-`IDAT`/`fdAT` chunk is compared byte for byte, the
 `fdAT` count and sequence numbers are compared, and every frame is decoded from both files and compared for
@@ -443,9 +446,14 @@ when all of the following hold:
 For all other entries the original rule applies unchanged, and an archive with no optimized child must come
 out with identical CRCs.
 
-**Limits:** `--max-depth` (default 3) and the parent's `--max-uncompressed` budget apply to the whole tree.
+**Limits:** `--max-depth` (default 3) bounds how many containers are opened inside each other. Memory is
+bounded by `--max-uncompressed`, which is a limit on **the archive**, not a running total shared by its
+children: `check_limits` refuses the whole archive when the sum of the declared uncompressed sizes exceeds
+it, before anything is decompressed, and an entry whose data disagrees with its own declared size is refused as
+corrupt. There is therefore no "remaining budget" per child, and the per-entry check in `nested_child` is
+defence in depth that cannot fire from the normal path.
 
-**Verification IDs:** `T-NEST-01` … `T-NEST-04`.
+**Verification IDs:** `T-NEST-01` … `T-NEST-03`.
 
 ---
 
@@ -779,18 +787,30 @@ decodes both files, and the `Adler-32` is recomputed by code in this repository,
 **Refused (skipped, exit 0):** `CM ≠ 8`, `CINFO < 7`, `FDICT = 1`, trailing data after the stream. The
 file is valid and is left untouched.
 
+**Not a zlib stream (unsupported, exit 0):** the two header bytes pass the container's check and the data
+decodes to nothing at all. The header was a coincidence — see "A note on detection" below — so this is not
+corruption and the run keeps its exit code. The note says so and the file is untouched. This is the one case
+where a handler overrules the detector, and only a handler that can prove the difference is allowed to do it.
+
 **Corrupt (failed, exit 1):** a header that fails the check value, a truncated stream, an `Adler-32` that
-does not match, a DEFLATE stream that does not decode. All leave the original untouched.
+does not match, and a stream that decoded at least one byte before it broke. All leave the original
+untouched. The distinction from the row above is the whole rule: **nothing decoded — unsupported; something
+decoded and then failed — corrupt.** A truncated `.zlib` that produced bytes must not hide behind exit 0.
 
 **`--strip-metadata`** does nothing here, and says nothing: a zlib header carries no name, no comment and no
 timestamp, and `FLEVEL` describes the encoder rather than the file. The flag is accepted and the output is
 the same as without it.
 
 **A note on detection.** A zlib header is two bytes with internal redundancy — `CM = 8`, `CINFO ≤ 7`,
-`FDICT = 0`, a multiple of 31 — which is weaker than a magic number: roughly one random file in two thousand
-passes it. Detection is therefore a *hint*, and the handler validates everything again before writing
-anything. A false positive costs one `failed` line and an untouched file, never a rewrite. The bytes are
-never at risk, only the line count.
+`FDICT = 0`, a multiple of 31 — which is weaker than a magic number: exactly 1 of the 1984 two-byte
+sequences that can start a file satisfies it. Detection is therefore a *hint*, and the handler validates
+everything again before writing anything. The bytes are never at risk; what a false positive used to cost was
+a `failed` line, which is why the split above exists. A tree of 2000 unrelated files has a **~63 %** chance
+(1 − (1983/1984)^2000) of containing one, and until v0.12.1 that file turned a whole `tzim -r` run red.
+
+Detection is not made stronger to fix this: `BTYPE = 3` in the first block would divide the probability by
+roughly 1.33 and change nothing that matters, and a trial decode at detection time would cost a pass over
+every file the tool does not recognise.
 
 **Expected gain:** 0–10 %, and it depends entirely on who wrote the file. Streams from a default `zlib`
 level 6 — the level every library, HTTP client and tool uses by accident — have something left, but on small
@@ -805,7 +825,7 @@ decompress every file passed to the tool and accepting whatever happens to parse
 is the one thing this project does not do. It is refused in [formats §5](formats.md#5-refused-formats) with
 the same reasoning.
 
-**Verification IDs:** `T-ZL-01` … `T-ZL-08`.
+**Verification IDs:** `T-ZL-01` … `T-ZL-09`.
 
 ---
 

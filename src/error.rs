@@ -16,6 +16,12 @@ pub enum Error {
     /// ZIP64, encryption, unsupported method). Not a failure: the file is
     /// reported as skipped and the run still succeeds.
     Refused(String),
+    /// The input is not what the detector thought it was: a weak signature
+    /// matched and the handler proved it a coincidence. Not a failure either —
+    /// the file is reported as unsupported, the run still succeeds, and nothing
+    /// is written. Only a handler that can tell the difference (zlib, whose
+    /// header check is 1 in 1984) may raise this.
+    Unsupported(String),
     /// A candidate violated its contract. This is a bug in Tzim.
     Verify(String),
     /// Invalid command line.
@@ -33,6 +39,7 @@ impl fmt::Display for Error {
             Error::Parse(m) => write!(f, "{m}"),
             Error::Limit(m) => write!(f, "{m}"),
             Error::Refused(m) => write!(f, "{m}"),
+            Error::Unsupported(m) => write!(f, "{m}"),
             Error::Verify(m) => write!(f, "verification failed: {m}"),
             Error::Usage(m) => write!(f, "{m}"),
             Error::Internal(m) => write!(f, "internal error: {m}"),
@@ -63,6 +70,7 @@ impl Error {
             Error::Parse(_) => "parse",
             Error::Limit(_) => "limit",
             Error::Refused(_) => "refused",
+            Error::Unsupported(_) => "unsupported",
             Error::Verify(_) => "verify",
             Error::Usage(_) => "usage",
             Error::Internal(_) => "internal",
@@ -95,6 +103,10 @@ impl Error {
 
     pub fn refused(msg: impl Into<String>) -> Self {
         Error::Refused(msg.into())
+    }
+
+    pub fn unsupported(msg: impl Into<String>) -> Self {
+        Error::Unsupported(msg.into())
     }
 
     pub fn usage(msg: impl Into<String>) -> Self {
