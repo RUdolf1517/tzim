@@ -150,6 +150,42 @@ input that exercises the overflow bound.
 | `T-TIF-10` | `--strip-metadata` removes the textual tags only; geometry, colour and ICC survive |
 | `T-TIF-11` | `--formats png` reports a TIFF as skipped, not failed |
 
+### Filesystem, replacement and idempotence
+
+These are the rows behind I1, I5 and I7 of [guarantees §3](guarantees.md#3-global-invariants), and behind
+[safety](safety.md) §1 and §5. Each one names a test that exists today; the scenarios that have no test are in
+the "not covered" table in §3 and in issue #35, not here.
+
+| ID | Assertion | Test |
+| --- | --- | --- |
+| `T-FS-01` | Paths with spaces and non-ASCII characters are processed correctly | `unicode_and_space_filenames_work` |
+| `T-FS-02` | A read-only file is skipped with a reason and is byte-identical afterwards | `read_only_file_is_skipped` |
+| `T-FS-03` | One missing path among valid ones fails alone; the rest are processed; exit is `1` | `missing_path_fails_but_others_continue` |
+| `T-FS-04` | A symlink to a file is skipped by default and its target is untouched | `symlinks_are_not_followed_by_default` |
+| `T-FS-05` | The same file reached through three paths is processed once | `duplicates_are_processed_once` |
+| `T-FS-06` | Mode bits and mtime survive the replacement | `permissions_and_mtime_survive_the_replacement` |
+| `T-FS-07` | A second run over the same tree changes nothing | `second_run_is_a_no_op` |
+| `T-FS-08` | A directory is walked recursively when asked, and only then | `directory_is_processed_recursively` |
+| `T-FS-09` | A directory argument without `-r` stays at the top level | `a_directory_argument_without_recursive_stays_at_the_top_level` |
+| `T-FS-10` | `--dry-run` writes nothing and leaves no temporary file behind | `dry_run_does_not_modify_anything` |
+
+### `--strip-metadata`
+
+One row per handler that has the flag's behaviour tested. The tag, chunk and field lists themselves are
+normative in [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request); these rows are about the
+observable result.
+
+| ID | Assertion | Test |
+| --- | --- | --- |
+| `T-STRIP-01` | PNG: `tEXt` and `tIME` removed, `eXIf` removed, pixels identical, an unknown private chunk kept | `strip_metadata_removes_png_text_and_exif_but_keeps_the_content` |
+| `T-STRIP-02` | gzip: header reduced to the stripped form, payload identical after decoding | `strip_metadata_clears_the_gzip_header_and_keeps_the_payload` |
+| `T-STRIP-03` | JPEG: `APP1` and `COM` removed, `APP0` kept, coefficients unchanged | `strip_metadata_drops_jpeg_exif_and_comment` |
+| `T-STRIP-04` | ZIP: entry and archive comments removed, extra fields and payload byte-identical | `strip_metadata_drops_zip_comments_and_keeps_extra_fields` |
+| `T-STRIP-05` | The removal is reported — `metadata stripped` in text, `metadata_stripped` in the record, `strip_metadata` in the summary — and `--dry-run` writes nothing | `strip_metadata_is_reported_and_dry_run_writes_nothing` |
+| `T-STRIP-06` | Without the flag nothing is removed, whatever the encoder does | `metadata_is_preserved_when_the_flag_is_absent` |
+| `T-STRIP-07` | TIFF: the textual tags removed, `Orientation`, resolution and strips kept | `tiff_strip_metadata_removes_only_textual_tags` |
+| `T-STRIP-08` | zlib: nothing to remove, the flag is accepted, and no line claims otherwise | `strip_metadata_has_nothing_to_remove_from_zlib` |
+
 ---
 
 ## 3. Test levels

@@ -49,6 +49,29 @@ changed is that several documents stop claiming more than the code does.
 - **`docs/roadmap.md` marks the v0.1 numbers as history** instead of letting "41 unit and 21 integration
   tests" and "832 KiB" read as the current state.
 
+### Added
+
+- **`docs/guarantees.md` §3.1 states what "verified" compares**, format by format: which bytes, which fields,
+  which decoded pixels, and what is deliberately not compared. It says plainly that there is no semantic model
+  — two byte-identical APNG frames swapped is not detected and is not a defect — that the comparison is strict
+  rather than semantic, and that a defect symmetric in the encoder and the decoder passes every check here.
+- **`T-FS-01…10` and `T-STRIP-01…08` in `docs/testing.md` §2.** The filesystem, replacement and
+  `--strip-metadata` tests had no ids, so the traceability table `CONTRIBUTING.md` refers to did not cover the
+  promises that protect the original file. Every row names a test that exists; the scenarios with no test stay
+  in the "not covered" table and in #35.
+- **`docs/safety.md` §5 gained a `Test` column** and §1 a pointer to the `T-FS-*` ids, so a reader can see
+  which step of the algorithm is pinned and which is only described.
+
+### Changed
+
+- **`docs/safety.md` §7.1 and `docs/cli.md` §7 no longer imply that `--jobs` bounds memory.** It bounds how
+  many files are in flight. With the defaults, four workers can reach several GiB on inputs of a few megabytes:
+  the whole file and its candidate are held in memory, and a 100 MPix PNG costs about 800 MiB of decoded
+  buffers on its own. The numbers are in §7.1, with the two flags that actually reduce them.
+- **`docs/roadmap.md` records the seven decisions taken after the 0.11.0 audit** and lists `v0.11.1` as
+  planned: the equal-size candidate (#26, #44), a weak signature no longer producing `failed` (#52), a computed
+  memory budget (#51), and the documentation in this release.
+
 ## [0.11.0] - 2026-10-25 — distribution
 
 No handler changed and no file is treated differently. This release is about the three minutes between

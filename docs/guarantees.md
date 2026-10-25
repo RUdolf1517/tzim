@@ -153,6 +153,45 @@ These hold for every format, in addition to the per-format contract.
 | **I7** | The candidate is written to a temporary file in the same directory and replaces the original only by an atomic rename where the platform supports it (see [safety](safety.md)). |
 | **I8** | Anything that cannot be parsed with full confidence is refused with a clear message, never "repaired". Tzim does not attempt to fix broken files, and never writes an output for an input it could not fully validate. |
 
+The filesystem-level invariants — **I1**, **I5**, **I7** — are pinned by the tests that carry `T-FS-*` ids in
+[testing §2](testing.md#2-traceability). The ones without such an id have no test yet, and
+[testing](testing.md#2-traceability) lists them as such rather than implying coverage.
+
+### 3.1 What "verified" actually compares — and what it does not
+
+`verify` runs on every candidate before the rename, and the word appears throughout this document, so it is
+worth stating exactly what it is a comparison *of*. It is a byte, structure and pixel comparison. It is not a
+semantic model of an image, an archive or a document, and nothing here claims that it is.
+
+| Format | What `verify` compares |
+| --- | --- |
+| PNG | The `IHDR` payload; every chunk that is neither `IDAT` nor `fdAT` byte for byte and in order; every frame decoded with the `png` crate and compared per index, together with its control data. Under `--strip-metadata`, no chunk from the list in §2.7 may survive. |
+| gzip | The header — or, under the flag, exactly the stripped header and nothing else; the eight trailer bytes; payload length and CRC-32; and the inflated payload, in 64 KiB blocks. |
+| zlib | The two header bytes, the four `Adler-32` bytes, and the inflated payload. The checksum is recomputed here, not taken from the encoder. |
+| ZIP | Entry count and order, names, methods, flags, version fields, extra fields, entry and archive comments, each entry's CRC-32 and uncompressed size, and each entry's inflated content. A nested child is re-verified against its own contract. |
+| ICO / CUR | The type, the entry count and order, every directory field except the size/offset pair, bitmaps byte for byte, and embedded PNGs through the PNG check above. |
+| TIFF | The surviving entries' tag, type, count and value; the strip count and geometry; and every strip decoded and compared. |
+| JPEG | The marker sequence outside the entropy-coded data, `DQT` and `SOF` payloads byte for byte, and every DCT coefficient, decoded and re-encoded. |
+
+What it therefore does **not** do:
+
+- **It does not compare sizes.** Whether a candidate is small enough to be worth writing is decided in the
+  pipeline, before `verify` is called, and the rule is in I2.
+- **It has no notion of meaning.** Two byte-identical APNG frames swapped with each other are not detected,
+  because the decoded pixel sequence is unchanged; such a swap changes nothing that any consumer can observe,
+  so it is not a defect. Two *different* frames swapped are detected, because the pixels at that index differ.
+  The comparison is deliberately strict rather than semantic: a comment re-encoded to different bytes with the
+  same characters is rejected, exactly as a removed one would be.
+- **It is only as good as the decoder it uses.** Where the comparison is decoded content, a defect symmetric
+  in the encoder and the decoder passes every check here; §2.6 names that case for each format instead of
+  calling the result independent.
+- **It says nothing about the filesystem.** Permissions, ownership, mtime, `fsync` and the atomicity of the
+  rename belong to [safety](safety.md) and are checked by `T-FS-*` tests, not by `verify`.
+
+So "verified" in this document means: *the accepted candidate compares equal to its original under the rules
+in the table above*. It does not mean "proved to be the same picture", and it does not mean "semantically
+identical". Anything stronger is not claimed anywhere.
+
 Refusal is always preferable to a guess. There is no `--force` flag that bypasses a contract check.
 
 ---

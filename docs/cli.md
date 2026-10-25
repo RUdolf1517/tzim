@@ -254,13 +254,18 @@ Statuses in dry-run: `would_optimize` (a strictly smaller, verified candidate ex
 | --- | --- | --- |
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
-| jobs | 4 (2 with `--zopfli`) | bounded memory; Zopfli's compressor state is large |
+| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |
 | `fsync` | on | a replaced file should survive a crash |
 
 Limits produce `skipped`, never `failed`: hitting a configured bound is not an error.
+
+`--jobs` is about parallelism, not about memory: the whole file and its candidate are held in memory, and a
+decoded image can cost hundreds of megabytes per side. The real ceiling and the numbers behind it are in
+[safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget); `--max-pixels` and `--max-size` are the two
+flags that actually reduce it.
 
 ---
 
