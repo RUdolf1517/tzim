@@ -18,10 +18,15 @@
 #
 # Counts below are from the 0.12.1 corpus run (`tzim-ci:corpus:c012ba5`), which
 # used the same pinned archives as this file's neighbours. A reason found there
-# but not here was not distinguishable from its neighbours in that run's report;
-# the run that adds zlib streams prints the full list, and any it reveals belong
-# here.
+# but not here was not distinguishable from its neighbours in that run's report.
+# The six rows from `compression 4` down come from the run that added the zlib
+# streams (issue #36), which printed the full top-six list; `FillOrder 2` appeared
+# in the run that fixed the TIFF writer (issue #54), and it belongs in the table
+# because five files stopped being optimized and started being refused.
 12	more than one IFD
+12	compression 4 is not rewritten by this build
 9	tiled layout is not supported
 8	only baseline sequential
+6	tag 34665 carries an offset to another structure, which a...
 5	IFD entries are not in ascending tag order
+5	FillOrder 2

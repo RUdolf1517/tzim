@@ -302,7 +302,9 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
   flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
 - **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
   with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
-  prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)).
+  prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)). It found a defect on its
+  first run: five Pillow TIFFs with `FillOrder 2` were being compressed into files libtiff cannot decode, and
+  the writer now refuses them ([guarantees §4.8](guarantees.md#48-tiff-classic-baseline-strips--v07)).
 - **The three coverage gaps** (#36): `tiff` and `zlib` in the fuzz build, seeds for `strip`, zlib in the
   corpus, and a baseline for the refused set — the assertion `testing.md` had been claiming since 0.10.
 - **The 0.12.1 errata** (#62): the size job's own line confirms the binary did not move and the tarball deltas

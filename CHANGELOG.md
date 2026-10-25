@@ -80,14 +80,26 @@ under *Changed* below.
   waits 150 ms.
 - **A file that used to be processed may now be skipped**: that is `--memory-budget` working as configured.
   Nothing changes with the default budget, and a run that sets it should expect the skips and read the note.
-- **The `size` job's gate is the previous release's binary**, not a percentage above it: 1 049 440 bytes,
-  the v0.12.1 measurement. `jpeg-v1` was approved on the condition that the shipping binary does not grow, and
-  **it does not fit** — the first run measured `bytes: 1098592, budget: 1049440`, so the feature ships off
-  rather than the condition being renegotiated. The gate stays where it is: it caught the one thing in this
-  release that a reviewer could not have measured by reading the diff.
+- **The `size` job's gate is the binary this release ships**, to the byte: 979 808 bytes, after a release
+  whose gate left 150 KiB of headroom underneath a green check (issue #62). `jpeg-v1` was approved on the
+  condition that the shipping binary does not grow past 1 049 440 bytes — the v0.12.1 measurement — and
+  **it does not fit**: the run that carried it measured `bytes: 1098592, budget: 1049440`, so the feature
+  ships off rather than the condition being renegotiated. That is the gate doing the one job a reviewer
+  could not do by reading the diff.
 
 ### Fixed
 
+- **TIFF: `FillOrder 2` is refused instead of being compressed into a file libtiff rejects** (found by issue
+  #54's job, on its first run). Five Pillow fixtures — `tiff_gray_2_4_bpp_hopper{2,4,2I,4I}R.tif` and
+  `16bit.r.tif` — were read by Pillow, rewritten by tzim, and then refused by Pillow with `decoder error
+  -2`. All five store the bits of every byte reversed and leave the strips uncompressed; libtiff reverses the
+  bits of a *compressed* strip before it inflates it, so `FillOrder 2` is decodable only while the strip is
+  uncompressed, and the rewrite had been shrinking files by breaking them. Reproduced by hand against Pillow
+  13/libtiff: deflating `hopper2R.tif` and keeping the tag reproduces the error, while the same file with
+  `FillOrder 1`, or without the tag, reads back pixel-identical. The file is now `skipped` with a reason, like
+  LZW and tiled layouts ([guarantees §4.8](docs/guarantees.md#48-tiff-classic-baseline-strips--v07)), and
+  `tiff_reversed_bit_order_is_skipped` fails against the writer as it was. Nothing was wrong inside tzim's own
+  comparison — which is the blindness the external decoder exists to cover.
 - **The zlib note no longer claims more than the decoder knows** (issue #62). `nothing decodes behind the
   header` used to be reported as `this is not a zlib stream`, which is false for a real stream truncated to a
   few dozen bytes. The note now says `either the header was a coincidence or the stream is too short to
