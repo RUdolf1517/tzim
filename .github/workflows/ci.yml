@@ -13,13 +13,21 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
+  # Two configurations, on every platform (#68). Until v0.13 the only `cargo
+  # test` in this repository was `--all-features`, which is the configuration
+  # nobody ships: `default` turns `jpeg-v1` off, so `--info` prints a different
+  # sentence and `verify` takes a different path for a JPEG candidate. A branch
+  # that only a release executes is a branch nothing executes.
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # `all-features` is the widest build; `default` is what a published
+        # binary is compiled with (Cargo.toml `default = [...]`).
+        features: [all-features, default]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,17 +56,79 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test --all-features --locked 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}.log"
+          # An empty `flags` disappears in the word split below, which is what
+          # `default` wants: the plain `cargo test` a user runs.
+          case "${{ matrix.features }}" in
+            all-features) flags=--all-features ;;
+            default) flags= ;;
+            *) echo "::error::unknown feature set '${{ matrix.features }}'"; exit 2 ;;
+          esac
+          cargo test $flags --locked 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}-${{ matrix.features }}.log"
 
       - name: Publish failure log
         if: steps.test.outcome == 'failure'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/ci-report.sh "/tmp/tzim-test-${{ matrix.os }}.log" "test-${{ matrix.os }}"
+        run: bash .github/scripts/ci-report.sh "/tmp/tzim-test-${{ matrix.os }}-${{ matrix.features }}.log" "test-${{ matrix.os }}-${{ matrix.features }}"
 
       - name: Fail the job
         if: steps.test.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  # The smallest build that still has a handler (#68): `png` alone, with every
+  # feature that is not PNG switched off. Nothing in this repository had ever
+  # compiled it, let alone run it, and it is the configuration a user gets from
+  # `cargo build --no-default-features --features png`.
+  #
+  # One platform, because this is a configuration check and not a portability
+  # check: the three operating systems are covered by the `test` matrix above.
+  #
+  # Integration tests are compiled here and not run. Of the 120 tests in
+  # `tests/integration.rs`, 65 assert what gzip, ZIP, ICO, JPEG, TIFF, zlib or
+  # `--zopfli` do, and in this build those handlers are not compiled in — the
+  # tests would fail on "unsupported", not on a defect. Gating 65 of them one by
+  # one would not add coverage to this leg, it would take the leg's meaning away,
+  # so the targets that can run are named explicitly instead. Nothing is filtered
+  # by name: a filter would silently run fewer tests as the suite grows, which is
+  # the failure mode this job exists to avoid.
+  minimal:
+    name: minimal (png only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test the minimal configuration
+        id: minimal
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            # Every test target has to compile in this configuration, including
+            # the ones that cannot run in it. A test file that stops building
+            # for `--features png` is a test file that has quietly become
+            # all-features-only, and `--no-run` is what notices. This also
+            # builds the binary itself, which the integration target links.
+            cargo test --no-default-features --features png --no-run --locked
+            # Then the targets whose assertions hold in this build: the library's
+            # unit tests (each handler module is gated, so the PNG ones run), the
+            # verifier tests, and the shipped-document checks.
+            cargo test --no-default-features --features png --locked \
+              --lib --test verification --test packaging
+          } 2>&1 | tee /tmp/tzim-minimal.log
+
+      - name: Publish failure log
+        if: steps.minimal.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-minimal.log minimal
+
+      - name: Fail the job
+        if: steps.minimal.outcome == 'failure'
         shell: bash
         run: exit 1
 

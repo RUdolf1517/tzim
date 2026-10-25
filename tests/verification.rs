@@ -23,6 +23,14 @@
 //!   pass for the wrong reason. What is pinned instead is the rule that the bytes
 //!   after `EOI` survive, which nothing else compares.
 
+// This file is compiled in every configuration CI builds, including
+// `--no-default-features --features png` (#68), so a test that reaches into a
+// handler which is not compiled in carries that handler's `#[cfg]`. The gates are
+// exhaustive rather than defensive: with all features on — which is what `test
+// (…, all-features)` and `(…, default)` run — every one of them is true, so no
+// test is skipped there, and the minimal build compiles the file instead of the
+// file quietly becoming all-features-only.
+//
 // The fixture writers are shared with `tests/integration.rs` and already carry
 // their own `#![allow(dead_code)]`; a second attribute here is a clippy error.
 mod common;
@@ -138,6 +146,7 @@ fn verification_rejects_a_dropped_chunk() {
     assert!(err.to_string().contains("chunk count changed"), "{err}");
 }
 
+#[cfg(feature = "gzip")]
 #[test]
 fn verification_rejects_a_kept_filename() {
     // Under `--strip-metadata` exactly one gzip header is acceptable: the stripped
@@ -151,6 +160,7 @@ fn verification_rejects_a_kept_filename() {
     assert!(err.to_string().contains("not the stripped header"), "{err}");
 }
 
+#[cfg(feature = "zip")]
 #[test]
 fn verification_rejects_a_changed_stored_entry() {
     let entry = ZipEntrySpec::stored("a.txt", b"stored bytes are never recompressed");
@@ -168,6 +178,7 @@ fn verification_rejects_a_changed_stored_entry() {
     assert!(err.to_string().contains("stored data changed"), "{err}");
 }
 
+#[cfg(feature = "zip")]
 #[test]
 fn verification_rejects_a_surviving_comment() {
     // The archive comment is the one thing `--strip-metadata` removes from the
@@ -186,6 +197,7 @@ fn verification_rejects_a_surviving_comment() {
     );
 }
 
+#[cfg(feature = "tiff")]
 #[test]
 fn verification_rejects_a_changed_tag_value() {
     // Same geometry, same strips, same compression — only an ASCII tag's value
@@ -235,6 +247,7 @@ fn verification_rejects_a_changed_bitmap_entry() {
     assert!(err.to_string().contains("bitmap payload changed"), "{err}");
 }
 
+#[cfg(feature = "jpeg")]
 #[test]
 fn verification_rejects_changed_trailing_bytes() {
     // Bytes after `EOI` are part of the file, not padding: cameras append a second
