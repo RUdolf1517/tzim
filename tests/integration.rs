@@ -2483,7 +2483,10 @@ fn t_png_03_every_scanline_filter_round_trips() {
         assert_eq!(code, 0, "filter {filter}: stdout={stdout} stderr={stderr}");
 
         let optimized = std::fs::read(&path).unwrap();
-        assert!(optimized.len() < original.len(), "filter {filter}: expected a gain");
+        assert!(
+            optimized.len() < original.len(),
+            "filter {filter}: expected a gain"
+        );
         let (w2, h2, p2) = decode_pixels(&optimized).unwrap();
         assert_eq!((w1, h1), (w2, h2));
         assert_eq!(p1, p2, "filter {filter}: pixels must be identical");
@@ -2551,8 +2554,12 @@ fn t_apng_05_an_inconsistent_frame_sequence_is_refused() {
     let mut pos = 8usize;
     let mut bumped = false;
     while pos + 8 <= damaged.len() {
-        let len = u32::from_be_bytes([damaged[pos], damaged[pos + 1], damaged[pos + 2], damaged[pos + 3]])
-            as usize;
+        let len = u32::from_be_bytes([
+            damaged[pos],
+            damaged[pos + 1],
+            damaged[pos + 2],
+            damaged[pos + 3],
+        ]) as usize;
         let typ = &damaged[pos + 4..pos + 8];
         let data = pos + 8;
         if typ == b"fdAT" {
@@ -2574,8 +2581,12 @@ fn t_apng_05_an_inconsistent_frame_sequence_is_refused() {
     // refusal below is about the sequence and not about a checksum.
     let mut pos = 8usize;
     while pos + 8 <= damaged.len() {
-        let len = u32::from_be_bytes([damaged[pos], damaged[pos + 1], damaged[pos + 2], damaged[pos + 3]])
-            as usize;
+        let len = u32::from_be_bytes([
+            damaged[pos],
+            damaged[pos + 1],
+            damaged[pos + 2],
+            damaged[pos + 3],
+        ]) as usize;
         let data = pos + 8;
         let crc_at = data + len;
         if &damaged[pos + 4..pos + 8] == b"fdAT" {
@@ -2591,7 +2602,10 @@ fn t_apng_05_an_inconsistent_frame_sequence_is_refused() {
     let (code, stdout, stderr) = run(&["broken.png"], &ws.path);
     assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("failed"), "{stdout}");
-    assert!(stdout.contains("sequence"), "the note must name the reason: {stdout}");
+    assert!(
+        stdout.contains("sequence"),
+        "the note must name the reason: {stdout}"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), damaged);
 }
 

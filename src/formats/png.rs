@@ -75,7 +75,9 @@ struct Chunk<'a> {
 /// frame count `acTL` declares.
 fn check_frame_sequence(chunks: &[Chunk<'_>]) -> Result<()> {
     let declared = match chunks.iter().find(|c| c.typ == *b"acTL") {
-        Some(c) if c.data.len() >= 8 => u32::from_be_bytes([c.data[0], c.data[1], c.data[2], c.data[3]]),
+        Some(c) if c.data.len() >= 8 => {
+            u32::from_be_bytes([c.data[0], c.data[1], c.data[2], c.data[3]])
+        }
         Some(_) => return Err(Error::parse("png: acTL chunk is malformed")),
         None => return Ok(()),
     };
@@ -92,7 +94,8 @@ fn check_frame_sequence(chunks: &[Chunk<'_>]) -> Result<()> {
                 String::from_utf8_lossy(&chunk.typ)
             )));
         }
-        let actual = u32::from_be_bytes([chunk.data[0], chunk.data[1], chunk.data[2], chunk.data[3]]);
+        let actual =
+            u32::from_be_bytes([chunk.data[0], chunk.data[1], chunk.data[2], chunk.data[3]]);
         if actual != expected {
             return Err(Error::parse(format!(
                 "png: frame sequence is inconsistent: `{}` is numbered {actual} where {expected} was \
