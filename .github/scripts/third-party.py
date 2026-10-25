@@ -179,10 +179,23 @@ def relative(root, path):
 
 
 def check(before_root, after_root, records):
+    """Three outcomes per file, the same three `verify` has since #39.
+
+    * both decode and agree -> covered;
+    * the *original* does not decode -> **no verdict**: an oracle that cannot read
+      the file has no opinion about it, and tzim is allowed to understand a TIFF
+      that Pillow refuses (bit depths it does not implement, one APNG fixture that
+      is missing frame data). Counted and named, not failed — the alternative is a
+      gate that a stranger's decoder bug can turn red;
+    * the original decodes and the *candidate* does not, or the two disagree ->
+      the writer produced something a second implementation rejects, which is the
+      one class of defect this job exists for.
+    """
     accepted = [r for r in records if r.get("status") == "optimized"]
     by_format = collections.Counter()
     problems = []
     skipped = []
+    unverifiable = []
 
     for record in accepted:
         fmt = record.get("format")
@@ -201,14 +214,23 @@ def check(before_root, after_root, records):
             original = fh.read()
         with open(after, "rb") as fh:
             candidate = fh.read()
+        try:
+            digest(fmt, original)
+        except Exception as exc:
+            # The baseline exists on both sides and this decoder cannot read it.
+            unverifiable.append((after, str(exc)))
+            continue
         by_format[fmt] += 1
         try:
             compare(fmt, original, candidate)
         except Mismatch as exc:
             problems.append(f"{after} [{fmt}]: {exc}")
-        except Exception as exc:  # a decoder refusing a file we accepted
-            problems.append(f"{after} [{fmt}]: third-party decoder failed: {exc}")
-    return accepted, by_format, problems, skipped
+        except Exception as exc:
+            problems.append(
+                f"{after} [{fmt}]: the candidate is unreadable to a decoder that "
+                f"reads the original: {exc}"
+            )
+    return accepted, by_format, problems, skipped, unverifiable
 
 
 def self_test(before_root, after_root, accepted):
@@ -222,6 +244,12 @@ def self_test(before_root, after_root, accepted):
             continue
         with open(before, "rb") as fh:
             original = fh.read()
+        try:
+            digest(fmt, original)
+        except Exception:
+            # The self-test must pick a file the comparison can actually reach,
+            # or it would "detect" the mutation by failing to read the original.
+            continue
         with open(record["path"], "rb") as fh:
             candidate = fh.read()
         mutated = mutate(fmt, candidate)
@@ -287,7 +315,7 @@ def main():
     print()
 
     records = load_records(args.run)
-    accepted, by_format, problems, skipped = check(
+    accepted, by_format, problems, skipped, unverifiable = check(
         os.path.abspath(args.before), os.path.abspath(args.after), records
     )
 
@@ -298,6 +326,16 @@ def main():
         print(f"skipped by this script: {len(skipped)}")
         for path, why in skipped[:10]:
             print(f"  {os.path.basename(path)}: {why}")
+    if unverifiable:
+        print(
+            f"no verdict ({len(unverifiable)}): the decoder cannot read the original either"
+        )
+        for path, why in unverifiable[:10]:
+            print(f"  {os.path.basename(path)}: {why}")
+        print(
+            "::warning:: files this decoder cannot read are counted, not failed: "
+            "an oracle with no opinion is not a verdict"
+        )
 
     lines = ["## Third-party verification", ""]
     lines.append("| Format | Files compared |")
@@ -305,6 +343,19 @@ def main():
     for fmt, count in sorted(by_format.items()):
         lines.append(f"| {fmt} | {count} |")
     lines.append("")
+    lines.append(f"Accepted by tzim: {len(accepted)}; compared: {sum(by_format.values())}; "
+                 f"no verdict: {len(unverifiable)}; mismatches: {len(problems)}.")
+    lines.append("")
+    if unverifiable:
+        lines.append(
+            f"{len(unverifiable)} accepted file(s) could not be compared, because the "
+            "independent decoder cannot read the original either — an oracle with no "
+            "opinion is not a verdict (the same rule `verify` follows for the "
+            "`jpeg-v1` decoder): "
+            + ", ".join(f"`{os.path.basename(p)}`" for p, _ in unverifiable[:12])
+            + ("…" if len(unverifiable) > 12 else "")
+        )
+        lines.append("")
     lines.append("Decoders: " + ", ".join(versions()))
     lines.append("")
 

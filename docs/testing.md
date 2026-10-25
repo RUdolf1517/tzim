@@ -450,7 +450,17 @@ and the reader round-trips "successfully" ([guarantees §2.6](guarantees.md#26-v
 
 The job fetches the same pinned corpus as §3, keeps a copy of the originals, runs tzim over the tree, and then
 compares each `optimized` file with its original. It is triggered by any change under `src/formats/`, weekly,
-and on dispatch. Two rules make it a gate rather than a report:
+and on dispatch.
+
+Three outcomes per file, the same three `verify` has had since v0.13: **both decode and agree** is covered;
+**the original does not decode** is *no verdict* — a handful of corpus TIFFs and one APNG fixture are files
+Pillow cannot read and tzim can, and an oracle with no opinion is not a verdict, so they are counted and named
+in the report rather than failing the job; **the original decodes and the candidate does not, or the two
+differ** is a defect. That split is not a loophole: it is exactly the rule `jpeg-v1` follows inside `verify`,
+and the numbers (compared / no verdict / mismatches) are printed on every run so a growing "no verdict" count
+is visible.
+
+Two rules make it a gate rather than a report:
 
 - **it proves it can fail.** `--self-test` mutates one accepted candidate — one changed pixel for an image,
   one flipped bit in a compressed payload — and requires the comparison to reject it. A comparison that
