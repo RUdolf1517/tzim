@@ -127,7 +127,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
 | zlib | nothing: no name, no comment, no timestamp in the header | the header, the trailer, the payload |
 | FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
-| TIFF | `ImageDescription`, `DocumentName`, `Make`, `Model`, `Software`, `DateTime`, `HostComputer`, `InkNames`, `Copyright`, IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips |
+| TIFF | `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata (42112) | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips, GDAL nodata (`42113`), unknown tags |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
 timestamp removes metadata without removing bytes, and the point of the flag is the metadata. A candidate
@@ -271,13 +271,18 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 | --- | --- | --- |
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
-| jobs | 4 (2 with `--zopfli`) | parallelism; peak memory is roughly `--max-size` × `jobs`, see [safety §7](safety.md#7-disk-space-and-memory) |
+| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |
 | `fsync` | on | a replaced file should survive a crash |
 
 Limits produce `skipped`, never `failed`: hitting a configured bound is not an error.
+
+`--jobs` is about parallelism, not about memory: the whole file and its candidate are held in memory, and a
+decoded image can cost hundreds of megabytes per side. The real ceiling and the numbers behind it are in
+[safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget); `--max-pixels` and `--max-size` are the two
+flags that actually reduce it.
 
 ---
 

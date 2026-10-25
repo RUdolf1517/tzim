@@ -9,6 +9,9 @@ repository = "https://github.com/RUdolf1517/tzim"
 readme = "README.md"
 keywords = ["lossless", "optimization", "png", "gzip", "jpeg"]
 categories = ["command-line-utilities", "compression"]
+# Audit records are history, not documentation the crate needs: keep them in the repository
+# and out of the published package.
+exclude = ["docs/audits/"]
 
 [lib]
 name = "tzim"

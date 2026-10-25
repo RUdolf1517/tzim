@@ -106,8 +106,9 @@ Every behavioural change needs a test. Specifically:
 - corrupted and refusal cases are as important as success cases;
 - tests must not touch the network, must not depend on the clock, and must clean up their temporary
   directories;
-- fixtures are built at run time by `tests/common/mod.rs` — no binary fixture is committed, so a test that
-  needs a new case adds a writer there, not a file under `tests/fixtures/`.
+- fixtures are built by code in `tests/common/mod.rs` at run time and are never committed, so a reviewer can
+  read what a test feeds the binary and a new case is a writer, not a blob; large samples come from the
+  downloaded corpus, not from the tree.
 
 If you find a case where Tzim produced a file that a real consumer rejects, **that is the highest-priority
 bug class in the project**. Please include the original file (or a minimised reproducer) and the consumer

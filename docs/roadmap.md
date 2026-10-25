@@ -20,6 +20,11 @@ planning aids, not commitments.
 | Documentation language | English only | the project is intended for external open-source use |
 | Losslessness | one invariant, no opt-out | the entire value proposition |
 | Verification | always independent of the writer | a bug in the writer must not be able to confirm itself |
+| zlib false positives | a *weak* signature never produces `failed`; a stream that decodes nothing is `unsupported`, a stream that decodes and then breaks stays `failed` | keeps the exit code honest for a directory of unrelated files without losing the corruption signal (O1) |
+| Memory | enforce a computed budget (`--jobs` × the decoded size a file can need) and `skip` above it | the current limit counts files, not bytes, so it does not bound anything (O2) |
+| Binary size | drop `indicatif`/`console` and draw the progress line by hand before cutting any format or `--zopfli` | 92–96 KiB on every row, and it cancels one promise instead of several (O3) |
+| Traceability | `T-FS-*` and `T-STRIP-*` rows exist only for tests that exist | a row without a test is how `testing.md` drifted in the first place (O5) |
+| `verify` semantics | byte, structure and pixel comparison, stated as such; no semantic model is claimed | cheaper, honest, and it is what the code does (O7) |
 
 ---
 
@@ -47,10 +52,12 @@ with the tree is a historical note, not a lie, as long as it says which release 
 - Independent verification for both formats.
 - Test suite, fixture corpus, failure-injection hooks, CI on three platforms, size measurement.
 
-**Status:** implemented. 41 unit and 21 integration tests pass on Linux, macOS and Windows; clippy is clean
-with `-D warnings`; the static musl binary measures 832 KiB. Remaining before a tagged release: commit
-`Cargo.lock`, publish artifacts, and fill the comparative benchmark rows in
-[benchmarks.md](benchmarks.md#4-what-is-still-missing).
+**Status (v0.1, kept as history):** implemented. That milestone shipped with 41 unit and 21 integration
+tests, a clean clippy run with `-D warnings`, and an 832 KiB static musl binary. The numbers describe v0.1,
+not the current tree: today there are 101 unit, 89 integration and 10 packaging tests
+([testing](testing.md)), and the binary is 1024 KiB ([size budget](size-budget.md#1-budget)). The
+remaining-work list of that milestone — committing `Cargo.lock`, publishing artifacts, filling the benchmark
+rows — was closed before v0.2.
 
 **Gate**
 
@@ -186,7 +193,7 @@ build behaves differently.
   encoder this repository would have to write and could not verify. BigTIFF, tiles, separate planes,
   predictors, EXIF/GPS sub-IFDs and unknown *out-of-line* tags are refused with a reason; unknown tags that
   fit in the entry itself are copied untouched.
-- `--strip-metadata` removes the textual tags only ([cli §4](cli.md#2-options)), and the acceptance
+- `--strip-metadata` removes the textual tags only ([cli §2](cli.md#2-options)), and the acceptance
   rule stays "never larger".
 
 **Why the version moves**: a new format is observable. The binary grows by roughly 10 KiB, measured in
@@ -197,9 +204,9 @@ build behaves differently.
 Nothing here changes a byte of output:
 
 - colour and a progress line, both off unless a terminal is attached, with `--color`, `--no-color`,
-  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §9](cli.md#10-colour-and-progress));
+  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §10](cli.md#10-colour-and-progress));
 - clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
-  stdout pipe that exits quietly instead of aborting ([cli §10](cli.md#11-conformance-with-cli-conventions));
+  stdout pipe that exits quietly instead of aborting ([cli §11](cli.md#11-conformance-with-cli-conventions));
 - the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)
   and the [audit](flac-audit.md) behind it.
 
@@ -246,6 +253,23 @@ what the tool can read:
 - **Two CI jobs that test packaging**, not just code: `cargo package` builds the crate as crates.io would
   receive it, and the `installer` job installs the published release and then proves a doctored archive is
   refused.
+
+### v0.11.1 — the first patch after the audit — **planned**
+
+One user-visible defect and three decisions, no new features:
+
+- **The equal-size candidate stops being an internal error** (#26, #44): one predicate, `size_ok`, used by the
+  pipeline, both handlers and both fuzz targets. Today `tzim x.gz --strip-metadata` on an already-optimal file
+  whose body recompresses to the same length reports `internal error` and exits `1`.
+- **A weak signature never produces `failed`** (O1): a zlib header that decodes nothing is `unsupported`; one
+  that decodes and then breaks is still `failed`, so a truncated stream keeps its corruption signal.
+- **A memory budget** (O2): the limit becomes bytes rather than files, and a file above it is `skipped` with a
+  reason instead of being read.
+- **Documents and code agree** in the same release: [guarantees §3.1](guarantees.md#31-what-verified-actually-compares--and-what-it-does-not)
+  says what "verified" compares, and `T-FS-*` / `T-STRIP-*` rows are in
+  [testing §2](testing.md#2-traceability).
+
+The tag is cut from `main` only after those tests fail before the fix and pass after it.
 
 ### v0.12+ — the queue after this
 

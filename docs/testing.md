@@ -2,27 +2,29 @@
 
 Related: [guarantees](guarantees.md) · [formats](formats.md) · [safety](safety.md)
 
-A file optimizer is trusted or it is worthless. Tests are therefore not coverage theatre: every clause of
-every contract has an executable check, and the failure modes that damage user data are tested explicitly.
+A file optimizer is trusted or it is worthless. Tests are therefore not coverage theatre: the failure modes
+that damage user data are tested explicitly, and where a clause has no check, this document says so instead of
+implying one exists. There is no property-testing framework and no failure-injection harness here; what exists
+is 101 unit tests, 89 integration tests and 10 packaging tests, each asserting a case someone thought of. A
+green suite means those cases hold, not that the contract holds.
 
 ---
 
 ## 1. Invariants under test
 
-These hold for every format. Where a row below says the evidence is a unit test, a review, or nothing, it
-says so: the table is a description of the tests that exist, not a wish list.
+These hold for every format and are tested as properties, not as anecdotes.
 
 | ID | Invariant | How it is tested |
 | --- | --- | --- |
-| I1 | The original is never modified unless the candidate passes all checks | every refusal and failure test compares the file before and after (bytes, and `mtime` where it matters). There is **no** failure-injection harness: the stages that can fail are reached through real refusals — a corrupt input, an unsupported path, a read-only file, a candidate that is not smaller — not through a fake error at a chosen line |
-| I2 | A candidate is only used if smaller, or the same size when stripping | `formats::size_ok` unit test (all four flag/size combinations, plus the empty-candidate case); `strip_metadata_equal_size_zip_is_optimized` and `strip_metadata_equal_size_gzip_is_not_a_failure` for the two handlers that can emit an equal-size candidate; fixtures with nothing to gain assert `already_optimal` |
-| I3 | No metadata is removed | per-format inventory comparison in the integration tests, including unknown/private PNG chunks and ZIP extra fields |
-| I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler exists, so there is nothing to test |
-| I5 | Concurrent modification aborts the operation | unit test of `replace::changed_since` (length, mtime, `(device, inode)`); the abort path itself is not driven end-to-end, because nothing can move a file at the right instant deterministically without a hook |
-| I6 | Verification uses an independent decoder | documented per format in [guarantees §2.6](guarantees.md#26-verification-independence), and true for PNG/ICO/gzip/ZIP/zlib content through the `png` and `flate2` crates. There is **no** architecture test; the claim is checked by review, and the JPEG case where it does not hold is stated rather than hidden |
-| I7 | Replacement is atomic where the platform allows | unit tests of the `replace` guard (`TempFile` removes itself unless committed) and of `changed_since`; that the `rename` is the last step is verified by reading `replace::commit`, which is 20 lines with one syscall in the middle |
-| I8 | Unparseable input is refused, never repaired | corrupted inputs per format (bad CRC, truncated, missing `IEND`, trailing bytes, bad zlib trailer, inconsistent ZIP headers); assert `failed` and no output |
-| I9 | Presentation never changes results | the same tree rendered with `--color=always` and `--color=never` is identical once SGR sequences are stripped; `--json --color=always` contains no escape sequence; the real-file corpus reports the same "bytes written" total as the previous release |
+| I1 | The original is never modified unless the candidate passes all checks | every failure test reads the original back and compares it byte for byte; there is no per-stage injection, so a stage cannot be forced to fail on demand |
+| I2 | A candidate is only used if strictly smaller | fixtures whose best candidate is larger (`already_optimal_zip_is_left_alone`, `tiff_already_deflated_small_file_is_left_alone`, `ico_with_only_bitmaps_is_already_optimal`); a candidate of **exactly** equal size has no test, and currently fails — see B1 in the 0.11.0 audit and issue #26 |
+| I3 | No metadata is removed | per-format inventory comparison, including unknown/private chunks and extra fields |
+| I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler may exist, so there is nothing to test |
+| I5 | Concurrent modification aborts the operation | **no test.** The `(device, inode, length, mtime)` re-check in `replace.rs` is exercised only by its unit test `snapshot_roundtrip_detects_changes`; nothing modifies a file mid-run |
+| I6 | Verification uses an independent decoder | **no test.** The separation is a property of the code layout, checked in review; nothing fails if a writer function is called from `verify()` |
+| I7 | Replacement is atomic where the platform allows | `guard_removes_uncommitted_file` shows the guard deletes an uncommitted candidate; nothing asserts that `rename` is the last fallible operation, and no test kills a run between `fsync` and `rename` |
+| I8 | Unparseable input is refused, never repaired | targeted tests per format — `corrupt_png_is_refused_and_left_untouched`, `truncated_zip_is_refused`, `corrupt_entry_crc_is_refused`, `jpeg_truncated_file_fails_and_is_untouched`, `tiff_truncated_file_fails_and_is_untouched`, `a_corrupt_adler32_is_refused_and_the_file_is_untouched` — not a corpus |
+| I9 | Presentation never changes results | `colour_is_absent_in_a_pipe_and_present_when_forced` and `json_is_never_coloured`; the comparison against the previous release's totals is **not** automated — the corpus keeps no baseline |
 
 Idempotence is also a property: running Tzim twice on the same tree must produce zero changes the second
 time.
@@ -31,9 +33,21 @@ time.
 
 ## 2. Traceability
 
-Each contract clause maps to at least one named test. The list is the checklist used in review; a format is
-not done until every row passes in CI. A row whose assertion has no test says so in the row itself — the
+Each contract clause has an ID and the tables below state the assertion behind it. The IDs are the checklist
+used in review; a format is not done until every row has a test that passes in CI. Where a row has a test, the
+row names it. A row whose assertion has **no** test says so in the row itself rather than looking covered: the
 table is evidence, not a plan.
+
+Six rows that said nothing at all in 0.11.0 now name the test that pins them — `--zopfli` never worse than the
+default (`T-PNG-09`), gzip `FCOMMENT` (`T-GZ-01`) and `FHCRC` (`T-GZ-02`), ZIP unknown methods and multi-disk
+archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that runs past the end of an ICO
+(`T-ICO-04`). Three still have no test:
+
+| Row | What is missing |
+| --- | --- |
+| `T-PNG-04` | no interlaced fixture exists, so "recompression only" is never observed |
+| `T-APNG-05` | inconsistent frame sequences are refused by the `png` crate before the handler sees them, and no fixture gets past that |
+| `T-NEST-04` | `--max-depth` is tested; the per-entry size budget for nested expansion is not |
 
 ### PNG
 
@@ -41,19 +55,19 @@ table is evidence, not a plan.
 | --- | --- |
 | `T-PNG-01` | All non-IDAT chunks (including an unknown/private chunk) are byte-identical, in the same order |
 | `T-PNG-02` | IHDR payload is byte-identical |
-| `T-PNG-03` | Decoded pixels are identical for the colour types the fixture writer builds (RGBA8). The other colour types — gray, gray+alpha, RGB, palette at 1/2/4/8 bits, 16-bit — are exercised by the real-file corpus, which asserts that they are rewritten without error but does **not** re-decode them; the writer is linear in the pixel bytes and touches only the compressed stream, but that is an argument, not a test. Widening `build_png` is the honest fix and is not done |
+| `T-PNG-03` | Decoded pixels are identical for the images the fixture builder produces: 8-bit RGBA, non-interlaced. Other colour types and bit depths are not tested — gray, gray+alpha, RGB, palette at 1/2/4/8 bits and 16-bit are rewritten by the corpus without complaint, but nothing re-decodes them. The filter unit test covers bytes-per-pixel 1 to 8 (`filters_roundtrip_for_all_types`), not only RGBA8's four |
 | `T-PNG-04` | Interlaced images: recompression only, pixels identical. **No test**: `PngSpec` cannot write an interlaced file |
 | `T-PNG-05` | APNG: `acTL`/`fcTL`/`fdAT` untouched; default image pixels identical |
 | `T-PNG-06` | Corrupted inputs (bad CRC, truncated, missing IEND, bytes after IEND) are refused |
 | `T-PNG-07` | A candidate that is not smaller is discarded; file unchanged, status `already_optimal` |
 | `T-PNG-08` | The output parses strictly and all chunk CRCs are valid |
-| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified — `t_png_09_zopfli_is_at_least_as_good_as_the_default` compares the two runs and requires the strong one to be no larger |
+| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified — `t_png_09_zopfli_is_at_least_as_good_as_the_default` runs both and requires the strong one to be no larger |
 
 ### gzip
 
 | ID | Assertion |
 | --- | --- |
-| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` — `t_gz_01_a_comment_is_preserved` splices the comment in and compares the header byte for byte |
+| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` — `t_gz_01_a_comment_is_preserved` splices a comment in and compares the header byte for byte |
 | `T-GZ-02` | `FHCRC` preserved and still valid — `t_gz_02_fhcrc_is_preserved_and_still_valid` builds the CRC-16 the format defines and re-checks it in the output |
 | `T-GZ-03` | Payload identical; trailer (`CRC32`, `ISIZE`) unchanged |
 | `T-GZ-04` | Multi-member and trailing-garbage inputs are refused |
@@ -72,10 +86,10 @@ table is evidence, not a plan.
 | `T-ZIP-06` | Stored entries stay stored |
 | `T-ZIP-07` | Signed archives are refused (JAR `META-INF` signatures, APK signing block, `_xmlsignatures/`, `package/services/digital-signature/`) |
 | `T-ZIP-08` | ODF/EPUB archives are accepted and keep `mimetype` stored first |
-| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused — `t_zip_09_an_unknown_compression_method_is_refused` (method 12) and `t_zip_09_a_multi_disk_archive_is_refused` (a non-zero disk number) |
+| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused — `t_zip_09_an_unknown_compression_method_is_refused` (method 12) and `t_zip_09_a_multi_disk_archive_is_refused` (a non-zero disk number) for the two that had no test |
 | `T-ZIP-10` | Truncated archives and inconsistent local headers are refused |
 | `T-ZIP-11` | Every entry's decompressed bytes and CRC are identical |
-| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) — `t_zip_12_max_uncompressed_is_enforced` for the first, an earlier test for the second |
+| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) — `t_zip_12_max_uncompressed_is_enforced`, and the ratio limit in an earlier test |
 
 ### ICO / APNG / nested / JPEG
 
@@ -84,12 +98,12 @@ table is evidence, not a plan.
 | `T-ICO-01` | Directory header and entry order preserved |
 | `T-ICO-02` | Embedded PNGs satisfy the PNG contract and decode identically |
 | `T-ICO-03` | BMP/DIB entries are byte-identical |
-| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_a_directory_that_runs_past_the_file_is_refused` and the earlier offset test. A count outside 1..=256 is not refused by the handler at all: detection does not classify such a file as an ICO, so it is reported `unsupported` |
+| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_a_directory_that_runs_past_the_file_is_refused`. A declared count outside 1..=256 is never refused by the handler, because detection does not call such a file an ICO at all: it is reported `unsupported`, exit 0 |
 | `T-APNG-01` | `acTL` payload preserved |
 | `T-APNG-02` | Every `fcTL` preserved, in order |
 | `T-APNG-03` | Every frame decodes identically (pixels and frame metadata) |
 | `T-APNG-04` | The default image is optimized and verified |
-| `T-APNG-05` | Inconsistent frame sequences are refused. **No test**: no fixture produces an inconsistent `fcTL`/`fdAT` sequence, and the `png` crate would reject one before this build's own check runs |
+| `T-APNG-05` | Inconsistent frame sequences are refused. **No test**: the `png` crate refuses them first, so the handler's own check is unreachable from a fixture |
 | `T-NEST-01` | A child that fails verification is stored unmodified |
 | `T-NEST-02` | Optimized children satisfy their own contracts |
 | `T-NEST-03` | `--max-depth` is enforced |
@@ -163,24 +177,59 @@ the file. Two rules are therefore **not** covered, and the reason is in the modu
 sequence check (the `png` crate refuses a broken sequence first) and the JPEG coefficient comparison (a
 corrupted entropy stream usually fails to parse, so the test would pass for the wrong reason).
 
+### Filesystem, replacement and idempotence
+
+These are the rows behind I1, I5 and I7 of [guarantees §3](guarantees.md#3-global-invariants), and behind
+[safety](safety.md) §1 and §5. Each one names a test that exists today; the scenarios that have no test are in
+the "not covered" table in §3 and in issue #35, not here.
+
+| ID | Assertion | Test |
+| --- | --- | --- |
+| `T-FS-01` | Paths with spaces and non-ASCII characters are processed correctly | `unicode_and_space_filenames_work` |
+| `T-FS-02` | A read-only file is skipped with a reason and is byte-identical afterwards | `read_only_file_is_skipped` |
+| `T-FS-03` | One missing path among valid ones fails alone; the rest are processed; exit is `1` | `missing_path_fails_but_others_continue` |
+| `T-FS-04` | A symlink to a file is skipped by default and its target is untouched | `symlinks_are_not_followed_by_default` |
+| `T-FS-05` | The same file reached through three paths is processed once | `duplicates_are_processed_once` |
+| `T-FS-06` | Mode bits and mtime survive the replacement | `permissions_and_mtime_survive_the_replacement` |
+| `T-FS-07` | A second run over the same tree changes nothing | `second_run_is_a_no_op` |
+| `T-FS-08` | A directory is walked recursively when asked, and only then | `directory_is_processed_recursively` |
+| `T-FS-09` | A directory argument without `-r` stays at the top level | `a_directory_argument_without_recursive_stays_at_the_top_level` |
+| `T-FS-10` | `--dry-run` writes nothing and leaves no temporary file behind | `dry_run_does_not_modify_anything` |
+
+### `--strip-metadata`
+
+One row per handler that has the flag's behaviour tested. The tag, chunk and field lists themselves are
+normative in [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request); these rows are about the
+observable result.
+
+| ID | Assertion | Test |
+| --- | --- | --- |
+| `T-STRIP-01` | PNG: `tEXt` and `tIME` removed, `eXIf` removed, pixels identical, an unknown private chunk kept | `strip_metadata_removes_png_text_and_exif_but_keeps_the_content` |
+| `T-STRIP-02` | gzip: header reduced to the stripped form, payload identical after decoding | `strip_metadata_clears_the_gzip_header_and_keeps_the_payload` |
+| `T-STRIP-03` | JPEG: `APP1` and `COM` removed, `APP0` kept, coefficients unchanged | `strip_metadata_drops_jpeg_exif_and_comment` |
+| `T-STRIP-04` | ZIP: entry and archive comments removed, extra fields and payload byte-identical | `strip_metadata_drops_zip_comments_and_keeps_extra_fields` |
+| `T-STRIP-05` | The removal is reported — `metadata stripped` in text, `metadata_stripped` in the record, `strip_metadata` in the summary — and `--dry-run` writes nothing | `strip_metadata_is_reported_and_dry_run_writes_nothing` |
+| `T-STRIP-06` | Without the flag nothing is removed, whatever the encoder does | `metadata_is_preserved_when_the_flag_is_absent` |
+| `T-STRIP-07` | TIFF: the textual tags removed, `Orientation`, resolution and strips kept | `tiff_strip_metadata_removes_only_textual_tags` |
+| `T-STRIP-08` | zlib: nothing to remove, the flag is accepted, and no line claims otherwise | `strip_metadata_has_nothing_to_remove_from_zlib` |
+
 ---
 
 ## 3. Test levels
 
 ### Unit tests
 
-- PNG scanline filters: encode/decode round-trip for all five filter types at every bytes-per-pixel value
-  from 1 to 8, which covers 1-bit gray, palette, gray+alpha, RGB, RGBA, RGB16 and RGBA16. The rows are a
-  fixed table, not a property test, and the table is the point: the arithmetic is defined in terms of bpp.
+- PNG scanline filters: encode/decode round-trip for the five filter types at bytes-per-pixel 4 only
+  (`filters_roundtrip_for_all_types`), plus a refilter test that rebuilds a filtered stream from pixels.
+  No test covers bpp 1, 2, 3, 6 or 8, where the `a`/`b`/`c` neighbours differ; no property test exists.
 - Argument parser: every flag, combinations, `--`, conflicting flags, missing values.
-- Size formatting, and `display_width`: cells rather than characters, so a CJK path counts two per
-  character, an emoji two, and a combining accent zero. The range table behind it is tested on those four
-  cases; anything outside the table counts as one cell, which is the old behaviour.
+- Size formatting, and column alignment for ASCII paths. Alignment is computed per character, not per display
+  column, so a path with wide (CJK) or combining characters can misalign a column; no test covers that.
 - JSON escaping: control characters, quotes, backslashes, non-UTF-8 paths.
 - gzip header parse/serialise round-trip, including all flags.
 - ZIP structure reader/writer: offsets, descriptors, EOCD, comments.
-- `--include`/`--exclude` filtering (`src/walk.rs`, two unit tests). Deduplication and traversal order are
-  covered by integration tests, not by unit tests.
+- Dedup and traversal policy: one integration test covers the same file reached through three paths. The
+  traversal order is asserted there, not in a unit test.
 - Colour detection (`src/style.rs`): a pure function of a probe struct, so `NO_COLOR`, `CLICOLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`, a pipe and a non-ANSI console are all covered without a terminal, and the
   three-way `--color` flag is tested against each of them.
@@ -190,7 +239,9 @@ corrupted entropy stream usually fails to parse, so the test would pass for the 
 
 ### Integration tests
 
-Run the real binary against a temporary directory and assert on exit code, stdout/stderr, and file hashes.
+Run the real binary against a temporary directory and assert on exit code, stdout/stderr, and a byte-for-byte
+comparison of the original with what is on disk afterwards. "Hash the file" in this document means that
+comparison; nothing in the suite uses a cryptographic hash.
 
 The command line has its own contract, because it is what every other test goes through:
 
@@ -217,48 +268,77 @@ The command line has its own contract, because it is what every other test goes 
 
 ### Fixture corpus
 
-**No binary fixture is committed.** Every fixture is built at run time by `tests/common/mod.rs`: writers for
-PNG, gzip, ZIP, ICO, JPEG and TIFF, a `Workspace` type that owns a temporary directory, and byte-level
-editors (`parse_zip`, `png_chunks`, `inflate_member`, …) used by the assertions. A test therefore states the
-exact bytes it depends on, and a reader can see what "corrupt" means instead of trusting a blob.
+Fixtures are **built at run time, not committed**. `tests/common/mod.rs` contains a writer per format and a
+`Workspace` helper that creates a temporary directory per test; nothing binary is in the repository, so a
+reviewer can read exactly what a test feeds the binary. Corrupted inputs are produced by flipping documented
+bytes of a valid fixture, so a failure is reproducible rather than a random blob.
 
-| Format | Built by the fixture writers |
-| --- | --- |
-| PNG | RGBA8 at a chosen deflate level; interlaced; palette; `tEXt`/`tIME`/`pHYs`/`iCCP`; an unknown private chunk; APNG with several frames; bad CRC; truncated; missing `IEND`; bytes after `IEND`; huge IHDR dimensions with tiny data |
-| gzip | empty payload; 1 byte; `FEXTRA`; `FNAME` with non-ASCII bytes; `FCOMMENT`; `FHCRC`; multi-member; trailing garbage; truncated; `CM = 7`; reserved flags |
-| ZIP | store-only; deflate; mixed; data descriptors (with and without signature); ZIP64; encrypted; signed JAR; APK signing block; signed OOXML; ODF and EPUB; archive comment; entry comments; extra fields; non-UTF-8 names; duplicate names; empty archive; truncated; overlapping offsets; prepended stub |
-| ICO | PNG-based, BMP-based, mixed |
-| JPEG | baseline; restart markers; EXIF and ICC; progressive, arithmetic-coded and 12-bit inputs that must be refused |
-| TIFF | little- and big-endian; uncompressed and Deflate strips; tiles; multi-IFD; planar 2; predictor 2; LZW; an unknown out-of-line tag; the textual tags for `--strip-metadata` |
+What each builder can produce today:
 
-Corrupted inputs are produced by flipping documented bytes in those writers, so a failure is reproducible
-rather than a random blob. Large real-world samples are not fixtures at all: they are the corpus below,
-downloaded and never committed.
+| Builder | Covers | Does not cover |
+| --- | --- | --- |
+| `build_png` / `PngSpec` | 8-bit RGBA, non-interlaced; either scanline filter; compression level; arbitrary extra chunks (including unknown ones and `tEXt`); an APNG with `acTL` and frames | other color types, bit depths other than 8, interlaced images, palette with `tRNS` |
+| `build_gzip` | payload of any size; optional `FNAME` and `FEXTRA`; `XFL`; a deliberately non-zero MTIME | `FCOMMENT` and `FHCRC` are spliced into the built header by the two tests that need them, not produced by the builder; multi-member streams and trailing garbage are built by hand in the refusal tests |
+| `build_zip` / `ZipEntrySpec` | `store` and `deflate` per entry; level; data descriptors with and without signature; local and central extra fields; entry and archive comments; non-UTF-8 names | ZIP64, encryption, prepended stubs, signed JAR/APK/OOXML |
+| `build_ico` | ICO and CUR directors with PNG or bitmap payloads of any size | — |
+| `build_jpeg` | baseline and greyscale; restart intervals; trailing bytes; an Exif `APP1` payload | progressive, CMYK, arithmetic coding, 12-bit |
+| `build_tiff` / `TiffSpec` | both byte orders; `none`/`deflate`; strips and rows per strip; planar and predictor settings; extra ASCII and SHORT tags; an optional tiled layout for refusal tests | LZW, JPEG-in-TIFF, multi-page, BigTIFF |
+
+A format whose row above is thinner than the contract needs is a fixture gap, not a contract gap: the
+handler may well support it, but nothing in this repository proves it does.
 
 ### Filesystem and environment tests
 
-Tested, on every platform CI runs:
+Covered today, each by an integration test that asserts the original file is byte-identical afterwards:
 
-| Scenario | Expected |
+| Scenario | Expected | Test |
+| --- | --- | --- |
+| path with spaces and Unicode | optimized correctly | `unicode_and_space_filenames_work` |
+| read-only file | `skipped`, original intact | `read_only_file_is_skipped` |
+| missing path among valid ones | that path fails, others processed, exit `1` | `missing_path_fails_but_others_continue` |
+| symlink to a file | `skipped` by default | `symlinks_are_not_followed_by_default` |
+| same file via three paths | processed once | `duplicates_are_processed_once` |
+| permissions and mtime | preserved across the replacement | `permissions_and_mtime_survive_the_replacement` |
+| second run on the optimized tree | zero changes | `second_run_is_a_no_op` and the per-format equivalents |
+| hard-linked file | `skipped` with a reason naming `--allow-hardlinks`; with the flag the link is broken on purpose and the other name keeps the old bytes | `a_hard_linked_file_is_skipped_unless_allowed` |
+| Unix socket | `skipped` as not a regular file, never opened for writing, still there afterwards | `a_socket_is_skipped_and_never_opened_for_writing` |
+| path that is not valid UTF-8 (Linux only) | optimized through the raw bytes; the JSON record carries `path_raw_b64`. APFS and Windows refuse to create such a name, so the fixture cannot exist there | `a_path_that_is_not_valid_utf8_is_optimized` |
+
+**Not covered yet.** These are promises in [safety](safety.md) or consequences of it that no test exercises;
+they are tracked as work in issue #35, not silently assumed:
+
+| Scenario | Why it matters |
 | --- | --- |
-| path with spaces and Unicode (`иконка 🌀.png`) | optimized correctly |
-| read-only file | `skipped`, original intact |
-| missing path among valid ones | that path `failed`, others processed, exit `1` |
-| symlink to a file | `skipped` by default; optimized with `--follow-symlinks` |
-| symlink given directly, and a broken link | reported, nothing written |
-| hard-linked file | `skipped` with a reason naming `--allow-hardlinks`; with the flag the replacement breaks the link on purpose and the other name keeps the old bytes |
-| path that is not valid UTF-8 (Linux only) | optimized through the raw bytes; the JSON record carries `path_raw_b64`. APFS and Windows reject such a name, so the fixture cannot exist there |
-| Unix socket | `skipped` as "not a regular file", still present afterwards |
-| same file via three different paths | processed once |
+| read-only directory | the candidate cannot be created; the expected outcome is `failed` with the original intact |
+| symlink loop in a tree | the depth guard should terminate the walk; nothing asserts the message or the exit code |
+| FIFO / device node | must be skipped and never opened for writing |
+| disk full (small tmpfs) | `failed`, original intact, no temporary file left |
+| file modified during processing | `failed`, original intact (the I5 path) |
+| `SIGKILL` during processing | original intact; a `.tzim-*.tmp` may remain |
 | empty file, 1-byte file | `unsupported` |
-| directory as input without `--recursive` | only its top-level files |
-| second run on the optimized tree | zero changes (idempotence) |
+| very deep directory tree | traversal terminates within the 64-level limit |
 
-**Not tested**, and listed here so that nobody assumes otherwise: a read-only *directory* (the fixture would
-have to be immune to running as root, which CI on `ubuntu-latest` does), a FIFO or a device node, a full disk
-(`ENOSPC`), a file modified while it is being processed, `SIGKILL` mid-run, and a symlink loop deeper than
-the 64-level limit. Each needs an environment the test constructs by hand — a tmpfs, a signal delivered at a
-chosen instant, `mknod` — which is why they are still open rather than claimed.
+### Failure injection
+
+**Not implemented.** There is no `test-hooks` feature and no `TZIM_TEST_*` variable in this build; nothing
+here claims otherwise. What exists instead is structural: the candidate is a separate file owned by a guard,
+the rename is the only operation that changes the visible state, and the guard removes the candidate on every
+early return. The nearest evidence is therefore indirect — `guard_removes_uncommitted_file` in `src/replace.rs`
+and the integration tests that leave a file untouched when a run fails — rather than a hook that forces a
+failure at each stage.
+
+Adding real hooks is a task of its own (it means a feature that must never reach a release build); until then
+this section describes an intention, not a mechanism.
+
+### Property tests
+
+**`proptest` is not a dependency** of this project, and the tool never claims otherwise. Two tests cover part
+of what property testing would: a hand-rolled PRNG test for the JPEG entropy codec (`src/formats/jpeg.rs`) and
+the PNG filter round-trip across every bytes-per-pixel value. Neither is generated from a shrinking strategy,
+so a failure is reported as a fixed input rather than a minimal one.
+
+Properties worth turning into real property tests, in order of value: "an accepted candidate always passes
+`verify`" (see #43), "the output is never larger than the input", and idempotence of a second run.
 
 ### Real-file corpus
 
@@ -287,7 +367,10 @@ assertion in disguise:
 | No unexpected `failed` status | a real file that used to work no longer does, or a valid file is being refused |
 | No `verify` or `internal` error, on any file | the handler produced a candidate its own contract rejected, or the code is broken |
 | Nothing rewritten on the second pass, byte-identical manifest | the rewrite is not a fixed point |
-| The counts of every status are recorded in the run summary | a change in how many files are refused or failed is visible in the report — but **not gated**: there is no committed baseline of refused paths, so a file that starts being refused does not fail CI unless it also fails the allowlist check |
+
+A fourth property that this document used to claim — that the set of refused files is unchanged between runs —
+is **not** gated: the script prints the per-run counts (`.github/scripts/corpus.sh:161`) but keeps no baseline,
+so a construct that silently stopped being accepted shows up in that table and nowhere else.
 
 Files that are corrupt in the upstream archive are listed by name in `.github/corpus-allowlist.txt`, with the
 reason recorded. A file that fails without being listed is an error, and a listed file that stops failing
@@ -305,14 +388,15 @@ no release build enables:
 | `roundtrip` | detection, the handler for the detected format, and verification of the candidate |
 | `strip` | the same round trip with `--strip-metadata`: the removal paths and the checks that the removed structures are gone |
 
-The fuzz build enables **all seven** handlers (`fuzz/Cargo.toml`: `png, gzip, zip, ico, jpeg, tiff, zlib`), so
-a detected TIFF or zlib stream reaches its real parser instead of the "format not compiled" arm.
+The build enables **all seven** handlers (`png, gzip, zip, ico, jpeg, tiff, zlib`), so a detected TIFF or zlib
+stream reaches its real parser instead of the "format not compiled" arm. Seeds are the pngsuite PNGs and the
+libjpeg-turbo test JPEGs, copied into `fuzz/corpus/roundtrip` and `fuzz/corpus/jpeg_decode`, and the `strip`
+target is seeded from the same sets.
 
 The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
-and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input
-(`formats::size_ok`, the same predicate the binary uses) and passes verification. All three targets are
-seeded with the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is part of CI
-(`fuzz.yml`); longer runs are performed before a release.
+and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input and
+passes verification. A 60 s-per-target smoke run is part of CI (`fuzz.yml`); longer runs are performed before a
+release.
 
 Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored.
 
@@ -335,7 +419,6 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
 | `lockfile` | ubuntu-latest | regenerates `Cargo.lock` and commits it to the branch (§4.1) |
-| `docs` | ubuntu-latest | `.github/scripts/md-links.py` over every Markdown file: every relative link resolves and every `#anchor` exists. The gate is `broken: 0` |
 
 `audit` overlaps the advisory half of `deny`, and both stay: `deny` is the one that also knows about licences
 and duplicate versions, `audit` is the RustSec-native check that speaks the advisory database directly. Two
