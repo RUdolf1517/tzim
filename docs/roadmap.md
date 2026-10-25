@@ -277,14 +277,6 @@ The tag was cut from `main` after those tests failed before the fix and passed a
 - **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
   reason instead of being read.
 
-Two decisions from the audit that change behaviour and therefore wait for their own tests:
-
-- **A weak signature never produces `failed`** (#52, O1): a zlib header that decodes nothing becomes
-  `unsupported`; one that decodes and then breaks stays `failed`, so a truncated stream keeps its corruption
-  signal.
-- **A memory budget** (#51, O2): the limit becomes bytes rather than files, and a file above it is `skipped`
-  with a reason instead of being read.
-
 Neither is a size change, so the release is a patch. The tag is cut from `main` only after each test fails
 before its fix and passes after it.
 
