@@ -122,12 +122,13 @@ files before anything is touched.
 3. A GitHub release is created from a tag on `main`. Publishing it triggers
    `.github/workflows/release.yml`, which builds the three archives and the two Linux packages,
    smoke-tests each binary (`--version`, `--list-formats`), and uploads everything with `SHA256SUMS`.
-4. The SHA-256 of the macOS and Linux archives is copied into `Formula/tzim.rb` and its `version` is
-   bumped. Until that commit lands, `brew install` serves the previous release — the tap never points at a
-   version whose hashes are invented.
-5. `packaging/winget/<version>/` is filled with the same hashes and submitted to
-   `microsoft/winget-pkgs` as `manifests/r/RUdolf1517/tzim/<version>/`. Until it is accepted, the manifest
-   in this repository can be installed locally with `winget install --manifest`.
+4. A follow-up pull request pins the artifacts: the SHA-256 of the macOS and Linux archives into
+   `Formula/tzim.rb`, the Windows archive's into `packaging/winget/<version>/`, and every `version` field in
+   both is bumped in the same commit. Until that commit lands, `brew install` serves the previous release —
+   the tap never points at a version whose hashes are invented.
+5. `packaging/winget/<version>/` is submitted to `microsoft/winget-pkgs` as
+   `manifests/r/RUdolf1517/tzim/<version>/`. Until it is accepted, the manifest in this repository can be
+   installed locally with `winget install --manifest`.
 6. The release notes state plainly what the release does **not** do: which formats are refused, which
    guarantees are not claimed, and which numbers are unmeasured (see [benchmarks](benchmarks.md)).
 

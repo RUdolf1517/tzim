@@ -62,7 +62,10 @@ jobs:
 
       - name: Build
         # Default features: the fuzz entry points are not part of a release.
-        run: cargo build --release --target ${{ matrix.target }}
+        # `--locked` because the bytes that are signed and published must come
+        # from the dependency set that was reviewed, not from whatever resolves
+        # on the day of the release.
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Smoke-test the binary
         shell: bash
