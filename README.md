@@ -66,7 +66,7 @@ Windows, x64 — until the manifest reaches the community source, winget install
 ```powershell
 git clone https://github.com/RUdolf1517/tzim; cd tzim
 winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.10.0
+winget install --manifest .\packaging\winget\0.11.0
 ```
 
 `LocalManifestFiles` is once, as Administrator. Or take `tzim-x86_64-pc-windows-msvc.zip` from

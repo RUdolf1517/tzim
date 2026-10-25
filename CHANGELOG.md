@@ -47,6 +47,12 @@ exist at all.
 - The `.deb` and `.rpm` description now lists the formats the binary actually has: it had been stuck at the
   v0.4 set, without TIFF and without zlib.
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.11.0/` are pinned to the published v0.11.0 artifacts and their
+  SHA-256, copied from the release notes after the build. The formula gained the two platforms this release
+  made possible: Intel macOS and Linux ARM64.
+
 ### Size
 
 - **+0 bytes.** 1 049 440 bytes (1 024 KiB), the same number as v0.10.0: this release adds packaging, a

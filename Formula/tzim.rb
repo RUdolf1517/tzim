@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.10.0"
+  version "0.11.0"
   license "MIT"
 
   livecheck do
@@ -22,20 +22,28 @@ class Tzim < Formula
     strategy :github_latest
   end
 
-  # Only platforms with a published build. Homebrew on Intel macOS or ARM Linux
-  # has no URL here on purpose: `install.sh` and `cargo install --git` cover
-  # those, and a formula that silently guessed a binary would be worse.
+  # One URL per published build. Homebrew on any other platform has no URL here
+  # on purpose: `install.sh` and `cargo install --git` cover those, and a
+  # formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.10.0/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "9767e2b902decfed7cc864e686af3c46bc730538bf20dc4d35823b8288e74abf"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.11.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "28b103d4a19abdab1c3b17ce35160c81f82b4388da6f1f6d400ef50fb47f306b"
+    end
+    on_intel do
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.11.0/tzim-x86_64-apple-darwin.tar.gz"
+      sha256 "ab33da5fff6e7661addc6f3357a292287a166c96dc8c973b327e5e15db4f252d"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.10.0/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "1b10c4b2d93cd9ee76bc71fedfa560bf95ab5146f88fab37c4e13fd3b3882367"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.11.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "ccd55b1ac4def851cc72b9ff08a1d9bf3a146b4add3d005b0898c458465727eb"
+    end
+    on_arm do
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.11.0/tzim-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "5b32b2b4662a4f5335bbace50671f9bbac30a9acc5b06129ee705347d255aa7b"
     end
   end
 
