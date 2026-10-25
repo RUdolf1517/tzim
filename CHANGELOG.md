@@ -31,6 +31,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 - The format queue in [docs/roadmap.md](docs/roadmap.md) is now empty, and every remaining candidate is
   recorded with the reason it is not there.
 
+### Size
+
+- **+8 KiB** (920 → 928 KiB), of which 4 KiB is the zlib handler itself — the cheapest format in the table —
+  and the rest is a page boundary. The budget follows the documented rule (measured + 15 %): 1 059 → 1 069 KiB.
+
 ## [0.8.0] - 2026-10-25 — the terminal, and a contract for FLAC
 
 No output byte changed and no file is treated differently: this release is the interface around the same

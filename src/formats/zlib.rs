@@ -60,7 +60,7 @@ fn inspect(data: &[u8]) -> Result<Inspected> {
     // RFC 1950 §2.2: the two header bytes, read as a big-endian integer, must be
     // a multiple of 31. This is the container's only self-check.
     let check = (u16::from(cmf) << 8) | u16::from(flg);
-    if check % 31 != 0 {
+    if !check.is_multiple_of(31) {
         return Err(Error::parse(
             "zlib: header check bits are wrong; the file is corrupt",
         ));
@@ -335,7 +335,7 @@ mod tests {
         // CMF = 0x78, FDICT = 0x20, and a FLG that satisfies the check value.
         let flg = {
             let mut f = 0x20u16;
-            while ((0x78u16 << 8) | f) % 31 != 0 {
+            while !((0x78u16 << 8) | f).is_multiple_of(31) {
                 f += 1;
             }
             f as u8
@@ -352,7 +352,7 @@ mod tests {
         // CINFO = 4 → a 4 KiB window. Legal, and not something we can promise to
         // stay inside after recompressing.
         let mut flg = 0u16;
-        while ((0x48u16 << 8) | flg) % 31 != 0 {
+        while !((0x48u16 << 8) | flg).is_multiple_of(31) {
             flg += 1;
         }
         let mut data = vec![0x48, flg as u8];

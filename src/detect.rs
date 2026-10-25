@@ -93,7 +93,7 @@ pub fn detect(head: &[u8]) -> Option<Format> {
         && head[0] & 0x0f == 8
         && head[0] >> 4 <= 7
         && head[1] & 0x20 == 0
-        && ((u16::from(head[0]) << 8) | u16::from(head[1])) % 31 == 0
+        && ((u16::from(head[0]) << 8) | u16::from(head[1])).is_multiple_of(31)
     {
         return Some(Format::Zlib);
     }

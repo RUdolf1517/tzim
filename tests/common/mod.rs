@@ -1393,7 +1393,7 @@ pub fn zlib_with_window(data: &[u8], cinfo: u8) -> Vec<u8> {
     let cmf = (cinfo << 4) | 8;
     // FLEVEL and FDICT are copied from the original; only CINFO changes.
     let mut flg = out[1] & 0xe0;
-    while ((u16::from(cmf) << 8) | u16::from(flg)) % 31 != 0 {
+    while !((u16::from(cmf) << 8) | u16::from(flg)).is_multiple_of(31) {
         flg += 1;
         assert!(flg < 0xe0, "no valid FLG found");
     }
