@@ -42,18 +42,24 @@ brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim && brew install RUdo
 cargo install --git https://github.com/RUdolf1517/tzim                               # Rust 1.88+
 ```
 
+Linux (x86_64 and ARM64), macOS (Apple silicon and Intel). The install script checks the archive against the
+release's `SHA256SUMS` and refuses to install anything that does not match — and so should you, if you install
+by hand.
+
 <details>
 <summary>Debian, Fedora, Windows</summary>
 
 ```bash
-# Debian / Ubuntu
+# Debian / Ubuntu — tzim_arm64.deb on ARM
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim_amd64.deb
 sudo apt install ./tzim_amd64.deb
 
-# Fedora / RHEL
+# Fedora / RHEL — tzim.aarch64.rpm on ARM
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim.x86_64.rpm
 sudo dnf install ./tzim.x86_64.rpm
 ```
+
+Both packages install `man tzim` and completion for bash, zsh and fish.
 
 Windows, x64 — until the manifest reaches the community source, winget installs it from this repository:
 
@@ -69,7 +75,8 @@ winget install --manifest .\packaging\winget\0.10.0
 </details>
 
 The binary is static, contains no C code, needs no runtime, writes no configuration file, opens no socket and
-sends no telemetry. `tzim --check-deps` prints exactly that.
+sends no telemetry. `tzim --check-deps` prints exactly that. The packages and the Homebrew formula install a
+manual page and shell completion for bash, zsh and fish, so `man tzim` works after an install.
 
 ## Usage
 

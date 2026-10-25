@@ -304,6 +304,8 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 | `deny` | ubuntu-latest | `cargo deny check` — licences, advisories, duplicate versions, sources |
 | `audit` | ubuntu-latest | `cargo audit` against the RustSec database |
 | `size` | ubuntu-latest | `x86_64-unknown-linux-musl` build that `file` reports as `static-pie linked` (no interpreter, no libc), size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
+| `package` | ubuntu-latest | `cargo package --locked`, then a build from the packaged tarball — the crate as crates.io would receive it |
+| `installer` | ubuntu-latest, macos-latest | runs `install.sh` against the published release, then proves a doctored archive is refused (§4.2) |
 | `corpus` | ubuntu-latest | downloads the pinned corpus, runs the binary over it twice, gates on §3 |
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
@@ -313,7 +315,29 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 and duplicate versions, `audit` is the RustSec-native check that speaks the advisory database directly. Two
 tools reading the same database with different rules is the point, not duplication.
 
-### 4.1 The two jobs that write to the branch
+### 4.1 Packaging is tested, not assumed
+
+The files that are shipped but never compiled are the ones that rot quietly: a flag added to the parser and
+missing from the man page, a release target added to the workflow and missing from the installer. Three
+mechanisms cover them.
+
+**Drift assertions** (`tests/packaging.rs`, part of `cargo test`). Every long option in `--help` must appear in
+`man/tzim.1` and in all three completions; the man page's `.TH` line must carry the crate version; every
+target in the release matrix must be fetchable by `install.sh` (Windows excepted, which is a zip and a winget
+manifest); the Linux packaging script must ship the man page and the completions for both architectures; the
+formula must install more than a binary; and `install.sh` must fetch `SHA256SUMS` and handle both `sha256sum`
+and `shasum`.
+
+**The installer job** runs `install.sh` for real, against the latest *published* release, on Linux and macOS —
+the network path, the checksum lookup and the archive layout are exercised every time. It then serves a
+doctored copy of the same archive with one byte appended, next to the release's untouched `SHA256SUMS`, and
+asserts that the installer aborts, says `SHA-256 mismatch`, and leaves no binary behind. That is the one
+property of a `curl | sh` script worth a CI job.
+
+**The `package` job** builds the crate from the tarball `cargo package` produces. It catches a missing file, a
+broken `readme` path, and a crate that only builds inside a git checkout.
+
+### 4.2 The two jobs that write to the branch
 
 This project is developed in an environment without a Rust toolchain: nothing local can run `cargo fmt` or
 resolve a new dependency, and a pull request that added a crate would otherwise arrive with a `Cargo.lock`

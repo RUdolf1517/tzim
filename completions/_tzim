@@ -1,0 +1,42 @@
+#compdef tzim
+#
+# zsh completion for tzim(1). Installed by the .deb, the .rpm and the Homebrew
+# formula as _tzim. The option list is checked against `tzim --help` by
+# tests/packaging.rs.
+
+_tzim() {
+    _arguments -s -S \
+        '(-r --recursive)'{-r,--recursive}'[descend into directories]' \
+        '(-n --dry-run)'{-n,--dry-run}'[do the work, write nothing]' \
+        '(-j --jobs)'{-j,--jobs}'[files processed at once]:N:' \
+        '--json[newline-delimited JSON on stdout]' \
+        '(-q --quiet)'{-q,--quiet}'[suppress per-file output]' \
+        '--color[colouring of the report]:when:(auto always never)' \
+        '--no-color[same as --color=never]' \
+        '--no-progress[no progress line on stderr]' \
+        '--fail-fast[stop after the first failed file]' \
+        '--include[only these extensions]:extensions:' \
+        '--exclude[skip these extensions]:extensions:' \
+        '--min-size[skip smaller files]:bytes:' \
+        '--max-size[skip larger files]:bytes:' \
+        '--max-pixels[skip larger images]:pixels:' \
+        '--max-uncompressed[refuse archives expanding beyond this]:bytes:' \
+        '--max-ratio[refuse archives above this ratio]:ratio:' \
+        '--nested[also optimize files inside archives]' \
+        '--max-depth[nesting depth limit]:depth:' \
+        '--formats[only these formats]:formats:(png gzip zip ico jpeg tiff zlib)' \
+        '--zopfli[use the slower, stronger encoder]' \
+        '--strip-metadata[remove the documented metadata list]' \
+        '--follow-symlinks[resolve and follow symbolic links]' \
+        '--allow-hardlinks[process files with several hard links]' \
+        '--allow-root-ownership-change[replace files owned by others when root]' \
+        '--no-fsync[skip fsync before the rename]' \
+        '(-i --info)'{-i,--info}'[what this program is]' \
+        '--list-formats[the handlers in this build]' \
+        '--check-deps[external programs needed at run time]' \
+        '(-h --help)'{-h,--help}'[the full option list]' \
+        '(-V --version)'{-V,--version}'[the version, one line]' \
+        '*:path:_files'
+}
+
+_tzim "$@"

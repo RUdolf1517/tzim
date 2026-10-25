@@ -129,6 +129,12 @@ OPTIONS:
                                when running as root, replace files owned by others
         --no-fsync             skip fsync (faster, less durable)
 
+METADATA:
+        --strip-metadata       remove the documented metadata list: PNG text and
+                               timestamps, gzip name and comment, ZIP comments,
+                               JPEG Exif and comments. Not lossless, never on by
+                               default, never implied by another flag.
+
 INFORMATION:
     -i, --info                 what this program is: version, promise, links
         --list-formats         the handlers compiled into this build

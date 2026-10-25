@@ -1,0 +1,231 @@
+.\" tzim(1) — manual page. Kept in the repository, installed by the .deb, the
+.\" .rpm, the Homebrew formula and the release archives. `tests/packaging.rs`
+.\" fails when an option in `tzim --help` is missing here, so the page cannot
+.\" drift into describing a different program.
+.TH TZIM 1 "2026-10-25" "tzim 0.11.0" "User Commands"
+.SH NAME
+tzim \- shrink a file without ever losing information
+.SH SYNOPSIS
+.B tzim
+[\fIOPTIONS\fR] \fIPATH\fR...
+.br
+.B tzim
+\fB\-\-info\fR | \fB\-\-list\-formats\fR | \fB\-\-check\-deps\fR | \fB\-\-help\fR | \fB\-\-version\fR
+.SH DESCRIPTION
+.B tzim
+rewrites files into a smaller and equivalent form. It never performs a lossy or
+irreversible transformation: no quality, resolution, bit depth or frame
+reduction, no metadata, comment or attachment removal, and no conversion to
+another format. Every candidate is verified against a per-format contract
+before it replaces anything, and a candidate that is not strictly smaller is
+discarded, leaving the original byte for byte as it was.
+.PP
+Each path is an input object: a single file, a directory, or both mixed in one
+run. A bare file path is complete on its own, so a single file never needs a
+wrapper directory. Directories are read at the top level unless
+.B \-\-recursive
+is given. Symbolic links are skipped unless
+.B \-\-follow\-symlinks
+is given. Duplicate paths are processed once.
+.PP
+Handlers compiled into this build: PNG, APNG, gzip, the ZIP family, ICO/CUR,
+baseline JPEG (opt-in, see
+.BR \-\-formats ),
+classic TIFF with strips, and zlib streams. Everything else is reported as
+unsupported or skipped, with a reason.
+.SH OPTIONS
+.SS Path selection
+.TP
+.B \-r, \-\-recursive
+Descend into directories.
+.TP
+.B \-\-include \fIEXT\fR,... 
+Only process files with these extensions.
+.TP
+.B \-\-exclude \fIEXT\fR,...
+Skip files with these extensions. Exclusion wins over inclusion.
+.TP
+.B \-\-min\-size \fIBYTES\fR
+Skip files smaller than this (default: 0).
+.TP
+.B \-\-max\-size \fIBYTES\fR
+Skip files larger than this (default: 2147483648).
+.TP
+.B \-\-max\-pixels \fIN\fR
+Skip images with more pixels than this (default: 100000000).
+.TP
+.B \-\-formats \fILIST\fR
+Only process these formats: png, gzip, zip, ico, jpeg, tiff, zlib. Naming jpeg
+here is what enables the JPEG handler, which is off by default because it is the
+riskiest handler and typically saves only 1\-3 %.
+.SS Output
+.TP
+.B \-q, \-\-quiet
+Suppress the per-file lines. The summary is still printed.
+.TP
+.B \-\-json
+Write newline-delimited JSON on stdout, one object per file plus a summary
+object. Never coloured.
+.TP
+.B \-\-color \fIWHEN\fR
+Colour the report: \fIauto\fR (default), \fIalways\fR or \fInever\fR.
+.TP
+.B \-\-no\-color
+Same as \fB\-\-color=never\fR.
+.TP
+.B \-\-no\-progress
+Never draw the progress line, even on a terminal.
+.SS Work
+.TP
+.B \-n, \-\-dry\-run
+Do all the work, write nothing, report what would change. The original is not
+touched and every file is guaranteed byte-identical (G1).
+.TP
+.B \-j, \-\-jobs \fIN\fR
+Maximum number of files processed at once (default: min(cores, 4), or
+min(cores, 2) with \fB\-\-zopfli\fR).
+.TP
+.B \-\-fail\-fast
+Stop after the first failed file. Other independent failures do not stop the
+run without this flag.
+.TP
+.B \-\-zopfli
+Use the slower and stronger DEFLATE encoder for PNG, gzip, ZIP, TIFF and zlib.
+Typically 1\-5 % better than the default and 10\-100 times slower.
+.TP
+.B \-\-nested
+Also optimize supported files inside archives.
+.TP
+.B \-\-max\-depth \fIN\fR
+Nesting depth limit for \fB\-\-nested\fR (default: 3).
+.TP
+.B \-\-max\-uncompressed \fIBYTES\fR
+Refuse archives that expand beyond this (default: 8589934592), which is the
+decompression-bomb guard.
+.TP
+.B \-\-max\-ratio \fIN\fR
+Refuse archives whose expansion ratio is above N:1 (default: 1000).
+.TP
+.B \-\-strip\-metadata
+Remove a fixed, documented list of embedded metadata: text chunks and
+timestamps in PNG, name and comment fields in gzip, archive and entry comments
+in ZIP, Exif and comments in JPEG. This is the one opt-in exception to the
+no-removal rule; it is never on by default and never implied by another flag.
+.TP
+.B \-\-follow\-symlinks
+Resolve and follow symbolic links.
+.TP
+.B \-\-allow\-hardlinks
+Process files with more than one hard link. By default they are skipped,
+because replacing one link breaks the sharing without saying so.
+.TP
+.B \-\-allow\-root\-ownership\-change
+When running as root, replace files owned by another user.
+.TP
+.B \-\-no\-fsync
+Skip fsync before the rename. Faster, less durable across a power loss.
+.SS Information
+.TP
+.B \-i, \-\-info
+Print what this program is: version, promise, formats, links.
+.TP
+.B \-\-list\-formats
+List the handlers compiled into this build and what each one preserves.
+.TP
+.B \-\-check\-deps
+Print the external programs needed at run time. There are none.
+.TP
+.B \-h, \-\-help
+Print the full option list.
+.TP
+.B \-V, \-\-version
+Print the version on one line.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, including files that were already optimal, skipped, unsupported or
+refused by contract.
+.TP
+.B 1
+At least one file failed. The other files were still processed.
+.TP
+.B 2
+Invalid usage. Nothing was processed.
+.TP
+.B 3
+Fatal error: the run could not be completed.
+.TP
+.B 4
+Verification failure: a candidate did not satisfy its contract. The affected
+file was not replaced. This is a bug in tzim, not in the input.
+.PP
+When several conditions hold at once the highest of 4, 3, 2 and 1 wins. A closed
+stdout does not change the exit code the run earned.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+Set and non-empty turns colour off (https://no-color.org/).
+.TP
+.B CLICOLOR_FORCE
+Set to anything but \fI0\fR turns colour on, even through a pipe.
+.TP
+.B CLICOLOR
+Set to \fI0\fR turns colour off.
+.TP
+.B TERM
+\fIdumb\fR turns colour off.
+.PP
+Colour and the progress line need a terminal. Both are presentation only: the
+same input produces the same bytes with or without them.
+.SH FILES
+None. There is no configuration file, no cache and no state. The program opens
+no sockets and sends no telemetry.
+.SH EXAMPLES
+.PP
+Optimize one file:
+.PP
+.RS 4
+tzim photo.png
+.RE
+.PP
+Optimize a tree, reporting what would change without writing:
+.PP
+.RS 4
+tzim ./photos \-r \-\-dry\-run
+.RE
+.PP
+Squeeze a PNG as far as this tool can, accepting the time it takes:
+.PP
+.RS 4
+tzim ./photos \-r \-\-zopfli \-\-formats png
+.RE
+.PP
+Write one JSON object per file for a script:
+.PP
+.RS 4
+tzim ./photos \-r \-\-json | jq \-r 'select(.type=="file") | .path'
+.RE
+.PP
+Optimize files inside a ZIP archive as well:
+.PP
+.RS 4
+tzim backup.zip \-\-nested
+.RE
+.SH LIMITATIONS
+Rewriting a file replaces it, so its inode is new: permission bits and
+timestamps are preserved, ACLs, extended attributes and hard links are not.
+Files owned by another user are skipped unless tzim runs as root with
+\fB\-\-allow\-root\-ownership\-change\fR. BigTIFF, tiled TIFF, LZW and CCITT
+TIFF, progressive and arithmetic-coded JPEG, signed and ZIP64 archives, and
+zlib streams with a preset dictionary are refused with a reason rather than
+approximated. The full list is in \fIdocs/formats.md\fR and
+\fIdocs/guarantees.md\fR.
+.SH SEE ALSO
+.BR gzip (1),
+.BR zip (1),
+.BR optipng (1),
+.BR jpegtran (1)
+.PP
+Full documentation: https://github.com/RUdolf1517/tzim/tree/main/docs
+.SH AUTHOR
+Written by AI. Directed by RUdolf1517 <rudolfzinovev@protonmail.com>.
