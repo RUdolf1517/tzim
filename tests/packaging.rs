@@ -163,6 +163,54 @@ fn the_formula_installs_more_than_a_binary() {
 }
 
 #[test]
+fn every_winget_manifest_matches_its_directory() {
+    // A manifest whose version, directory and URL disagree is a package that
+    // installs nothing; winget's own validator does not catch it, because it
+    // never downloads the file. This catches it without a network.
+    let root = format!("{}/packaging/winget", env!("CARGO_MANIFEST_DIR"));
+    let mut checked = 0;
+    for entry in fs::read_dir(&root).expect("packaging/winget") {
+        let dir = entry.expect("a directory entry").path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let version = dir.file_name().unwrap().to_string_lossy().to_string();
+        let manifest = dir.join("RUdolf1517.tzim.installer.yaml");
+        let body = fs::read_to_string(&manifest)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", manifest.display()));
+        assert!(
+            body.contains(&format!("PackageVersion: {version}")),
+            "{version}: PackageVersion does not match the directory"
+        );
+        assert!(
+            body.contains(&format!("/v{version}/")),
+            "{version}: InstallerUrl does not point at v{version}"
+        );
+        let hash_line = body
+            .lines()
+            .find(|line| line.trim_start().starts_with("InstallerSha256:"))
+            .unwrap_or_else(|| panic!("{version}: no InstallerSha256"));
+        let hash = hash_line.split(':').nth(1).unwrap_or("").trim();
+        assert!(
+            hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()),
+            "{version}: InstallerSha256 is not a SHA-256: {hash:?}"
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no winget manifests found");
+}
+
+#[test]
+fn the_winget_verifier_exists_and_is_wired_into_ci() {
+    let script = read("packaging/winget/verify.sh");
+    assert!(script.contains("InstallerSha256"));
+    assert!(script.contains("SHA-256 mismatch"));
+    let workflow = read(".github/workflows/ci.yml");
+    assert!(workflow.contains("packaging/winget/verify.sh"));
+    assert!(workflow.contains("winget validate"));
+}
+
+#[test]
 fn the_installer_verifies_what_it_downloads() {
     let script = read("install.sh");
     assert!(

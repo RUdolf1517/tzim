@@ -347,6 +347,43 @@ jobs:
         shell: bash
         run: exit 1
 
+  # winget has no Linux runner, and the manifest is a file that is shipped to
+  # users: `winget validate` reads it as a document, and verify.sh downloads the
+  # file it names and compares the hash, which is the half a schema cannot check.
+  winget:
+    name: winget manifest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the newest manifest
+        id: validate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eo pipefail
+          latest=$(ls -d packaging/winget/*/ | sort -V | tail -n 1)
+          echo "manifest: $latest"
+          winget validate --manifest "$latest" 2>&1 | tee /tmp/tzim-winget.log
+
+      - name: Check the hash against the published archive
+        id: hash
+        continue-on-error: true
+        shell: bash
+        run: sh packaging/winget/verify.sh 2>&1 | tee -a /tmp/tzim-winget.log
+
+      - name: Publish failure log
+        if: steps.validate.outcome == 'failure' || steps.hash.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-winget.log winget
+
+      - name: Fail the job
+        if: steps.validate.outcome == 'failure' || steps.hash.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
   size:
     name: binary size
     runs-on: ubuntu-latest

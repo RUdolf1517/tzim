@@ -152,6 +152,46 @@ files before anything is touched.
 5. `packaging/winget/<version>/` is submitted to `microsoft/winget-pkgs` as
    `manifests/r/RUdolf1517/tzim/<version>/`. Until it is accepted, the manifest in this repository can be
    installed locally with `winget install --manifest`.
+
+   The submission is a pull request against a repository this project does not own, so the release workflow
+   cannot make it. What CI *can* do, and does, is fail when the manifest would install nothing: `winget
+   validate` reads it as a document on a Windows runner, and `packaging/winget/verify.sh` downloads the
+   archive it names and compares the hash — the half a schema cannot check, and the one that actually breaks
+   a user's install.
+
+   **Submitting it by hand.** The rules that decide whether the pull request passes are in the repository's
+   [first-time contributor checklist](https://github.com/microsoft/winget-pkgs/blob/master/doc/FirstContribution.md);
+   the three that matter here:
+
+   - **one package version per pull request** — a multi-file manifest set for a single `PackageIdentifier`
+     and `PackageVersion`; not several versions, and not a version plus an unrelated change;
+   - **manifest files only** — no README, no tooling, no spelling fixes in the same pull request;
+   - **a multi-file manifest set**, with the `# yaml-language-server: $schema=…` header on every file, which
+     is what `packaging/winget/<version>/` already is. The schema version there is `1.10.0`, which the
+     repository still accepts; the pull-request template names the version it currently recommends, and
+     bumping is one line in each of the three files followed by `winget validate`.
+
+   ```sh
+   gh repo fork microsoft/winget-pkgs --clone
+   cd winget-pkgs
+   git switch -c rudolf1517-tzim-0.11.0
+
+   version=0.11.0
+   mkdir -p "manifests/r/RUdolf1517/tzim/$version"
+   cp /path/to/tzim/packaging/winget/"$version"/*.yaml "manifests/r/RUdolf1517/tzim/$version/"
+
+   git add manifests/r/RUdolf1517/tzim
+   git commit -m "Add RUdolf1517.tzim version $version"
+   git push -u origin HEAD
+   gh pr create --repo microsoft/winget-pkgs --title "Add RUdolf1517.tzim version $version" \
+       --body "New package: tzim, a lossless file optimizer. Manifests copied from the project's repository; \
+   the hashes were checked against the published release archive by packaging/winget/verify.sh."
+   ```
+
+   Later releases are the same command with a new `version`, which is what `wingetcreate update
+   RUdolf1517.tzim --version <version> --submit` automates once a token is available. The validation
+   pipeline on the pull request runs the same two checks as the `winget` job here, plus a schema check.
+
 6. The release notes state plainly what the release does **not** do: which formats are refused, which
    guarantees are not claimed, and which numbers are unmeasured (see [benchmarks](benchmarks.md)).
 
