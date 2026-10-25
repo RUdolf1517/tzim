@@ -67,6 +67,39 @@ gzip -9 -n -c "$corpus/images/libjpeg-turbo-testorig.jpg" > "$corpus/gzip/testor
 (cd "$corpus/images" && zip -q -9 "$corpus/zip/pngsuite-subset.zip" \
     pngsuite-basn0g08.png pngsuite-basn2c08.png pngsuite-basn4a08.png pngsuite-basn6a08.png)
 
+# zlib streams, built the same way and for the same reason (#36): the handler
+# was measured by the benchmark but never regression-gated on real data. Level 6
+# with the default strategy, which is what every other program produces and what
+# leaves room for a better encoder to win.
+mkdir -p "$corpus/zlib"
+python3 - "$corpus" <<'PY'
+import sys, zlib
+
+corpus = sys.argv[1]
+# Two kinds of payload: image bytes (already compressed, so the gain is small
+# and a wrong byte is obvious) and a text blob (compressible, so the encoder is
+# actually exercised).
+sources = {
+    "pngsuite-basn2c08.png.zlib": "images/pngsuite-basn2c08.png",
+    "pngsuite-basn6a08.png.zlib": "images/pngsuite-basn6a08.png",
+    "libjpeg-turbo-testorig.jpg.zlib": "images/libjpeg-turbo-testorig.jpg",
+}
+streams = 0
+for out, source in sources.items():
+    with open(f"{corpus}/{source}", "rb") as fh:
+        data = fh.read()
+    with open(f"{corpus}/zlib/{out}", "wb") as fh:
+        # A zlib stream: two-byte header, DEFLATE payload, Adler-32 trailer.
+        fh.write(zlib.compress(data, 6))
+    streams += 1
+
+text = (b"tzim shrinks the file, never the information. " * 400)
+with open(f"{corpus}/zlib/text.zlib", "wb") as fh:
+    fh.write(zlib.compress(text, 6))
+streams += 1
+print(f"zlib streams: {streams}")
+PY
+
 total="$(find "$corpus" -type f | wc -l | tr -d ' ')"
 images="$(find "$corpus/images" -type f | wc -l | tr -d ' ')"
 echo "corpus: $total files ($images images, $((total - images)) containers)"

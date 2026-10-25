@@ -906,6 +906,158 @@ fn exists(path: &Path) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Memory budget (#51)
+// ---------------------------------------------------------------------------
+
+/// The number the estimator charges for a PNG fixture: the file twice (the input
+/// and the candidate read back) plus the two RGBA buffers it decodes to.
+fn png_worst_case(bytes: &[u8], spec: &PngSpec) -> u64 {
+    2 * bytes.len() as u64 + 8 * u64::from(spec.width) * u64::from(spec.height)
+}
+
+/// #51: a file whose declared dimensions put it above the budget is `skipped`
+/// with a reason, is never read, and is byte-identical afterwards. Exit 0 — a
+/// configured bound is not an error.
+#[test]
+fn a_file_above_the_memory_budget_is_skipped_and_untouched() {
+    let ws = Workspace::new("budget-skip");
+    let spec = PngSpec {
+        width: 128,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("photo.png", &original);
+    let cost = png_worst_case(&original, &spec);
+    let budget = (cost - 1).to_string();
+
+    let (code, stdout, stderr) = run(&["photo.png", "--memory-budget", &budget, "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "expected a skip, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("--memory-budget"),
+        "the reason must name the flag that caused it: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a skipped file must not be touched"
+    );
+}
+
+/// #51: the boundary is exact — at the budget the file is processed, one byte
+/// above it is skipped.
+#[test]
+fn the_memory_budget_boundary_is_exact() {
+    let ws = Workspace::new("budget-boundary");
+    let spec = PngSpec {
+        width: 128,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let cost = png_worst_case(&original, &spec);
+    let path = ws.write("at.png", &original);
+
+    // Exactly at the budget: processed as usual.
+    let at = cost.to_string();
+    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &at, "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"optimized\""),
+        "a file exactly at the budget must be processed: {stdout}"
+    );
+    assert!(std::fs::read(&path).unwrap().len() < original.len());
+
+    // One byte above: skipped, and the optimized result from the first run is
+    // left alone (it is already smaller, so this also proves the skip does not
+    // rewrite anything).
+    let settled = std::fs::read(&path).unwrap();
+    let above = (cost + 1).to_string();
+    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &above, "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "one byte above the budget must be skipped: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), settled);
+}
+
+/// #51: the budget must not change the result for a file that fits. The default
+/// budget is derived from the other ceilings, so it admits everything they do.
+#[test]
+fn a_file_that_fits_is_optimized_exactly_as_before() {
+    let spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+
+    let default_run = Workspace::new("budget-default");
+    default_run.write("a.png", &original);
+    let (code, stdout, stderr) = run(&["a.png", "--json"], &default_run.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
+    let without_flag = std::fs::read(default_run.file("a.png")).unwrap();
+
+    let explicit_run = Workspace::new("budget-explicit");
+    explicit_run.write("a.png", &original);
+    let (code, stdout, stderr) = run(&["a.png", "--memory-budget", "17179869184", "--json"], &explicit_run.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
+    let with_flag = std::fs::read(explicit_run.file("a.png")).unwrap();
+
+    assert_eq!(
+        without_flag, with_flag,
+        "the derived default and an explicit generous budget must produce the same file"
+    );
+}
+
+/// #51: the container term is real — a small ZIP is charged its decompression
+/// ceiling, because that is the one cost a file length cannot bound.
+#[test]
+fn a_container_is_charged_its_decompression_ceiling() {
+    let ws = Workspace::new("budget-zip");
+    let entry = ZipEntrySpec::deflated("data.txt", &compressible(4096), 1);
+    let original = build_zip(&[entry], b"");
+    let path = ws.write("small.zip", &original);
+
+    // 8 GiB of allowance against a 100 KiB budget: skipped before it is read.
+    let (code, stdout, stderr) = run(&["small.zip", "--memory-budget", "102400", "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "a container is charged its decompression ceiling: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    // With a decompression ceiling that fits, the same archive is processed.
+    let (code, stdout, stderr) = run(
+        &[
+            "small.zip",
+            "--memory-budget",
+            "102400",
+            "--max-uncompressed",
+            "8192",
+            "--json",
+        ],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        !stdout.contains("\"status\":\"skipped\""),
+        "lowering --max-uncompressed must admit the archive: {stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // ZIP
 // ---------------------------------------------------------------------------
 

@@ -15,6 +15,7 @@ on:
       - "Cargo.lock"
       - ".github/scripts/corpus*.sh"
       - ".github/corpus-allowlist.txt"
+      - ".github/corpus-refusals.txt"
       - ".github/workflows/corpus.yml"
   workflow_dispatch:
   schedule:
@@ -69,6 +70,7 @@ jobs:
             ${{ runner.temp }}/tzim-corpus/run1.json
             ${{ runner.temp }}/tzim-corpus/run2.json
             ${{ runner.temp }}/tzim-corpus/run1.err
+            ${{ runner.temp }}/tzim-corpus/refusals.txt
 
       - name: Publish the numbers
         if: success()

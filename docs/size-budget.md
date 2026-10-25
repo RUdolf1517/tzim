@@ -10,10 +10,39 @@ measured, so this document defines the budget, the build profile, and the exact 
 > (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`), unchanged from v0.10.0 through the whole v0.11.0 distribution
 > work: packaging adds no code to the binary. Per-feature measurements are in §3; the profile that got
 > here is in §2, and what it cost in speed is in §5.
-> **The progress line is 96 KiB of that** — a tenth of the binary, and the largest single addition since the
-> PNG decoder. It is the one dependency granted since v0.1, and the trade is recorded rather than smoothed
-> over: [dependencies §2.9](dependencies.md#29-indicatif--the-progress-line).
+> **v0.13 takes the progress line back out of that number.** `indicatif` and `console` were 96 KiB of the
+> 1 049 440-byte binary; `src/progress.rs` replaces them, and the JPEG cross-check of `jpeg-v1` has to fit
+> inside what they gave back — that was the condition on accepting the crate at all
+> ([dependencies §2.10](dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)). The
+> measurement for this release is in §1, and the gate in `ci.yml` is the previous release's binary rather
+> than a percentage above it: it fails on *any* growth.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
+
+### Errata: the v0.12.1 "same size" claim
+
+v0.12.1 shipped with the CHANGELOG, the release notes and this document all saying 1 049 440 bytes, and the
+five release **tarballs** grew by 514–634 bytes each. The suspicion was that the binary had grown and nobody
+had measured it, because the `size` job only ever tested an upper bound (`bytes <= 1 207 296`) — [issue
+#62](https://github.com/Rudolf1517/tzim/issues/62). The number was right; the inference from the assets was
+wrong. The `size` job printed
+
+```
+static musl binary: 1049440 bytes (1024 KiB)
+```
+
+on **every** run of that pull request — the eight runs of PR #60, from the first commit to the merge commit
+(`8989774`, `95cb565`, `be16474`, `c012ba5`, `0ad7edc`, `0af29c9`, `ec423bc`, `cad83eb`) — so no commit
+changed the binary by a byte.
+
+What moved is the packing. A tarball holds `tzim`, `LICENSE`, `man/tzim.1` and three completion scripts, `tar`
+pads each member to 512 bytes, and gzip then compresses the whole padded stream. The man page's version
+string is the only member that changes between two patch releases: its byte length is identical, so every
+member keeps its offset, but its *compressed* length is not, and the difference shifts the DEFLATE stream
+that the binary's bytes sit inside. A ~500-byte swing on a 536 636-byte `.tar.gz` is packing, not code; the
+`.zip` for Windows stores the binary with its own deflate, which is why its delta is the largest of the five
+and still under a kilobyte. The lesson is kept rather than deleted: a released artifact's *compressed* size is
+not evidence about its contents, which is why from v0.13 the gate compares the binary with the previous
+release's measurement instead of a ceiling that leaves 150 KiB of room underneath.
 
 ---
 

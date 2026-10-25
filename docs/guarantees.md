@@ -787,10 +787,12 @@ decodes both files, and the `Adler-32` is recomputed by code in this repository,
 **Refused (skipped, exit 0):** `CM ≠ 8`, `CINFO < 7`, `FDICT = 1`, trailing data after the stream. The
 file is valid and is left untouched.
 
-**Not a zlib stream (unsupported, exit 0):** the two header bytes pass the container's check and the data
-decodes to nothing at all. The header was a coincidence — see "A note on detection" below — so this is not
-corruption and the run keeps its exit code. The note says so and the file is untouched. This is the one case
-where a handler overrules the detector, and only a handler that can prove the difference is allowed to do it.
+**Nothing decodes behind the header (unsupported, exit 0):** the two header bytes pass the container's
+check and the data decodes to nothing at all. There are two possible explanations — the header was a
+coincidence (see "A note on detection" below), or the stream is a real zlib stream cut too short to produce
+a byte — and the decoder cannot tell them apart (#62). Neither is corruption, so the run keeps its exit code;
+the note names both possibilities and the file is untouched. This is the one case where a handler overrules
+the detector, and only a handler that can prove the difference is allowed to do it.
 
 **Corrupt (failed, exit 1):** a header that fails the check value, a truncated stream, an `Adler-32` that
 does not match, and a stream that decoded at least one byte before it broke. All leave the original

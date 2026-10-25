@@ -1475,7 +1475,158 @@ pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
             "jpeg: DCT coefficients changed, the candidate is not lossless",
         ));
     }
+
+    // Everything above decodes with this repository's own reader, which cannot
+    // catch a defect that is symmetric in the reader and the writer: the same
+    // wrong symbol mapping on both sides compares equal. The oracle below is a
+    // second implementation and does not share the bug (#39).
+    #[cfg(feature = "jpeg-v1")]
+    oracle::cross_check(original, candidate)?;
+
     Ok(())
+}
+
+/// Verification by an independent decoder (contract §2.6, guarantee class V1).
+///
+/// The two jobs this module has are the two the coefficient comparison cannot
+/// do: notice a defect that is symmetric in this repository's codec, and refuse
+/// a candidate that the rest of the world cannot read.
+///
+/// Three outcomes, not two, because `Error::Verify` aborts the whole run: a
+/// decoder that refuses a *legal* file would otherwise kill a batch on a valid
+/// input, which is worse than the defect it came to catch.
+///
+/// | the oracle on the original | on the candidate | outcome |
+/// | --- | --- | --- |
+/// | refuses | — | `Refused`: `skipped`, exit 0, file untouched |
+/// | decodes | refuses | `Verify`: the writer produced an unreadable file |
+/// | decodes | decodes | the two pixel images are compared |
+///
+/// Both sides are decoded by the same oracle, because chroma upsampling and the
+/// YCbCr→RGB matrix are not bit-identical between decoders: our pixels and
+/// theirs are not comparable, while theirs on both sides are.
+///
+/// **The comparison is a CRC-32 of the pixel buffer, not a byte-by-byte diff**,
+/// and that is a deliberate trade with a price worth naming: it is a
+/// probabilistic argument (2⁻³² for an accidental collision on a differing
+/// image), where the coefficient comparison above is an exact one. It buys the
+/// memory — a 100 MPix frame is ~300 MB, and holding both sides would be ~600 MB
+/// against the 256 MiB the coefficient comparison already costs. The digest is
+/// of the *decoded* image, so a collision would have to survive a completely
+/// different decoder; and the exact check still runs first.
+#[cfg(feature = "jpeg-v1")]
+mod oracle {
+    use std::io::Cursor;
+
+    use crate::error::{Error, Result};
+
+    /// What the independent decoder saw: enough to compare two images without
+    /// holding either of them.
+    #[derive(PartialEq, Eq, Debug)]
+    struct Digest {
+        width: u16,
+        height: u16,
+        /// The crate's pixel format, mapped to a small number so a change in its
+        /// `Debug` output cannot change a verdict.
+        kind: u8,
+        bytes: usize,
+        pixels: u32,
+    }
+
+    fn digest(data: &[u8]) -> std::result::Result<Digest, String> {
+        let mut decoder = jpeg_decoder::Decoder::new(Cursor::new(data));
+        // `decode` allocates the whole image; the caller hashes it and drops it
+        // before the other side is touched, so one buffer is live at a time.
+        let pixels = decoder.decode().map_err(|e| e.to_string())?;
+        let info = decoder
+            .info()
+            .ok_or_else(|| "no frame header was decoded".to_string())?;
+        let kind = match info.pixel_format {
+            jpeg_decoder::PixelFormat::L8 => 1,
+            jpeg_decoder::PixelFormat::L16 => 2,
+            jpeg_decoder::PixelFormat::RGB24 => 3,
+            jpeg_decoder::PixelFormat::CMYK32 => 4,
+            _ => 0,
+        };
+        Ok(Digest {
+            width: info.width,
+            height: info.height,
+            kind,
+            bytes: pixels.len(),
+            pixels: crc32fast::hash(&pixels),
+        })
+    }
+
+    /// The cross-check itself. Called from [`super::verify`] after the exact
+    /// coefficient comparison, never instead of it.
+    pub(super) fn cross_check(original: &[u8], candidate: &[u8]) -> Result<()> {
+        let before = match digest(original) {
+            Ok(digest) => digest,
+            // A capability difference is not proof of a bug here. The file is
+            // skipped with the reason, which is what `--formats` policy and
+            // every other refusal do, and nothing is written.
+            Err(reason) => {
+                return Err(Error::refused(format!(
+                    "jpeg: the independent decoder cannot read this file, so it cannot cross-check it                      ({reason}); the file is untouched"
+                )))
+            }
+        };
+        let after = digest(candidate).map_err(|reason| {
+            Error::verify(format!(
+                "jpeg: this build produced a file the independent decoder cannot read ({reason})"
+            ))
+        })?;
+        if before != after {
+            return Err(Error::verify(
+                "jpeg: the independent decoder sees a different image on the two sides",
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn baseline() -> Vec<u8> {
+            // A real baseline JPEG, built by the test fixture in this module.
+            super::super::tests::sample_jpeg()
+        }
+
+        #[test]
+        fn the_oracle_decodes_what_this_build_writes() {
+            let jpeg = baseline();
+            let digest = digest(&jpeg).expect("the oracle must read a baseline JPEG");
+            assert!(digest.width > 0 && digest.height > 0);
+            assert!(digest.bytes > 0);
+        }
+
+        #[test]
+        fn the_oracle_refuses_something_that_is_not_a_jpeg() {
+            assert!(digest(b"not a jpeg at all").is_err());
+        }
+
+        #[test]
+        fn a_refusal_on_the_original_is_not_a_failure() {
+            let err = cross_check(b"not a jpeg at all", b"also not").unwrap_err();
+            assert!(matches!(err, Error::Refused(_)), "{err}");
+        }
+
+        #[test]
+        fn a_candidate_the_oracle_cannot_read_is_a_verification_failure() {
+            let jpeg = baseline();
+            let err = cross_check(&jpeg, b"not a jpeg at all").unwrap_err();
+            assert!(matches!(err, Error::Verify(_)), "{err}");
+        }
+
+        #[test]
+        fn two_different_images_do_not_share_a_digest() {
+            let a = baseline();
+            let b = super::super::tests::sample_jpeg_with_dc(1);
+            let (da, db) = (digest(&a).unwrap(), digest(&b).unwrap());
+            assert_ne!(da, db, "a changed image must not compare equal");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1497,6 +1648,76 @@ mod tests {
 
     fn table_is_legal(h: &Huff) -> bool {
         validate_table(h).is_ok()
+    }
+
+    /// A complete baseline JPEG built by hand: one 8×8 greyscale block, one
+    /// quantisation table of ones, DC coefficients only.
+    ///
+    /// It exists because the oracle in `super::oracle` needs a real file and this
+    /// module's tests cannot reach the integration fixtures. `dc` is the DC
+    /// difference of the single block, so two calls with different values are two
+    /// different images — which is what the pixel-digest test needs.
+    pub(super) fn sample_jpeg_with_dc(dc: i32) -> Vec<u8> {
+        let mut out = vec![0xff, 0xd8];
+        // DQT, 8-bit precision, table 0: sixty-four ones.
+        out.extend_from_slice(&[0xff, 0xdb, 0x00, 0x43, 0x00]);
+        out.extend_from_slice(&[1u8; 64]);
+        // SOF0: 8 bits, 8×8, one component, 1×1 sampling, table 0.
+        out.extend_from_slice(&[
+            0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x08, 0x00, 0x08, 0x01, 0x01, 0x11, 0x00,
+        ]);
+        // DHT, DC table 0: one code of length 1 (symbol 0) and one of length 2
+        // (symbol 1). Canonical codes "0" and "10", so the all-ones code "11" is
+        // unused and the table is legal.
+        out.extend_from_slice(&[0xff, 0xc4, 0x00, 0x15, 0x00]);
+        out.extend_from_slice(&[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        out.extend_from_slice(&[0x00, 0x01]);
+        // DHT, AC table 0: a single code, the end-of-block symbol.
+        out.extend_from_slice(&[0xff, 0xc4, 0x00, 0x14, 0x10]);
+        out.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        out.extend_from_slice(&[0x00]);
+        // SOS: one component, both tables 0.
+        out.extend_from_slice(&[0xff, 0xda, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3f, 0x00]);
+        // One block: the DC difference, then end-of-block, then ones to pad.
+        let mut bits = String::new();
+        match dc {
+            0 => bits.push_str("0"),          // symbol 0, one bit
+            v if v > 0 => {
+                bits.push_str("10");          // symbol 1
+                bits.push('1');               // the magnitude bit
+            }
+            _ => panic!("this fixture only builds non-negative DC differences"),
+        }
+        bits.push('0'); // end of block
+        while bits.len() % 8 != 0 {
+            bits.push('1');
+        }
+        let mut byte = 0u8;
+        for packed in bits.as_bytes().chunks(8) {
+            for bit in packed {
+                byte = (byte << 1) | u8::from(*bit == b'1');
+            }
+            out.push(byte);
+            byte = 0;
+        }
+        out.extend_from_slice(&[0xff, 0xd9]);
+        out
+    }
+
+    pub(super) fn sample_jpeg() -> Vec<u8> {
+        sample_jpeg_with_dc(0)
+    }
+
+    /// The fixture must be a file this crate accepts, or every oracle test below
+    /// would be about a rejected input instead of a decoded one.
+    #[test]
+    fn the_hand_built_sample_parses_and_decodes() {
+        for dc in [0, 1] {
+            let data = sample_jpeg_with_dc(dc);
+            let image = parse(&data).expect("the sample must parse");
+            let layout = analyze(&image).expect("the sample must analyse");
+            decode(&image, &layout).expect("the sample must decode");
+        }
     }
 
     #[test]

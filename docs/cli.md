@@ -101,6 +101,7 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
+| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so `--jobs` no longer has to be lowered to protect memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
@@ -163,7 +164,7 @@ tree of 2000 unrelated files has a ~63 % chance of containing one. Such a file d
 line reads
 
 ```
-receipt.bin      -      unsupported: zlib: the header passes the container's check but nothing decodes; this is not a zlib stream (the file is untouched)
+receipt.bin      -      unsupported: zlib: nothing decodes behind the header; either the header was a coincidence or the stream is too short to tell (the file is untouched)
 ```
 
 Exit `0`, and the file is byte-identical afterwards. A `.zlib` that decoded at least one byte and then broke
@@ -288,7 +289,8 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 | --- | --- | --- |
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
-| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) |
+| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| memory budget, per file | the sum of the other ceilings | bounds the bytes one job may cost; a file above it is skipped before it is read |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |
@@ -297,9 +299,22 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 Limits produce `skipped`, never `failed`: hitting a configured bound is not an error.
 
 `--jobs` is about parallelism, not about memory: the whole file and its candidate are held in memory, and a
-decoded image can cost hundreds of megabytes per side. The real ceiling and the numbers behind it are in
-[safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget); `--max-pixels` and `--max-size` are the two
-flags that actually reduce it.
+decoded image can cost hundreds of megabytes per side. Bytes are bounded by `--memory-budget`, which is
+checked against a computed worst case **before the file is read**: a file above it is `skipped` with a
+reason and never reaches `fs::read`. The charge covers the file, the candidate read back for verification,
+the decoded buffers on both sides of the comparison, and — for a container — `--max-uncompressed`.
+
+The default is derived from the other ceilings and therefore never skips a file that they admit, which also
+means it is not protection against a machine with less memory than the ceilings promise. Say how much you
+have:
+
+```console
+$ tzim --jobs 4 --memory-budget 2147483648 ~/Photos
+```
+
+The budget is per file, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with
+RAM. `--max-pixels` and `--max-uncompressed` lower the charge itself; the full table is in
+[safety §7.1](safety.md#71-memory--an-enforced-budget).
 
 ---
 
@@ -426,7 +441,7 @@ The drawing is [`indicatif`](https://crates.io/crates/indicatif) 0.18. It is the
 project that is not behind a feature flag: the templates and the `mm:ss` clock are ours, but keeping a line
 redrawn from several worker threads consistent with the terminal, at the right width, is not a problem worth
 solving twice. What it costs in bytes is in [size-budget §3](size-budget.md#3-feature-matrix), and why it was
-admitted is in [dependencies §2.9](dependencies.md#29-indicatif--the-progress-line).
+admitted is in [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013).
 
 The progress line is not a measurement. `Summary:` is.
 

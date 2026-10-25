@@ -363,7 +363,9 @@ pub fn print_json<W: Write + ?Sized>(
     )
 }
 
-fn display_width(s: &str) -> usize {
+/// Width of `s` in terminal cells. Shared with the progress line, which has to
+/// fit the same screen without a terminal-size crate (#53).
+pub fn display_width(s: &str) -> usize {
     s.chars().map(char_width).sum()
 }
 

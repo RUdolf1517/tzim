@@ -234,7 +234,7 @@ around the code that had stopped being true:
   recorded with the run id ([benchmarks §3.2](benchmarks.md#32-against-the-established-tools)).
 - **The progress line is `indicatif`**, at the user's request: a spinner for one file, a clock, a bar and a
   counter for a batch ([cli §10](cli.md#10-colour-and-progress)). It is the first dependency granted since
-  v0.1 and the only one not behind a feature ([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
+  v0.1 and the only one not behind a feature ([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
 - **The README fits on one screen**: badges, five lines, the format table, and the pitch — contract and
   refusal — where a stranger reads it first.
 
@@ -287,7 +287,7 @@ The tag was cut from `main` after those tests failed before the fix and passed a
 
 - **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
   reason instead of being read. `--jobs` bounds how many files are in flight, not how many bytes they need,
-  and [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) says so until this lands.
+  and [safety §7.1](safety.md#71-memory--an-enforced-budget) says so until this lands.
 
 Neither is a size change, so the release is a patch. The tag is cut from `main` only after each test fails
 before its fix and passes after it.

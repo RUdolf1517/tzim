@@ -24,7 +24,7 @@ Of those 1 024 KiB, **96 KiB is the progress line**: `indicatif` and `console`, 
 request. Sixteen of those were recovered by compiling the two crates at `opt-level = "s"` instead of the
 wildcard `3` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)), and the rest is the
 price of not writing a bar, a spinner and a terminal-width-aware redraw by hand
-([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
+([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -92,31 +92,46 @@ order of magnitude while carrying an independent verification decoder.
 ### 3.1 The real-file corpus
 
 Four pinned upstream archives, assembled by `.github/scripts/corpus-fetch.sh` (URLs and checksums in
-[testing.md](testing.md#real-file-corpus)), 690 images — PNG, JPEG and, since v0.7.0, TIFF — plus 4
-containers built from them with `gzip -9` and `zip -9`. CI job `corpus`, one pass over the tree.
+[testing.md](testing.md#real-file-corpus)), 690 images — PNG, JPEG and TIFF — plus 4 containers built from
+them with `gzip -9` and `zip -9`. CI job `corpus`, one pass over the tree.
+
+Measured on v0.12.1, run
+[`40212911347`](https://github.com/Rudolf1517/tzim/actions/runs/40212911347), commit `c012ba5`:
 
 | Metric | Value |
 | --- | --- |
 | Files | 694 |
-| Optimized | 437 |
+| Optimized | 425 |
 | Already optimal | 156 |
 | Unsupported | 0 |
-| Refused by contract (progressive/arithmetic JPEG, multi-page, tiled, LZW/CCITT TIFF) | 81 |
-| Failed (corrupt upstream fixtures, see allowlist) | 20 |
+| Skipped (refused by contract: progressive/arithmetic/limit/unsupported layout) | 81 |
+| Failed (corrupt upstream fixtures, all allowlisted — see `.github/corpus-allowlist.txt`) | 32 |
 | Bytes before | 21 864 484 |
-| Bytes after | 19 733 541 |
-| **Saved** | **2 130 943 (9.75 %)** |
+| Bytes after | 19 734 464 |
+| **Saved** | **2 130 020 (9.74 %)** |
 | Files rewritten on a second pass | 0 |
 
-The table was produced again for v0.10.0 (`corpus` job on the same pull request) and is identical, digit for
-digit: no handler changed in this release, and that is the test of it.
+Optimized files by format: **jpeg 46, png 340, tiff 39**. By container: **images 690, gzip 3, zip 1**.
 
-Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files, TIFF 39 files. The TIFF
-bytes dominate the total because uncompressed scans are the one thing in this corpus that still has room;
-the PNG and JPEG rows are unchanged from v0.6.0, which is what "no handler changed" should look like.
+Skipped files by reason: more than one IFD (12); compression 4 is not rewritten by this build (12); tiled
+layout is not supported (9); only baseline sequential (8); tag 34665 carries an offset to another structure
+(6); IFD entries are not in ascending tag order (5). The remaining 29 are long tails of the same kinds; the
+full list is written to `refusals.txt` by the run and attached to the job.
 
-The 156 "already optimal" files are the honest part of this number: these are files that upstream projects
-already compressed well, and leaving them alone is the contract working, not the tool failing.
+The 425/19 734 464 numbers are **lower than the v0.10.0 table this section used to show** (437 / 19 733 541),
+and the difference is a defect being removed rather than compression improving: twelve of Pillow's negative
+APNG fixtures used to be rewritten and reported `optimized`, and v0.12.1 refuses them (§`0.12.1` in the
+[changelog](../CHANGELOG.md)). Those twelve files also account for the twelve extra `failed` rows. Nothing
+else moved: the byte total changed by 923 bytes because those twelve files are no longer written, and the
+per-format counts for JPEG and TIFF are unchanged.
+
+The 156 "already optimal" files are the honest part of this number: files that upstream projects already
+compressed well, and leaving them alone is the contract working, not the tool failing.
+
+v0.13 adds four zlib streams to the corpus (`corpus-fetch.sh`) and stops leaving the zlib handler outside the
+regression gate, so the next run's `Files` count is 698 and the byte totals move with it. That is a corpus
+change, not a compression change, and the two are kept apart on purpose: a table that moves because the
+fixtures changed says nothing about the tool.
 
 ### 3.2 Against the established tools
 

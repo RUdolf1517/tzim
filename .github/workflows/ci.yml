@@ -426,9 +426,12 @@ jobs:
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
           cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-full
-          # docs/size-budget.md 1: measured 1 024 KiB + 15 %, rounded up to
-          # whole KiB.
-          budget=1207296
+          # The gate is the *previous release's* binary, not a percentage above
+          # it: v0.13 removes a 96 KiB dependency and adds an optional decoder,
+          # and that decoder was approved only on condition that the shipping
+          # binary does not grow (#39). A number that moves has to be argued in
+          # docs/size-budget.md §1, not absorbed here.
+          budget=1049440
           echo "bytes: $bytes, budget: $budget"
           test "$bytes" -le "$budget" || {
             echo "the static binary is $((bytes / 1024)) KiB, over the $((budget / 1024)) KiB budget" >&2
@@ -452,9 +455,10 @@ jobs:
             "png,gzip,zip" \
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
-            "png,gzip,zip,ico,jpeg,tiff" \
-            "png,gzip,zip,ico,jpeg,tiff,zlib" \
-            "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli"
+            "png,gzip,zip,ico,jpeg,jpeg-v1" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli"
           do
             cargo build --release --locked --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

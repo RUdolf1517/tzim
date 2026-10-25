@@ -9,6 +9,94 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+### Errata for 0.12.1
+
+The release notes said the binary was the same size and the five release **tarballs** each grew by 514–634
+bytes, which looked like an unmeasured growth (issue #62). It was not: the `size` job printed
+`static musl binary: 1049440 bytes (1024 KiB)` on all eight runs of that pull request, from the first commit
+to the merge commit, so no commit changed the binary at all. The deltas are `tar`'s 512-byte member padding
+and gzip's packing: the man page's version string is the one member that differs, and its compressed length
+moves the DEFLATE stream the unchanged binary sits in. The claim stands, the evidence is now written down in
+[size-budget §1](docs/size-budget.md#errata-the-v0121-same-size-claim), and the gate in `ci.yml` now compares
+the binary with the previous release's measurement instead of a ceiling 150 KiB above it — a green `size`
+job that only checks an upper bound is what made the question reasonable.
+
+## [0.13.0] - 2026-10-25
+
+Six issues, one of them a removal: the progress line is drawn here again, a crate nobody here wrote now
+stands on the far side of the JPEG comparison, `--jobs` stops pretending to bound memory, and CI gains the
+three coverage gaps and the independent-decoder job that were listed against it. The binary is `SIZE_BYTES`
+bytes.
+
+### Added
+
+- **`--memory-budget <BYTES>`** (issue #51, owner decision O2-D). `--jobs` bounds how many files are in
+  flight, never how many bytes they need, and four workers at the defaults could reach several GiB on inputs
+  of a few megabytes — killed by the OOM killer with no message. The new flag is checked against a computed
+  worst case **before the file is read**: the input, the candidate read back for verification, the decoded
+  buffers on both sides, and `--max-uncompressed` for a container. A file above the budget is `skipped` with
+  a reason naming the flag, exit `0`, and it never reaches `fs::read`. The default is derived from the other
+  ceilings (`4 × --max-size + 8 × --max-pixels + --max-uncompressed`), so no file they admit is ever skipped
+  by default — which also means the default is not protection against a machine with less memory than those
+  ceilings promise. Say how much you have:
+  `tzim --jobs 4 --memory-budget 2147483648 ~/Photos` ([safety §7.1](docs/safety.md#71-memory--an-enforced-budget)).
+- **`jpeg-v1`**, an independent decoder in the default build, for verification only (issue #39). `verify`
+  compares coefficients, structure and bytes through code that lives in this repository; a defect symmetric
+  in the encoder and the decoder was invisible. `jpeg-decoder` now decodes both sides of an accepted
+  candidate, one buffer at a time, and the pixels must be identical: a disagreement is `failed`, exit `1`,
+  original untouched. If the independent decoder cannot read the *original*, the file is `skipped` with that
+  reason, because an oracle that cannot read a file is not a verdict about it. The feature is separate from
+  `jpeg` and the whole comparison can be removed with one flag ([dependencies
+  §2.10](docs/dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)).
+- **A third-party verification job** (issue #54): Pillow for PNG/JPEG/TIFF/ICO, the standard library's `zlib`
+  for gzip and zlib streams, `zipfile` for archives — on the downloaded corpus, comparing pixel data, mode
+  and dimensions for images and decompressed bytes for everything else, with the library versions printed.
+  `--self-test` mutates a candidate on every run and requires the gate to reject it, so a comparison that
+  silently stops comparing fails instead of passing. Zero bytes in the binary and no new Rust dependency
+  ([testing §3.3](docs/testing.md#33-the-third-party-decoder-job)).
+- **The refused set has a baseline** (issue #36): `corpus.sh` writes `refusals.txt` and compares its counts,
+  per reason, with `.github/corpus-refusals.txt`. `docs/testing.md` had been promising that "the set of
+  refused files is unchanged" fails the run since 0.10, and nothing checked it.
+- **The fuzz build covers all seven handlers**: `tiff` and `zlib` were missing from `fuzz/Cargo.toml`, so two
+  parsers never saw fuzz input, and `strip` had no seeds at all. Pillow's TIFF fixtures and generated zlib
+  streams now seed `roundtrip`, `strip` and a new `tiff`/`zlib` corpus (issue #36).
+- **zlib is inside the corpus run** (issue #36): four streams are assembled by `corpus-fetch.sh` from real
+  payloads, so the handler is regression-gated on real data instead of measured only by the benchmark.
+
+### Changed
+
+- **The progress line is hand-drawn again** (issue #53): `indicatif` and `console` are gone, 96 KiB with
+  them, and `src/progress.rs` draws the same information — spinner, clock, bar, counter, rate, ETA — with one
+  write per frame from a single ticker thread. The conditions [issue
+  #53](https://github.com/Rudolf1517/tzim/issues/53) set on the removal are met: the line is prettier than
+  the crate's, not plainer, and it fixes the two things the crate's version got wrong — an ETA that appeared
+  after a single sample and a frame that could be wider than the terminal. Text is clipped by *display*
+  width, through the wcwidth table the report already used, so a CJK file name cannot break the alignment;
+  the width comes from `COLUMNS`. Nothing is drawn when stderr is not a terminal, and the first frame still
+  waits 150 ms.
+- **A file that used to be processed may now be skipped**: that is `--memory-budget` working as configured.
+  Nothing changes with the default budget, and a run that sets it should expect the skips and read the note.
+- **The `size` job's gate is the previous release's binary**, not a percentage above it: 1 049 440 bytes,
+  the v0.12.1 measurement. `jpeg-v1` was approved on the condition that the shipping binary does not grow, so
+  the gate now fails on any growth instead of allowing 150 KiB of it.
+
+### Fixed
+
+- **The zlib note no longer claims more than the decoder knows** (issue #62). `nothing decodes behind the
+  header` used to be reported as `this is not a zlib stream`, which is false for a real stream truncated to a
+  few dozen bytes. The note now says `either the header was a coincidence or the stream is too short to
+  tell`, and `docs/guarantees.md` §4.10 says the same ([cli §2](docs/cli.md#2-options)).
+
+### Documentation
+
+- `docs/dependencies.md` §2.9 records the removal of `indicatif` next to the argument for adding it, and
+  §2.10 argues `jpeg-decoder`; §2.5 has five direct dependencies and now every one of them is behind a
+  feature. `docs/safety.md` §7.1 replaces "an upper bound, not a budget" with the enforced limit, its
+  default and the arithmetic. `docs/benchmarks.md` §3.1 is the v0.12.1 corpus table — the numbers that
+  stopped being true when twelve APNG fixtures began to be refused — and `docs/size-budget.md` carries the
+  errata for the tarball deltas above. `docs/testing.md` gains the third-party job, the zlib corpus row and
+  the refusal baseline.
+
 ## [0.12.1] - 2026-10-25
 
 One user-visible behaviour change, one channel removed, and the last three traceability rows that had no test.
@@ -273,7 +361,7 @@ in CI, in the benchmarks, in the README, and on the progress line.
   `--json` and `--no-progress`, and still erased before the report prints. The templates, the `mm:ss` clock
   and the 150 ms delay stay in `src/progress.rs`; the animation thread and the terminal handling do not.
   [cli §10](docs/cli.md#10-colour-and-progress) has the shapes,
-  [dependencies §2.9](docs/dependencies.md#29-indicatif--the-progress-line) argues the crate, its eight new
+  [dependencies §2.9](docs/dependencies.md#29-indicatif--added-in-v010-removed-in-v013) argues the crate, its eight new
   lock entries and the `unsafe` surface that arrives with them.
 - **`msrv`, `fmt`, `deny` and `audit` jobs.** `docs/testing.md` §4 has listed eleven CI jobs since v0.1 and
   the workflow contained three. The missing gates exist now: 1.88.0 compilation, `cargo fmt`, `cargo deny`

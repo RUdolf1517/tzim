@@ -26,6 +26,8 @@ pub struct Config {
     pub allow: Allow,
     pub min_size: u64,
     pub max_size: u64,
+    /// The most any one job may be expected to need, in bytes (issue #51).
+    pub memory_budget: u64,
     pub allow_hardlinks: bool,
     pub allow_root_ownership_change: bool,
     pub no_fsync: bool,
@@ -45,11 +47,80 @@ impl Config {
             allow: args.allow,
             min_size: args.min_size,
             max_size: args.max_size,
+            memory_budget: budget_or_derived(args),
             allow_hardlinks: args.allow_hardlinks,
             allow_root_ownership_change: args.allow_root_ownership_change,
             no_fsync: args.no_fsync,
         }
     }
+}
+
+/// The budget when the user has not given one: the sum of every worst case the
+/// other ceilings allow, so that the defaults never skip a file that they admit.
+///
+/// `4 × --max-size` is the widest per-file term (`2 × len` for the file and the
+/// candidate, plus `4 × len` for a TIFF strip, and the larger of the two wins),
+/// `8 × --max-pixels` is a PNG's two RGBA buffers, and `--max-uncompressed` is
+/// a ZIP entry. The sum is therefore an upper bound on [`worst_case_bytes`] for
+/// every format, under any `len ≤ --max-size`. It is deliberately not a claim
+/// about how much RAM the machine has: that is what `--memory-budget` is for.
+pub fn derived_memory_budget(max_size: u64, max_pixels: u64, max_uncompressed: u64) -> u64 {
+    max_size
+        .saturating_mul(4)
+        .saturating_add(max_pixels.saturating_mul(8))
+        .saturating_add(max_uncompressed)
+}
+
+/// `--memory-budget`, or the derived ceiling when it is zero.
+fn budget_or_derived(args: &Args) -> u64 {
+    if args.memory_budget == 0 {
+        derived_memory_budget(args.max_size, args.max_pixels, args.max_uncompressed)
+    } else {
+        args.memory_budget
+    }
+}
+
+/// What one file may cost, in bytes, from what is cheap to know before reading it
+/// (issue #51, decision O2-D).
+///
+/// The terms, and why each is the size it is:
+///
+/// | Term | Worst case | Why this number |
+/// | --- | --- | --- |
+/// | the input, held in memory | `len` | `fs::read` |
+/// | the candidate, read back for verification | `len` | a candidate is never larger |
+/// | a decoded PNG | `8 × pixels` | two RGBA buffers, one per side |
+/// | a decoded JPEG | `7 × pixels` | the coefficient planes plus one decoded frame — the independent decoder hashes one side at a time (§2.6) |
+/// | a decoded TIFF strip | `4 × len` | the strip is bounded by the file, and `--max-size` bounds that |
+/// | a decompressed ZIP entry | `--max-uncompressed` | the one term that is not bounded by the file at all, and the reason a budget cannot default to something small |
+///
+/// `pixels` is the real count when the header carried it (a PNG does) and
+/// `--max-pixels` otherwise: the configured ceiling is the bound the rest of the
+/// program already refuses to exceed. gzip and zlib are absent on purpose —
+/// they are inflated in 64 KiB blocks and never materialise the payload.
+///
+/// The function takes its ceilings rather than a `Config` so that a test can
+/// compute the same number the pipeline will.
+pub fn worst_case_bytes(
+    len: u64,
+    format: Option<detect::Format>,
+    pixels: Option<u64>,
+    max_pixels: u64,
+    max_uncompressed: u64,
+) -> u64 {
+    let base = len.saturating_mul(2);
+    let pixels = pixels.unwrap_or(max_pixels).min(max_pixels);
+    let image = match format {
+        Some(detect::Format::Png) => pixels.saturating_mul(8),
+        Some(detect::Format::Jpeg) => pixels.saturating_mul(7),
+        Some(detect::Format::Tiff) => len.saturating_mul(4),
+        _ => 0,
+    };
+    let container = match format {
+        Some(detect::Format::Zip) => max_uncompressed,
+        _ => 0,
+    };
+    base.saturating_add(image).saturating_add(container)
 }
 
 /// Processes one file, following the order fixed in docs/safety.md.
@@ -117,7 +188,8 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         return Ok(());
     }
 
-    let format = match detect::detect_path(path)? {
+    let probe = detect::probe_path(path)?;
+    let format = match probe.format {
         Some(f) => f,
         None => {
             // No note: the status word already carries the whole message, and
@@ -154,6 +226,26 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
                 }
             ));
         }
+        return Ok(());
+    }
+
+    // The budget is checked before the file is read, which is the whole point:
+    // a run that is going to be killed by the OOM killer must be skipped with a
+    // reason instead. `skipped`, not `failed` — a configured bound is not an
+    // error, and the file is untouched either way.
+    let cost = worst_case_bytes(
+        snapshot.len,
+        Some(format),
+        probe.pixels,
+        cfg.max_pixels,
+        cfg.max_uncompressed,
+    );
+    if cost > cfg.memory_budget {
+        outcome.note = Some(format!(
+            "worst case {cost} bytes of memory exceeds --memory-budget ({}); \
+             lower --max-pixels or --max-uncompressed, raise the budget, or use fewer --jobs",
+            cfg.memory_budget
+        ));
         return Ok(());
     }
 
@@ -253,10 +345,102 @@ mod tests {
             allow: Allow::default(),
             min_size: 0,
             max_size: 2 * 1024 * 1024 * 1024,
+            memory_budget: derived_memory_budget(
+                2 * 1024 * 1024 * 1024,
+                100_000_000,
+                8 * 1024 * 1024 * 1024,
+            ),
             allow_hardlinks: false,
             allow_root_ownership_change: false,
             no_fsync: true,
         }
+    }
+
+    /// #51: the estimator is arithmetic over what is cheap to know, and every
+    /// term has to be visible in the answer — a term that is silently dropped is
+    /// a budget that silently lies.
+    #[test]
+    fn the_estimator_counts_every_term() {
+        let (max_pixels, max_uncompressed) = (100_000_000, 8 * 1024 * 1024 * 1024);
+
+        // The input and the candidate read back for verification.
+        assert_eq!(
+            worst_case_bytes(1000, None, None, max_pixels, max_uncompressed),
+            2000
+        );
+
+        // A PNG: the two RGBA buffers dominate a small file, and the declared
+        // dimensions are used when the header carried them.
+        assert_eq!(
+            worst_case_bytes(1000, Some(detect::Format::Png), Some(4_000_000), max_pixels, 0),
+            2000 + 8 * 4_000_000
+        );
+        // Without them, `--max-pixels` is the bound — the ceiling the program
+        // already refuses to exceed.
+        assert_eq!(
+            worst_case_bytes(1000, Some(detect::Format::Png), None, max_pixels, 0),
+            2000 + 8 * max_pixels
+        );
+        // A header cannot raise the ceiling: a lying IHDR is still clamped.
+        assert_eq!(
+            worst_case_bytes(1000, Some(detect::Format::Png), Some(u64::MAX), max_pixels, 0),
+            2000 + 8 * max_pixels
+        );
+
+        // A JPEG decodes to the coefficient planes plus one frame.
+        assert_eq!(
+            worst_case_bytes(10, Some(detect::Format::Jpeg), Some(1_000_000), max_pixels, 0),
+            20 + 7 * 1_000_000
+        );
+
+        // A TIFF strip is bounded by the file, not by a pixel count.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Tiff), None, max_pixels, 0),
+            1000 + 4 * 500
+        );
+
+        // A container is charged its decompression ceiling: the one term that a
+        // file length cannot bound.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Zip), None, max_pixels, 4096),
+            1000 + 4096
+        );
+
+        // gzip and zlib stream in 64 KiB blocks; nothing is materialised.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Gzip), None, max_pixels, 4096),
+            1000
+        );
+
+        // No term overflows: a huge file length stays a number.
+        assert_eq!(
+            worst_case_bytes(u64::MAX, Some(detect::Format::Tiff), Some(u64::MAX), u64::MAX, u64::MAX),
+            u64::MAX
+        );
+    }
+
+    /// The default budget must admit everything the other ceilings allow, or the
+    /// defaults would silently start skipping files (#51 acceptance criteria).
+    #[test]
+    fn the_derived_default_admits_every_ceiling_it_is_derived_from() {
+        let (max_size, max_pixels, max_uncompressed) =
+            (2 * 1024 * 1024 * 1024, 100_000_000, 8 * 1024 * 1024 * 1024);
+        let budget = derived_memory_budget(max_size, max_pixels, max_uncompressed);
+
+        for format in [
+            detect::Format::Png,
+            detect::Format::Jpeg,
+            detect::Format::Tiff,
+            detect::Format::Zip,
+        ] {
+            let cost = worst_case_bytes(max_size, Some(format), None, max_pixels, max_uncompressed);
+            assert!(
+                cost <= budget,
+                "{format:?} at the limits costs {cost}, above the derived {budget}"
+            );
+        }
+        // And it is a bound, not a wildly loose number: twice the largest term.
+        assert_eq!(budget, 4 * max_size + 8 * max_pixels + max_uncompressed);
     }
 
     #[test]

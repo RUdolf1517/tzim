@@ -157,7 +157,7 @@ PDF's rests on an argument about offsets and on a renderer that lives in a test 
 | new dependencies | **0** | `flate2` is already there; `qpdf` is CI only |
 | handler code | 1 500–2 500 lines | the parser is comparable to the ZIP structure reader, plus the xref and `/Length` bookkeeping |
 | binary size | **+40…70 KiB** | this repository's TIFF handler is +36 KiB, the JPEG codec 52 KiB; a parser with no codec sits between them |
-| memory | the file plus its candidate, as everywhere | [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) |
+| memory | the file plus its candidate, as everywhere | [safety §7.1](safety.md#71-memory--an-enforced-budget) |
 
 The current headroom is 155 KiB ([benchmarks §1](benchmarks.md#1-binary-size--measured)). A `pdf` feature would fit — as an
 opt-in feature, not in `default`, the way JPEG was introduced — but it would leave roughly half of that
