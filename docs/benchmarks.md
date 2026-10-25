@@ -50,6 +50,7 @@ crate, because no Rust JPEG library exposes DCT coefficients (see
 | v0.9.0 | zlib handler: DEFLATE recompression, header and Adler-32 preserved; no new crate | 928 KiB (+8 KiB) |
 | v0.10.0 | progress line drawn by `indicatif`, not by hand; CI and benchmark honesty; no handler changed | 1 024 KiB (+96 KiB) |
 | v0.11.0 | distribution: ARM64 artifact, manual page, completions, a verifying installer; nothing added to the binary | 1 024 KiB (+0) |
+| v0.12.0 | the audit: one size predicate, honest interface text, verifier tests, a display-width table; nothing added to the binary | 1 024 KiB (+0) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
