@@ -211,7 +211,7 @@ sample and a frame that could be wider than the terminal.
 
 ### 2.10 `jpeg-decoder` — the second opinion on a JPEG candidate
 
-- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, on in `default` · **Granted v0.13** (issue
+- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, **off in `default`** · **Granted v0.13** (issue
   #39, owner decision "option 3")
 - **Why:** the JPEG comparison had one author on both sides. `verify` compares coefficients, marker structure
   and bytes, all through code in this repository; a defect symmetric in the encoder and the decoder — a
@@ -241,8 +241,10 @@ sample and a frame that could be wider than the terminal.
   the independent decoder refuses the *original*, the file is `skipped` with that reason: the oracle cannot
   be used as a verdict on a file it cannot read, and a JPEG this program understands but `jpeg-decoder` does
   not is not a reason to fail a run.
-- **Turning it off:** `--no-default-features --features png,gzip,zip,ico,jpeg,tiff,zlib` builds exactly the
-  binary of 0.12.1, and `docs/guarantees.md#26-the-verification-method-per-format` says so in the JPEG row.
+- **Turning it on and off:** the shipped set is `default`, which does not include it;
+  `cargo build --release --features jpeg-v1` adds it, and `--no-default-features --features
+  png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` reproduces the shipped set from a named list.
+  `docs/guarantees.md` §2.6 says in the JPEG row what each kind of build can prove.
 
 ---
 
