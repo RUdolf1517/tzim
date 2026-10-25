@@ -615,7 +615,7 @@ mod tests {
         assert_ne!(a, b, "colour must actually paint something");
         assert_eq!(display_width(&a), display_width(&b));
         assert!(!a.contains('\u{1b}'));
-        assert!(b.contains('\u{1b}[32m'));
+        assert!(b.contains("\u{1b}[32m"), "the bar or spinner must be green");
         assert_eq!(strip_sgr(&b), a, "the same line, minus the sequences");
     }
 

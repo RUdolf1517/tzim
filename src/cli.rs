@@ -412,7 +412,14 @@ mod tests {
             1_048_576
         );
         assert!(HELP.contains("--memory-budget"), "the flag belongs in --help");
-        assert!(parse(&["--memory-budget", "lots", "a.png"]).is_err());
+        let bad: Vec<OsString> = ["--memory-budget", "lots", "a.png"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert!(
+            parse(bad.into_iter()).is_err(),
+            "a non-numeric budget is a usage error, not a zero"
+        );
     }
 
     #[test]

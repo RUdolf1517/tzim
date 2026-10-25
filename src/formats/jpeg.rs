@@ -1541,12 +1541,15 @@ mod oracle {
         let info = decoder
             .info()
             .ok_or_else(|| "no frame header was decoded".to_string())?;
+        // The pixel format is part of the digest: the same bytes in a different
+        // layout are a different image, and `PixelFormat` is exhaustive, so a
+        // new variant in the crate is a compile error here rather than a silent
+        // zero.
         let kind = match info.pixel_format {
             jpeg_decoder::PixelFormat::L8 => 1,
             jpeg_decoder::PixelFormat::L16 => 2,
             jpeg_decoder::PixelFormat::RGB24 => 3,
             jpeg_decoder::PixelFormat::CMYK32 => 4,
-            _ => 0,
         };
         Ok(Digest {
             width: info.width,

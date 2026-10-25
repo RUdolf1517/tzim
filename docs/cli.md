@@ -415,20 +415,32 @@ While the work is in progress Tzim draws one line on **stderr**. The shape follo
 
 ```
 ⠋ converting…
-⠋ 00:01 [████░░░░] 3/12
+⠹ 01:12 [████████▏···]  37/148  6.2/s  eta 00:18
 ```
 
 The first line is a single file: there is no counter to show, so the spinner and the verb are the whole
-message. The second is a batch: the clock, the bar and the position, in the order the eye looks for them.
+message. The second is a batch: the clock, the bar and the position, in the order the eye looks for them,
+and then the two numbers that answer "how long" — the rate and, once it can be trusted, the estimate.
 
 - the spinner has ten braille frames and advances every 100 ms;
-- the bar is eight cells — `█` done, `░` remaining — and it is drawn only when there is more than one file;
+- the bar is eight cells of eight sub-cells each — 64 positions between empty and full, so a bar over a
+  hundred files still moves — drawn only when there is more than one file. A finished run pins it full;
+- the rate is taken over the last eight completions, so it follows a change in file size instead of
+  averaging the whole run; it appears after the second completion and not before, because one sample is
+  not a rate;
+- `eta` appears only after **three seconds and two completions**. Under those conditions the number says
+  more about the first file than about the run, and a wildly wrong estimate is worse than none;
 - the clock is `mm:ss`, counted from the start of the run. Past 99 minutes it grows to three digits rather
   than wrapping, because a run that long is a thing the reader wants to know about;
+- when the terminal is too narrow for all of it, `eta` goes first, then the rate: the budget is spent on the
+  spinner, the clock, the position and the bar, which is what the eye uses. A file name is never printed —
+  it would make the line as wide as the deepest directory and turn a status indicator into noise;
 - the line appears only after 150 ms, so a run that finishes quickly does not flash, and it is erased before
-  the first result is printed, so the report never shares a row with it;
-- it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
-  into noise. The position, the clock and the bar are the information;
+  the first result is printed, so the report never shares a row with it. Every frame is padded to the width
+  of the previous one, so a shorter frame does not leave debris;
+- the width comes from `COLUMNS` when it is set and parses, and from 80 otherwise. Truncation counts
+  **display cells**, not bytes, through the same wcwidth table the report uses — a CJK or combining file
+  name cannot push the bar off the screen, and the tail of the line is never cut mid-escape;
 - the spinner and the bar are coloured by the same decision as the rest of stderr (the table above) and are
   plain when colour is off, so `NO_COLOR=1` produces no escape sequence anywhere;
 - it is written to stderr only. stdout carries the report, one result per line, and nothing else.
@@ -437,11 +449,11 @@ It is drawn only when **all** of these hold: stderr is a terminal, the run has a
 `--quiet`, `--json` and `--no-progress` are absent. A line of `\r` frames belongs on a terminal; in a log
 file or a CI transcript it is noise that hides the lines around it.
 
-The drawing is [`indicatif`](https://crates.io/crates/indicatif) 0.18. It is the one dependency in this
-project that is not behind a feature flag: the templates and the `mm:ss` clock are ours, but keeping a line
-redrawn from several worker threads consistent with the terminal, at the right width, is not a problem worth
-solving twice. What it costs in bytes is in [size-budget §3](size-budget.md#3-feature-matrix), and why it was
-admitted is in [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013).
+The drawing is `src/progress.rs` — about 250 lines, no dependency. Until v0.13 it was
+[`indicatif`](https://crates.io/crates/indicatif) 0.18, which cost 96 KiB, a tenth of the binary, for one
+line; [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013) records both
+decisions, and the removal was on the condition that the line get *better*, which is where the 64-position
+bar, the recency-weighted rate and the two ETA gates come from.
 
 The progress line is not a measurement. `Summary:` is.
 

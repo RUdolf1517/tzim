@@ -252,9 +252,18 @@ observable result.
 - Colour detection (`src/style.rs`): a pure function of a probe struct, so `NO_COLOR`, `CLICOLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`, a pipe and a non-ANSI console are all covered without a terminal, and the
   three-way `--color` flag is tested against each of them.
-- Progress line (`src/progress.rs`): both templates parse, the coloured and plain variants carry the same
-  keys, the `mm:ss` clock (including the 59 -> 60 minute step), and the rule that a disabled or empty run
-  creates no line at all. The drawing itself belongs to `indicatif`; what is ours is what is tested.
+- Progress line (`src/progress.rs`): the line is drawn here again since v0.13, so the drawing is tested —
+  the bar's 64 sub-cell positions, the rate over the last eight completions (and its refusal to invent one
+  from a single sample), the ETA's two gates (three seconds and two completions), the `mm:ss` clock past the
+  hour, clipping by display width against the wcwidth table, the width from `COLUMNS` with the 80-column
+  fallback, and the rule that a disabled, empty or non-terminal run creates no line at all. The escape
+  stripping is tested too: the pad-to-previous-width rule must count cells, not bytes.
+- Memory budget (`src/pipeline.rs`): `worst_case_bytes` is asserted term by term — a file with no format, a
+  PNG with and without dimensions in the header, a lying `IHDR` clamped by `--max-pixels`, a JPEG, a TIFF,
+  a ZIP charged its decompression ceiling, gzip charged nothing, and a `u64::MAX` length that must not
+  overflow. `derived_memory_budget` is asserted to admit every format at the limits it is derived from.
+- The probe (`src/detect.rs`): a PNG's dimensions are read from the header the detector already loads, and
+  everything else — a JPEG, a truncated `IHDR`, an empty file — reports `pixels: None` rather than a guess.
 
 ### Integration tests
 
@@ -387,9 +396,14 @@ assertion in disguise:
 | No `verify` or `internal` error, on any file | the handler produced a candidate its own contract rejected, or the code is broken |
 | Nothing rewritten on the second pass, byte-identical manifest | the rewrite is not a fixed point |
 
-A fourth property that this document used to claim — that the set of refused files is unchanged between runs —
-is **not** gated: the script prints the per-run counts (`.github/scripts/corpus.sh:161`) but keeps no baseline,
-so a construct that silently stopped being accepted shows up in that table and nowhere else.
+The fourth property — **the set of refused files is unchanged** — is gated since v0.13 (#36). The script
+writes every file it did not optimize to `refusals.txt` as `<path><TAB><reason>` and compares the count per
+reason with the committed `.github/corpus-refusals.txt`: a reason whose count changed fails the run, and a
+reason that disappeared entirely is the case the row exists for — a construct that stopped being refused and
+started being rewritten. A reason that is not in the baseline is a warning plus the line to paste, so a new
+refusal is visible without a release being blocked on a table nobody has regenerated. The full list is in the
+`<details>` block of the job's report and in the `corpus-run` artifact, which is what makes a changed count
+actionable rather than mysterious.
 
 Files that are corrupt in the upstream archive are listed by name in `.github/corpus-allowlist.txt`, with the
 reason recorded. A file that fails without being listed is an error, and a listed file that stops failing
@@ -408,9 +422,11 @@ no release build enables:
 | `strip` | the same round trip with `--strip-metadata`: the removal paths and the checks that the removed structures are gone |
 
 The build enables **all seven** handlers (`png, gzip, zip, ico, jpeg, tiff, zlib`), so a detected TIFF or zlib
-stream reaches its real parser instead of the "format not compiled" arm. Seeds are the pngsuite PNGs and the
-libjpeg-turbo test JPEGs, copied into `fuzz/corpus/roundtrip` and `fuzz/corpus/jpeg_decode`, and the `strip`
-target is seeded from the same sets.
+stream reaches its real parser instead of the "format not compiled" arm — `tiff` and `zlib` were missing from
+`fuzz/Cargo.toml` until v0.13, which meant the two newest parsers never saw fuzz input at all (#36). Seeds are
+the pngsuite PNGs and the libjpeg-turbo test JPEGs, Pillow's TIFF fixtures (copied into `roundtrip`, `strip`
+and a `tiff` corpus), and eight generated zlib streams — four compression levels over text and over a PNG —
+copied into `roundtrip` and `strip`. `strip` had no seeds at all before v0.13.
 
 The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
 and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input and
@@ -418,6 +434,37 @@ passes verification. A 60 s-per-target smoke run is part of CI (`fuzz.yml`); lon
 release.
 
 Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored.
+
+### The third-party decoder job
+
+`verify` is the strongest check in the program and it has a structural blind spot: for JPEG, and for the ZIP
+container, the code on both sides of the comparison lives in this repository. A defect symmetric in the writer
+and the reader round-trips "successfully" ([guarantees §2.6](guarantees.md#26-verification-independence)).
+`.github/workflows/third-party.yml` is the answer that costs the binary nothing:
+
+| Family | Decoder | Compared |
+| --- | --- | --- |
+| PNG, JPEG, TIFF, ICO | Pillow (pinned `11.3.0`, libjpeg-turbo and libtiff versions printed) | mode, dimensions, transparency and every decoded sample, frame by frame |
+| gzip, zlib | `gzip` / `zlib` from the Python standard library | the decompressed byte sequence |
+| ZIP | `zipfile` from the standard library | every entry's name, method and decompressed bytes, in order, plus `testzip()` |
+
+The job fetches the same pinned corpus as §3, keeps a copy of the originals, runs tzim over the tree, and then
+compares each `optimized` file with its original. It is triggered by any change under `src/formats/`, weekly,
+and on dispatch. Two rules make it a gate rather than a report:
+
+- **it proves it can fail.** `--self-test` mutates one accepted candidate — one changed pixel for an image,
+  one flipped bit in a compressed payload — and requires the comparison to reject it. A comparison that
+  silently stopped comparing fails the job instead of passing it, which is the failure mode of every
+  "it opens" check ever written.
+- **it is reproducible.** The library versions are printed and Pillow is pinned, because a verdict nobody can
+  reproduce is not a verdict.
+
+A mismatch fails the job and uploads both the report and the run's JSON, with the offending files named: this
+is the one class of defect a human has to look at. What it does not cover: the `--strip-metadata` path (the
+comparison is about content, and stripping is content-preserving by contract but not by this decoder's
+knowledge), and the memory budget of §3's whole-file model.
+
+---
 
 ---
 
@@ -434,7 +481,8 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 | `size` | ubuntu-latest | `x86_64-unknown-linux-musl` build that `file` reports as `static-pie linked` (no interpreter, no libc), size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
 | `package` | ubuntu-latest | `cargo package --locked`, then a build from the packaged tarball — the crate as crates.io would receive it |
 | `installer` | ubuntu-latest, macos-latest | runs `install.sh` against the published release, then proves a doctored archive is refused (§4.2) |
-| `corpus` | ubuntu-latest | downloads the pinned corpus, runs the binary over it twice, gates on §3 |
+| `corpus` | ubuntu-latest | downloads the pinned corpus (PNG, JPEG, TIFF, gzip, ZIP and, since v0.13, zlib), runs the binary over it twice, gates on §3 including the refused-set baseline |
+| `third-party` | ubuntu-latest | Pillow, stdlib `zlib` and `zipfile` compare the originals with the candidates (§3.3), on pull requests that touch `src/formats/` and weekly |
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
 | `lockfile` | ubuntu-latest | regenerates `Cargo.lock` and commits it to the branch (§4.1) |

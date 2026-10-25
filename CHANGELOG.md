@@ -53,7 +53,7 @@ bytes.
   and dimensions for images and decompressed bytes for everything else, with the library versions printed.
   `--self-test` mutates a candidate on every run and requires the gate to reject it, so a comparison that
   silently stops comparing fails instead of passing. Zero bytes in the binary and no new Rust dependency
-  ([testing §3.3](docs/testing.md#33-the-third-party-decoder-job)).
+  ([testing §3.3](docs/testing.md#the-third-party-decoder-job)).
 - **The refused set has a baseline** (issue #36): `corpus.sh` writes `refusals.txt` and compares its counts,
   per reason, with `.github/corpus-refusals.txt`. `docs/testing.md` had been promising that "the set of
   refused files is unchanged" fails the run since 0.10, and nothing checked it.

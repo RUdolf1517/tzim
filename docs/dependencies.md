@@ -178,7 +178,7 @@ both decisions, because a dependency removed is worth as much documentation as o
 ### 2.9 `indicatif` — added in v0.10, removed in v0.13
 
 **Removed.** `indicatif` and its `console` dependency cost **96 KiB** of a 1 049 440-byte binary — the
-measurement is [size-budget §1](size-budget.md#1-current-numbers) — and the progress line is about 250 lines
+measurement is [size-budget §1](size-budget.md#1-budget) — and the progress line is about 250 lines
 of code either way. [issue #53](https://github.com/RUdolf1517/tzim/issues/53) asked for the line to be drawn here again, with one condition: the result has
 to be *prettier* than the `indicatif` line, not plainer. It is:
 
