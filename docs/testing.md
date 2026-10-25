@@ -84,7 +84,7 @@ table is evidence, not a plan.
 | `T-ICO-01` | Directory header and entry order preserved |
 | `T-ICO-02` | Embedded PNGs satisfy the PNG contract and decode identically |
 | `T-ICO-03` | BMP/DIB entries are byte-identical |
-| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_an_implausible_image_count_is_refused` (a count that disagrees with the file) and the earlier offset test |
+| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_a_directory_that_runs_past_the_file_is_refused` and the earlier offset test. A count outside 1..=256 is not refused by the handler at all: detection does not classify such a file as an ICO, so it is reported `unsupported` |
 | `T-APNG-01` | `acTL` payload preserved |
 | `T-APNG-02` | Every `fcTL` preserved, in order |
 | `T-APNG-03` | Every frame decodes identically (pixels and frame metadata) |

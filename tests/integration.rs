@@ -2412,7 +2412,7 @@ fn t_zip_12_max_uncompressed_is_enforced() {
 }
 
 #[test]
-fn t_ico_04_an_implausible_image_count_is_refused() {
+fn t_ico_04_a_directory_that_runs_past_the_file_is_refused() {
     let ws = Workspace::new("row-ico-04");
     let entry = IcoEntrySpec {
         width: 16,
@@ -2421,14 +2421,17 @@ fn t_ico_04_an_implausible_image_count_is_refused() {
         payload: bmp_icon_payload(64),
     };
     let original = build_ico(1, &[entry]);
-    let mut damaged = original.clone();
-    // The directory says 300 images while the file holds one.
-    damaged[4..6].copy_from_slice(&300u16.to_le_bytes());
-    let path = ws.write("count.ico", &damaged);
+    // The directory claims two images, and the file is cut short of the second
+    // record. The count stays inside the range detection accepts, so the file is
+    // an ICO with a broken directory rather than an unknown format: `failed`,
+    // not `unsupported`.
+    let mut damaged = original[..32].to_vec();
+    damaged[4..6].copy_from_slice(&2u16.to_le_bytes());
+    let path = ws.write("directory.ico", &damaged);
 
-    let (code, stdout, stderr) = run(&["count.ico"], &ws.path);
+    let (code, stdout, stderr) = run(&["directory.ico"], &ws.path);
     assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("implausible image count"), "{stdout}");
+    assert!(stdout.contains("truncated directory"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), damaged);
 }
 
