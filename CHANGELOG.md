@@ -9,6 +9,46 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [Unreleased]
+
+Documentation only: no handler changed, no file is treated differently, and the binary is the same. What
+changed is that several documents stop claiming more than the code does.
+
+### Fixed
+
+- **`docs/safety.md` §1 no longer describes a snapshot "from the open handle".** The snapshot comes from
+  `lstat`, and a file is opened twice — once to detect the format, once to read it — not once. §2 now gives
+  the real temporary-file name (`.tzim-<pid>-<nanos>-<attempt>.tmp`) and says that a successful run renames
+  the candidate instead of deleting it, and §8 describes the ownership rule as it is: a file owned by another
+  user is skipped with a reason, on Unix only, and nothing is "warned" about root.
+- **`docs/guarantees.md` G1 is no longer "verified by a content hash".** No hash exists in the program; G1
+  holds because nothing is written on those paths, and the only comparison made is the re-check of
+  `(device, inode, length, mtime)` before replacement. G3 clause 4 now attributes the size rule to the place
+  that enforces it — the handler and the pipeline — instead of implying that `verify()` compares sizes.
+- **The TIFF `--strip-metadata` list now exists.** `guarantees.md` §2.7 pointed at §4.8 for a list that was
+  not there; §4.8 now carries both lists it referred to: the tags whose out-of-line values may be moved, and
+  the exact tags the flag removes. `docs/cli.md` gains `Artist` (315) and states that GDAL nodata (`42113`) is
+  kept.
+- **`guarantees.md` §2.6 has a TIFF row.** The independence table listed six formats and silently omitted the
+  seventh, and the prose called JPEG "the weakest of the five". TIFF's row states what is true: independent
+  for strips that were uncompressed, a shared inflater for strips that were already Deflate, and no external
+  checksum to anchor the original side.
+- **`docs/cli.md` matches the output.** The human example shows `unsupported: unsupported format` (the status,
+  then the note), the JSON example shows `"status":"unsupported"` with `"error":null`, the format ids are the
+  ones `Format::id()` emits (no `apng`, `zlib` included), `--max-pixels` is marked as applying to PNG and
+  JPEG, and the symlink section says what really protects a walk: a 64-level depth limit, not a visited set of
+  directories.
+- **`docs/testing.md` stops promising mechanisms that do not exist.** The failure-injection hooks
+  (`TZIM_TEST_*`), the `proptest` suite, the committed `tests/fixtures/` corpus and the "refused set"
+  baseline are gone; the fixture section describes the builders in `tests/common/mod.rs` and what each one
+  actually covers, and the filesystem table is split into what a test covers and what it does not. The fuzz
+  section says that `tiff` and `zlib` are not in the fuzz build and that the `strip` target has no seeds.
+- **Eight broken internal links and anchors are fixed** (`CHANGELOG.md`, `docs/flac-audit.md`,
+  `docs/roadmap.md`), including one that the 0.11.0 release notes introduced themselves, and `CONTRIBUTING.md`
+  no longer names a `png_reader` fuzz target or a `tests/fixtures/generate/` directory that do not exist.
+- **`docs/roadmap.md` marks the v0.1 numbers as history** instead of letting "41 unit and 21 integration
+  tests" and "832 KiB" read as the current state.
+
 ## [0.11.0] - 2026-10-25 — distribution
 
 No handler changed and no file is treated differently. This release is about the three minutes between
@@ -101,7 +141,7 @@ in CI, in the benchmarks, in the README, and on the progress line.
   with an explicit refspec, runs on every branch, and shares a concurrency group with `fmt`.
 - **`rustfmt` runs over this tree for the first time.** The environment the project is written in cannot run
   it, so the `fmt` job formats and commits, and fails on the run that had to change something. Two jobs now
-  write to the branch; [testing §4.1](docs/testing.md#41-the-two-jobs-that-write-to-the-branch) says why and
+  write to the branch; [testing §4.1](docs/testing.md#42-the-two-jobs-that-write-to-the-branch) says why and
   what happens on a fork.
 - **The comparative benchmarks are this release's.** §3.2 of [benchmarks](docs/benchmarks.md) carried v0.4.0
   numbers taken before the `-Os`/`-O3` profile split, with a paragraph explaining why they were not re-taken.
@@ -175,7 +215,7 @@ work. The corpus still writes 379 177 bytes.
   ANSI sequences are detected and left alone.
 - **A progress line** on stderr for runs that take longer than a moment: ASCII frames, the file counter,
   the clock and the running total. Drawn only when stderr is a terminal; `--no-progress` turns it off.
-- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--contract-written-not-implemented)),
+- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--refused-after-measurement)),
   written before any code as every contract here is, with the audit behind it in
   [docs/flac-audit.md](docs/flac-audit.md). No FLAC support is claimed: the handler and its tests do not
   exist, and the implementation is blocked on three crates that have not been approved.
@@ -208,7 +248,7 @@ work. The corpus still writes 379 177 bytes.
 
 - The example in [cli §3](docs/cli.md#3-human-output) showed one decimal and a percentage in the summary,
   neither of which the program has ever printed. The text now matches the binary.
-- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-need-and-why-they-are-not-in-cargotoml)
+- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-have-needed)
   record the FLAC crates that are not added and why colour and progress are not dependencies.
 
 ## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter

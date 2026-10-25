@@ -15,19 +15,23 @@ For every file, in this order:
 
 1. **Inspect without following links.** `symlink_metadata` (lstat). Refuse symbolic links, directories,
    FIFOs, sockets and devices. A missing path is an error for that argument.
-2. **Open read-only** and capture a snapshot from the open handle: length, modification time (with
-   nanoseconds), access time, permission bits, hard-link count, `(device, inode)`.
+2. **Capture the snapshot from that stat**, without opening the file: length, modification time (with
+   nanoseconds), access time, permission bits, hard-link count, `(device, inode)`. It is this snapshot that
+   step 10 re-checks.
 3. **Refuse hard-linked files** when the link count is greater than one (`--allow-hardlinks` overrides).
    Replacing one of several links would silently separate the paths.
 4. **Refuse read-only files.** If no write permission bit is set for the owner (POSIX) or the file is marked
    read-only (Windows), the file is skipped rather than replaced.
-5. **Detect the format** by reading the first bytes from the already-open handle, not by re-opening the path.
-   No handler → `unsupported`, nothing written.
+5. **Detect the format** by opening the path read-only and reading its first bytes. The file is then read in
+   full, once, by the handler in step 7: two opens in total, after a stat that does not open it. No
+   handler → `unsupported`, nothing written.
 6. **Create the candidate** as a new file in the **same directory**, with `create_new` and mode `0600`, using
    a unique name. A guard object owns it and removes it on any early exit.
 7. **Optimize** into the candidate. The handler must not touch the original.
-8. **Verify** the candidate against the format contract, reading both files with independent decoders. See
-   [guarantees](guarantees.md). This includes checksum validation of the candidate.
+8. **Verify** the candidate against the format contract, decoding both files with the readers named in
+   [guarantees §2.6](guarantees.md#26-verification-independence) — an independent decoder where one exists,
+   this repository's own reader where it does not, with the difference stated there rather than glossed over.
+   This includes checksum validation of the candidate.
 9. **Compare sizes.** Unless `candidate.len() < original.len()`, the candidate is discarded and the outcome
    is `already_optimal`.
 10. **Re-check the original.** Stat the path again and compare `(device, inode, length, mtime)`. If anything
@@ -47,8 +51,11 @@ original is partially written.
 
 - Created in the **destination directory**, never in `/tmp`, so the final `rename` stays within one
   filesystem and remains atomic.
-- Names follow `.tzim-<pid>-<random>.tmp`, are created with `create_new` (never reuse an existing file) and
-  are removed by an RAII guard on success, error and early return.
+- Names follow `.tzim-<pid>-<nanos>-<attempt>.tmp`: process id, the current time in nanoseconds and an attempt
+  counter, so a name is unique in practice without a random number generator. They are created with
+  `create_new` (never reuse an existing file) and owned by an RAII guard. On failure, error or early return
+  the guard deletes the file; on success the file is not deleted at all — it is `rename`d over the
+  destination and the guard is disarmed afterwards.
 - The guard does not survive `SIGKILL`, `abort()`, or a power loss. An orphaned temporary file is possible;
   it is always a *new* file, never a damaged original.
 - Tzim never deletes files it did not create, and does not scan directories for "stale" temporaries. That
@@ -161,10 +168,11 @@ For very large files on nearly full volumes, free at least the size of the large
 ## 8. Privileges
 
 - Running as a normal user over your own files preserves permissions and ownership.
-- Running as root over other users' files **changes ownership to root**. Tzim prints a warning when the
-  effective user is root and the file's owner differs, and skips such a file unless
-  `--allow-root-ownership-change` is given. (Option introduced with the implementation; the warning is part
-  of v0.1.)
+- A file whose owner differs from the user running Tzim is **skipped with a reason**, unless
+  `--allow-root-ownership-change` is given: replacing it would change its ownership to whoever ran the tool.
+  This is not specific to root — an ordinary user hits the same rule on someone else's file — and the check
+  is Unix-only, because ownership is not comparable on other platforms. Nothing is printed but the reason on
+  the file's own line.
 - Files without write permission are skipped rather than replaced.
 - Tzim never elevates privileges, never calls `sudo`, and never changes its own credentials.
 

@@ -61,7 +61,9 @@ With `--follow-symlinks`:
 
 - a symlink to a regular file is resolved and the **target** is optimized;
 - symlinked directories are descended;
-- cycles are prevented by the visited `(device, inode)` set;
+- a cycle does not hang the run: directory nesting is capped at 64 levels and anything deeper is refused with a
+  reason. The cycle itself is not detected, and no `(device, inode)` set is kept for directories — only files
+  are de-duplicated, by identity, so a file reachable through several paths is processed once;
 - broken links are reported as failures.
 
 ### Ordering
@@ -91,7 +93,7 @@ reproducible and diffable.
 | `--exclude <EXT,...>` | none | skip files with these extensions; wins over `--include` |
 | `--min-size <BYTES>` | `0` | skip smaller files |
 | `--max-size <BYTES>` | `2147483648` (2 GiB) | skip larger files |
-| `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG) |
+| `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the size of one strip instead) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
@@ -124,7 +126,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
 | zlib | nothing: no name, no comment, no timestamp in the header | the header, the trailer, the payload |
 | FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
-| TIFF | `ImageDescription`, `DocumentName`, `Make`, `Model`, `Software`, `DateTime`, `HostComputer`, `InkNames`, `Copyright`, IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips |
+| TIFF | `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata (42112) | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips, GDAL nodata (`42113`), unknown tags |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
 timestamp removes metadata without removing bytes, and the point of the flag is the metadata. A candidate
@@ -146,9 +148,9 @@ Per-file line on stdout, then a summary:
 ```
 photo.png        PNG    1.20 MiB -> 1.05 MiB  -12.5%
 logo.svgz        GZIP   18.20 KiB -> 16.90 KiB  -7.1%
-notes.txt        -      skipped: unsupported format
+notes.txt        -      unsupported: unsupported format
 scan.tif         TIFF   already optimal
-Summary: 4 files, 2 optimized, 211.30 KiB saved, 1 already optimal, 0 unsupported, 1 skipped, 0 failed, 0.80 s
+Summary: 4 files, 2 optimized, 211.30 KiB saved, 1 already optimal, 1 unsupported, 0 skipped, 0 failed, 0.80 s
 ```
 
 Rules:
@@ -179,7 +181,7 @@ object. Nothing else is written to stdout. Warnings and errors still appear on s
 
 ```json
 {"type":"file","path":"photo.png","format":"png","status":"optimized","before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"note":null,"error":null}
-{"type":"file","path":"notes.txt","format":null,"status":"skipped","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":"unsupported format","error":{"kind":"unsupported","message":"unsupported format"}}
+{"type":"file","path":"notes.txt","format":null,"status":"unsupported","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":"unsupported format","error":null}
 {"type":"summary","schema":1,"files":2,"optimized":1,"would_optimize":0,"already_optimal":0,"unsupported":1,"skipped":0,"failed":0,"before":1258332,"after":1065041,"saved":193291,"duration_ms":414,"dry_run":false}
 ```
 
@@ -190,7 +192,7 @@ Field rules:
 | `type` | string | `file` or `summary` |
 | `path` | string | lossy UTF-8 rendering of the path, for humans |
 | `path_raw_b64` | string, optional | base64 of the raw path bytes; present on Unix only when the path is not valid UTF-8 |
-| `format` | string or null | handler id: `png`, `gzip`, `zip`, `ico`, `apng`, `jpeg`, `tiff` |
+| `format` | string or null | handler id: `png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`. There is no `apng` id: an APNG is reported as `png` |
 | `status` | string | `optimized`, `would_optimize`, `already_optimal`, `unsupported`, `skipped`, `failed` |
 | `before`, `after` | integer | file sizes in bytes; equal for every non-optimizing outcome |
 | `saved` | integer | `before - after` |

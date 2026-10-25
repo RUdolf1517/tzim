@@ -41,10 +41,12 @@ planning aids, not commitments.
 - Independent verification for both formats.
 - Test suite, fixture corpus, failure-injection hooks, CI on three platforms, size measurement.
 
-**Status:** implemented. 41 unit and 21 integration tests pass on Linux, macOS and Windows; clippy is clean
-with `-D warnings`; the static musl binary measures 832 KiB. Remaining before a tagged release: commit
-`Cargo.lock`, publish artifacts, and fill the comparative benchmark rows in
-[benchmarks.md](benchmarks.md#4-what-is-still-missing).
+**Status (v0.1, kept as history):** implemented. That milestone shipped with 41 unit and 21 integration
+tests, a clean clippy run with `-D warnings`, and an 832 KiB static musl binary. The numbers describe v0.1,
+not the current tree: today there are 101 unit, 89 integration and 10 packaging tests
+([testing](testing.md)), and the binary is 1024 KiB ([size budget](size-budget.md#1-budget)). The
+remaining-work list of that milestone — committing `Cargo.lock`, publishing artifacts, filling the benchmark
+rows — was closed before v0.2.
 
 **Gate**
 
@@ -180,7 +182,7 @@ build behaves differently.
   encoder this repository would have to write and could not verify. BigTIFF, tiles, separate planes,
   predictors, EXIF/GPS sub-IFDs and unknown *out-of-line* tags are refused with a reason; unknown tags that
   fit in the entry itself are copied untouched.
-- `--strip-metadata` removes the textual tags only ([cli §4](cli.md#4---strip-metadata)), and the acceptance
+- `--strip-metadata` removes the textual tags only ([cli §2](cli.md#2-options)), and the acceptance
   rule stays "never larger".
 
 **Why the version moves**: a new format is observable. The binary grows by roughly 10 KiB, measured in
@@ -191,10 +193,10 @@ build behaves differently.
 Nothing here changes a byte of output:
 
 - colour and a progress line, both off unless a terminal is attached, with `--color`, `--no-color`,
-  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §9](cli.md#9-colour-and-progress));
+  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §10](cli.md#10-colour-and-progress));
 - clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
-  stdout pipe that exits quietly instead of aborting ([cli §10](cli.md#10-conformance-with-cli-conventions));
-- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)
+  stdout pipe that exits quietly instead of aborting ([cli §11](cli.md#11-conformance-with-cli-conventions));
+- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)
   and the [audit](flac-audit.md) behind it.
 
 ### v0.9 — zlib, and the end of the format queue — **implemented**

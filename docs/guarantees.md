@@ -37,7 +37,11 @@ write anything:
 - every failure path;
 - every `--dry-run` run.
 
-G1 is verified by comparing file length and a full content hash of the file before and after the run.
+G1 holds because nothing is written on these paths: a candidate, when one exists, lives in a temporary file
+beside the destination and the guard removes it on every exit. The only comparison the program makes is the
+re-check of `(device, inode, length, mtime)` immediately before the replacement, which is what aborts a run
+whose input changed underneath it (I5). Content hashing happens in the test suite ([testing](testing.md)),
+not in the program, and this document does not claim otherwise.
 
 ### G2 — exactly reversible
 
@@ -59,8 +63,10 @@ G3 is the only class used for real optimizations. It is always verified by:
 2. decoding both input and candidate and comparing content — with an independent library where one exists,
    and with this repository's own reader where it does not ([§2.6](#26-verification-independence));
 3. comparing the inventory of significant properties and preserved byte ranges;
-4. confirming the candidate is not larger than the input (strictly smaller unless `--strip-metadata`
-   removed something, see [§2.7](#27-g4--metadata-removed-on-request)).
+4. accepting the candidate only when it is not larger than the input (strictly smaller unless
+   `--strip-metadata` removed something, see [§2.7](#27-g4--metadata-removed-on-request)). This rule is
+   enforced where the candidate is accepted — in the handler and, as the last word, in the pipeline — not
+   inside `verify()`, which compares content and not size.
 
 ### G4 — metadata removed on request
 
@@ -89,9 +95,10 @@ would suggest more than any of these delivers.
 | zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
+| TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; shared `flate2` for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none |
 | JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
 
-**The honest consequence for JPEG.** Its verification is the weakest of the five, and it cannot be
+**The honest consequence for JPEG.** Its verification is the weakest of the seven, and it cannot be
 strengthened without an independent JPEG decoder, which would mean a new dependency and a much larger
 binary. What is in place instead: a strict parser that refuses anything it cannot fully validate, a
 coefficient-level comparison (stronger than comparing pixels, which a second decoder would give), the
@@ -115,7 +122,7 @@ every serious optimizer has it and users otherwise reach for a tool that removes
 | ZIP family | archive comment, entry comments, DOS timestamps | names, extra fields (some are structure: ZIP64, the Unicode path), attributes, order, method, CRCs |
 | JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop/IPTC), `COM` | `APP0` (JFIF density), `APP2` (ICC), `APP14` (Adobe colour transform), every other `APPn`, all quantization and Huffman tables, every DCT coefficient |
 | ICO / CUR | nothing of its own; embedded PNGs are stripped under the PNG rule | the directory, bitmap entries, every PNG chunk in the keep list above |
-| TIFF | the documentation tags listed in [§4.8](#48-tiff-classic-baseline-strips--v07) | colour, geometry, `Orientation`, ICC, strips, unknown tags |
+| TIFF | the descriptive tags listed in [§4.8](#48-tiff-classic-baseline-strips--v07): `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC (33723), Photoshop (34377), `UserComment` (37510), `ImageSourceData` (37724), the Windows XP tags (40091–40095), GDAL metadata (42112) | colour, geometry, `Orientation`, ICC, strips, GDAL nodata (42113), unknown tags |
 | FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 | zlib | nothing: the header has no name, comment or timestamp, and `FLEVEL` describes the encoder | every byte of the header and the trailer |
 
@@ -138,7 +145,7 @@ These hold for every format, in addition to the per-format contract.
 | ID | Invariant |
 | --- | --- |
 | **I1** | The original file is never modified unless a candidate has passed every check. |
-| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field (`--strip-metadata`, §2.7). A larger candidate is never accepted, under any flag. |
+| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field ([§2.7](#27-g4--metadata-removed-on-request)). A larger candidate is never accepted, under any flag. |
 | **I3** | No metadata, comment, attachment, vendor chunk, private field or unknown structure is removed or normalized. The single exception is the explicit `--strip-metadata` request, which removes the fixed list in §2.7 and nothing beyond it. |
 | **I4** | No lossy transformation, no format conversion, no quality, resolution, rate or bit-depth change. |
 | **I5** | If the input changes on disk between the initial stat and the replacement, the operation is aborted. |
@@ -478,11 +485,59 @@ otherwise:
 - entries are in ascending tag order, `StripOffsets` and `StripByteCounts` have the same count, and every
   strip lies inside the file.
 
+**Tags this build treats as plain data.** An out-of-line value is moved only when its tag is on this list;
+every other out-of-line tag is refused, because a value we cannot classify may be an absolute offset that the
+rewrite would invalidate.
+
+| Tags | What they are |
+| --- | --- |
+| 254, 255, 256, 257, 258, 259, 262, 263, 266 | baseline geometry, sample, compression and photometric fields |
+| 269, 270, 271, 272 | `DocumentName`, `ImageDescription`, `Make`, `Model` |
+| 273, 274, 277, 278, 279 | `StripOffsets`, `Orientation`, `SamplesPerPixel`, `RowsPerStrip`, `StripByteCounts` |
+| 280, 281, 282, 283, 284, 286, 287 | sample value ranges, X/Y resolution, `PlanarConfiguration`, X/Y position |
+| 292, 293, 296, 297 | T4/T6 options, `ResolutionUnit`, `PageNumber` |
+| 305, 306, 315, 316, 317, 318, 319, 320 | `Software`, `DateTime`, `Artist`, `HostComputer`, `Predictor`, white point, primaries, `ColorMap` |
+| 338, 339, 340, 341, 342, 343, 344, 347 | extra samples, sample format, transfer ranges, clip paths, JPEG tables |
+| 530, 531, 532 | subsampling |
+| 700 | XMP packet |
+| 33432 | `Copyright` |
+| 33550, 33922, 34735, 34736, 34737 | GeoTIFF data |
+| 33723, 34377, 34675, 37510 | IPTC, Photoshop, ICC profile, `UserComment` |
+| 37724 | `ImageSourceData` (Photoshop layers) |
+| 40091, 40092, 40093, 40094, 40095 | Windows XP tags |
+| 42112, 42113 | GDAL metadata and GDAL nodata |
+
+**`--strip-metadata` removes exactly these tags and nothing else.** The list is fixed; it is the same list
+this section promised above, and [§2.7](#27-g4--metadata-removed-on-request) repeats it for readers who
+never reach this subsection.
+
+| Tag | Name |
+| --- | --- |
+| 269 | `DocumentName` |
+| 270 | `ImageDescription` |
+| 271 | `Make` |
+| 272 | `Model` |
+| 305 | `Software` |
+| 306 | `DateTime` |
+| 315 | `Artist` |
+| 316 | `HostComputer` |
+| 333 | `InkNames` |
+| 33432 | `Copyright` |
+| 33723 | IPTC / NAA |
+| 34377 | Photoshop image resources |
+| 37510 | `UserComment` |
+| 37724 | `ImageSourceData` |
+| 40091–40095 | Windows XP tags (`XPTitle`, `XPComment`, `XPAuthor`, `XPKeywords`, `XPSubject`) |
+| 42112 | GDAL metadata |
+
+GDAL nodata (`42113`) is **kept**: it is a data tag, not a description of the data, and a tile without it can
+render differently. Every other tag, including every unknown one, is preserved.
+
 **Preserved:** byte order, the tag set, entry order and every entry's type and count; every value except
 the three entries below, as resolved bytes rather than as bytes at a fixed position; `ImageWidth`,
 `ImageLength`, `BitsPerSample`, `PhotometricInterpretation`, `SamplesPerPixel`, `RowsPerStrip`,
 `ResolutionUnit`, the X/Y resolution rationals, `ColorMap`, `ExtraSamples`, `SampleFormat`, ICC profile,
-XMP, EXIF-in-TIFF, ASCII tags and every private tag in the list below.
+XMP, EXIF-in-TIFF, ASCII tags and every private tag in the plain-data list above.
 
 **Allowed to change:** `Compression` (only `1` → `8`; a Deflate file keeps `8`), `StripOffsets` and
 `StripByteCounts` (recomputed for the new layout), the strip payloads, the offsets of the out-of-line
@@ -495,7 +550,8 @@ then:
 2. every value is identical except `Compression`, `StripOffsets` and `StripByteCounts`;
 3. each strip of both files is decoded — with `flate2` for Deflate, verbatim for uncompressed — and the
    decoded bytes are compared exactly (V1 for the content);
-4. the candidate is not larger than the input.
+4. the candidate is accepted only when it is smaller than the input — enforced in the handler, not by the
+   re-parse, and independent of `verify()`.
 
 What the shared reader cannot catch is a structural field both sides misread; the strip bytes themselves
 are compared through an independent inflater, so a content change cannot hide behind it.
