@@ -29,6 +29,12 @@ work. The corpus still writes 379 177 bytes.
 - [cli §10](docs/cli.md#10-colour-and-progress) and [cli §11](docs/cli.md#11-conformance-with-cli-conventions):
   the colour rules, and an audit against the CLI guidelines that found four defects — all fixed below.
 
+### Size
+
+- The binary grows by **20 480 bytes** (900 → 920 KiB) in every build: colour, the progress thread, buffered
+  reporting and `IsTerminal`. Handlers are unchanged, and the round of size work in 0.7.1 is what pays for it.
+  The budget in [size-budget §1](docs/size-budget.md#1-budget) is re-measured, not widened by hand.
+
 ### Fixed
 
 - **A closed pipe no longer aborts the process.** `tzim . -r | head -1` used to fail with `EPIPE` inside

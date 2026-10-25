@@ -6,8 +6,8 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 922 464 bytes (900 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.7.1. Per-feature measurements are in §3; the profile that got
+> **Measured: 942 944 bytes (920 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.8.0. Per-feature measurements are in §3; the profile that got
 > here is in §2, and what it cost in speed is in §5.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
@@ -20,13 +20,13 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 
 | Profile | Features | Measured | Budget (+15 %) |
 | --- | --- | --- | --- |
-| `png` | `png` | 688 KiB | 792 KiB |
-| `core` | `png,gzip` | 692 KiB | 796 KiB |
-| `+zip` | `png,gzip,zip` | 732 KiB | 842 KiB |
-| `images` | `png,gzip,zip,ico` | 744 KiB | 856 KiB |
-| `+jpeg` | `png,gzip,zip,ico,jpeg` | 796 KiB | 916 KiB |
-| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 824 KiB | 948 KiB |
-| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 900 KiB | 1 036 KiB |
+| `png` | `png` | 708 KiB | 814 KiB |
+| `core` | `png,gzip` | 712 KiB | 818 KiB |
+| `+zip` | `png,gzip,zip` | 752 KiB | 864 KiB |
+| `images` | `png,gzip,zip,ico` | 764 KiB | 878 KiB |
+| `+jpeg` | `png,gzip,zip,ico,jpeg` | 816 KiB | 938 KiB |
+| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 844 KiB | 970 KiB |
+| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 920 KiB | 1 059 KiB |
 
 `full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
 rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
@@ -100,13 +100,13 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 
 | Features | Bytes | KiB |
 | --- | --- | --- |
-| `png` | 705 312 | 688 |
-| `png,gzip` | 709 408 | 692 |
-| `png,gzip,zip` | 750 368 | 732 |
-| `png,gzip,zip,ico` | 762 656 | 744 |
-| `png,gzip,zip,ico,jpeg` | 815 904 | 796 |
-| `png,gzip,zip,ico,jpeg,tiff` | 844 576 | 824 |
-| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 922 464 | 900 |
+| `png` | 725 792 | 708 |
+| `png,gzip` | 729 888 | 712 |
+| `png,gzip,zip` | 770 848 | 752 |
+| `png,gzip,zip,ico` | 783 136 | 764 |
+| `png,gzip,zip,ico,jpeg` | 836 384 | 816 |
+| `png,gzip,zip,ico,jpeg,tiff` | 865 056 | 844 |
+| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 942 944 | 920 |
 
 Each feature's cost is visible by subtracting the row above it: `gzip` +4 KiB, `zip` +40 KiB, `ico`
 +12 KiB, the JPEG codec +52 KiB, the TIFF handler +28 KiB, Zopfli +76 KiB. The same deltas measured at
@@ -181,8 +181,9 @@ table that looks measured.
 
 ### 5.1 The measurements behind the current profile
 
-One CI job built all of these from the same commit and ran the same corpus through each (694 real files,
-`--recursive`, one job, warm cache, two timed runs per build). "Bytes written" is what the corpus run
+One CI job built all of these from the same commit — v0.7.1's source, before the v0.8.0 interface work added
+its 20 KiB to every row — and ran the same corpus through each (694 real files, `--recursive`, one job, warm
+cache, two timed runs per build). "Bytes written" is what the corpus run
 produced: it is identical in every row, which is the only result that matters — a compiler flag cannot
 change a zlib stream, so a difference here would have been a bug.
 
