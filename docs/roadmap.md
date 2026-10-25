@@ -280,7 +280,8 @@ The tag was cut from `main` after those tests failed before the fix and passed a
   `T-APNG-05` needed a frame-sequence check that did not exist, and `T-NEST-04` was deleted because the budget
   it described does not exist.
 - **`T-FS-11` … `T-FS-16`** (#35): a FIFO, a device node, a full disk, a symlink cycle, a read-only directory
-  and a 70-level tree.
+  and a 70-level tree. The cycle test disproved a sentence in `cli.md` on its first run: what stops a cycle is
+  the kernel's `ELOOP`, not the 64-level guard.
 
 ### v0.12.2 — the memory budget — **planned**
 

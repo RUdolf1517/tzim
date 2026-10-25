@@ -61,10 +61,14 @@ With `--follow-symlinks`:
 
 - a symlink to a regular file is resolved and the **target** is optimized;
 - symlinked directories are descended;
-- cycles are stopped by a **depth limit of 64 directories**: the walk keeps no visited set of
-  `(device, inode)` pairs, so a loop is not recognised as a loop — it runs out of depth and the subtree below
-  it is reported as refused (`directory nesting deeper than 64 levels; refused`, status `skipped`, exit 0).
-  The limit exists for exactly this reason, and it is also what protects the stack;
+- a cycle is never *recognised* as a cycle: the walk keeps no visited set of `(device, inode)` pairs. What
+  stops it in practice is the kernel, which refuses to resolve a path with more than a fixed number of symlink
+  hops (ELOOP — 40 on Linux, 32 on macOS). That path is reported `failed: Too many levels of symbolic links`,
+  the run exits `1`, and every other file is still processed. The **depth limit of 64 directories** is the
+  second guard: it is what stops a tree of real directories deeper than 64 levels
+  (`directory nesting deeper than 64 levels; refused`, status `skipped`, exit `0`) and what protects the stack,
+  and a link cycle effectively never reaches it. Both were measured rather than assumed — see `T-FS-14` and
+  `T-FS-16` in [testing §2](testing.md#2-traceability);
 - broken links are reported as failures.
 
 ### Ordering

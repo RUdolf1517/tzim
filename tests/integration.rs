@@ -752,22 +752,39 @@ fn t_fs_13_a_full_disk_is_a_failure_with_nothing_left_behind() {
     drop(filler);
 }
 
-/// T-FS-14. A symlink cycle under `--follow-symlinks` must terminate. The guard
-/// is the depth limit, not a visited set, and the outcome is a skip.
+/// T-FS-14. A symlink cycle under `--follow-symlinks` must terminate, and the
+/// run must say what happened.
+///
+/// It terminates because the kernel refuses to resolve a path with more than a
+/// fixed number of symlink hops — `ELOOP`, 40 on Linux and 32 on macOS — and not
+/// because of the 64-level depth guard, which a cycle never reaches: the test
+/// that asserted the guard was the guard failed, and the observation is worth
+/// more than the assumption (`T-FS-16` covers the guard itself, with real
+/// directories). The cycle is an unreadable path, so it is `failed` with exit
+/// `1`, and everything else in the tree is still processed.
 #[cfg(unix)]
 #[test]
-fn t_fs_14_a_symlink_cycle_terminates_at_the_depth_limit() {
+fn t_fs_14_a_symlink_cycle_terminates_and_is_reported() {
     let ws = Workspace::new("cycle");
-    ws.write("tree/leaf.png", &build_png(&PngSpec::default()));
+    // A file with no handler, so nothing in this test depends on a rewrite.
+    ws.write("tree/notes.txt", b"not an image");
     // `tree/self` points at `tree`: following it walks the same directory again
     // and again, one level deeper each time.
     std::os::unix::fs::symlink(".", ws.path.join("tree/self")).unwrap();
 
     let (code, stdout, stderr) = run(&["tree", "-r", "--follow-symlinks"], &ws.path);
-    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
     assert!(
-        stdout.contains("nesting deeper than 64 levels"),
-        "the walk must stop at the limit and say so: {stdout}"
+        stdout.contains("symbolic links"),
+        "the reason must name the loop: {stdout}"
+    );
+    assert!(
+        stdout.contains("failed"),
+        "a path the kernel refuses to resolve is a failure, not a silent skip: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(ws.file("tree/notes.txt")).unwrap(),
+        b"not an image"
     );
 }
 
@@ -3126,8 +3143,13 @@ fn a_truncated_zlib_stream_is_still_a_failure() {
 
     let (code, stdout, stderr) = run(&["short.zlib"], &ws.path);
     assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("failed"), "{stdout}");
-    assert!(!stdout.contains("unsupported"), "{stdout}");
+    assert!(stdout.contains("failed:"), "{stdout}");
+    // The status word, not the summary column: "0 unsupported" in the summary
+    // line says nothing about this file.
+    assert!(
+        !stdout.contains("unsupported:"),
+        "a stream that decoded bytes is corruption: {stdout}"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), data);
 }
 

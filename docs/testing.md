@@ -210,7 +210,7 @@ the "not covered" table in §3 and in issue #35, not here.
 | `T-FS-11` | A FIFO is skipped as "not a regular file" and is never opened for writing (its mtime is unchanged) | `t_fs_11_a_fifo_is_skipped_and_never_opened` |
 | `T-FS-12` | A character device (`/dev/null`) is skipped, not read | `t_fs_12_a_device_node_is_skipped` |
 | `T-FS-13` | A full disk is `failed` with the original intact and no `.tzim-*.tmp` left behind. Gated on `TZIM_TEST_FULL_DISK`, which CI points at a 2 MiB tmpfs; without it the test prints that it was skipped | `t_fs_13_a_full_disk_is_a_failure_with_nothing_left_behind` |
-| `T-FS-14` | A symlink cycle under `--follow-symlinks` terminates at the 64-level depth limit, `skipped`, exit `0`, with the reason printed | `t_fs_14_a_symlink_cycle_terminates_at_the_depth_limit` |
+| `T-FS-14` | A symlink cycle under `--follow-symlinks` terminates and is reported: the kernel's symlink-hop limit (ELOOP) stops it long before the 64-level guard, the path is `failed`, exit `1`, and the rest of the run is unaffected | `t_fs_14_a_symlink_cycle_terminates_and_is_reported` |
 | `T-FS-15` | A directory the process cannot write to is `failed` with the original intact; skipped-with-a-reason if the process is root, because 0555 would not bind | `t_fs_15_a_read_only_directory_is_a_failure_and_the_file_survives` |
 | `T-FS-16` | A tree deeper than 64 levels is refused at the limit while the files above it are still processed | `t_fs_16_a_tree_deeper_than_sixty_four_levels_is_refused` |
 

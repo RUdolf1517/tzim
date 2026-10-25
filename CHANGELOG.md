@@ -65,6 +65,11 @@ The binary is the same size.
 
 ### Changed
 
+- **What stops a symlink cycle is now the measured answer.** `cli.md` said cycles are stopped by the 64-level
+  depth limit; the test for that row failed, because the kernel stops a path with more than a fixed number of
+  symlink hops first (`ELOOP` — 40 on Linux, 32 on macOS) and the cycle never reaches 64. The depth limit is
+  what stops a tree of *real* directories at 64 levels and what protects the stack, and `T-FS-16` proves that
+  part. A cycle is `failed` with the OS reason, exit `1`, and the rest of the run is unaffected.
 - `docs/guarantees.md` §4.10 states the zlib split and the two probabilities; §4.5 says the frame sequence is
   checked by this program; §4.6 says what `--max-uncompressed` actually limits. `docs/cli.md` gains the one
   case where `unsupported` carries a note, and says which error kinds can never appear in `error`.
