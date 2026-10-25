@@ -3,7 +3,9 @@
 Related: [size budget](size-budget.md) · [formats](formats.md)
 
 Tzim exists partly as a reaction to file optimizers with enormous dependency trees. Every dependency is
-therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**.
+therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. v0.10 is the
+first release since v0.1 to answer yes: one crate, for the progress line, at the user's explicit request
+(§2.9).
 
 The project targets **Rust 1.88** (edition 2021). The floor is set by the optional Zopfli encoder; the PNG
 decoder requires 1.81 and `flate2` requires 1.67. Keeping the floor at 1.88 means one toolchain for
@@ -93,13 +95,17 @@ Additional requirements:
 | `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
+| `indicatif` | yes | always | the progress line | in every build |
 
-Four direct dependencies, all of them behind a feature: **every dependency is optional**, which is what
-makes the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) meaningful. A build with
-`--no-default-features --features png` compiles exactly `png`, `flate2` and `crc32fast`, and nothing else.
+Five direct dependencies. Four are behind a feature, which is what makes the feature matrix in
+[size-budget §3](size-budget.md#3-feature-matrix) meaningful. `indicatif` is not: the progress line is part
+of the interface rather than of a format handler, so every build carries it (§2.9), and a build with
+`--no-default-features --features png` compiles `png`, `flate2`, `crc32fast` and the progress stack.
+
 The JPEG, ICO, TIFF and zlib handlers add code, not crates. **v0.4, v0.6, v0.7 and v0.9 added none**:
 §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a codec that
-was already in the tree.
+was already in the tree. **v0.10 adds exactly one**, at the user's request and after the argument in §2.9;
+that grant is not a precedent, and the next candidate still has to answer every question in §1.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 
@@ -150,23 +156,50 @@ Binary cost is unmeasured, and the budget will not be raised in advance: the fea
 
 ---
 
-### 2.8 Colour and progress: why they are not dependencies
+### 2.8 Colour: why it is not a dependency
 
-This is the one part of the interface that looks like it needs a crate and does not.
+Colour is six byte strings (`\x1b[1m`, `\x1b[2m`, `\x1b[31m`, `\x1b[32m`, `\x1b[33m`, `\x1b[0m`) and one
+`bool`. What is worth getting right is *when* to emit them — the terminal check, `NO_COLOR`, `CLICOLOR`,
+`CLICOLOR_FORCE`, `TERM=dumb`, the Windows console question — and that is a pure function of a probe struct,
+tested without a terminal (`src/style.rs`). Detection uses `std::io::IsTerminal`, stable since 1.70, which is
+why `atty` and `is-terminal` are unnecessary.
 
-- **Colour** is six byte strings (`\x1b[1m`, `\x1b[2m`, `\x1b[31m`, `\x1b[32m`, `\x1b[33m`, `\x1b[0m`) and
-  one `bool`. What is worth getting right is *when* to emit them — the terminal check, `NO_COLOR`,
-  `CLICOLOR`, `CLICOLOR_FORCE`, `TERM=dumb`, the Windows console question — and that is a pure function of a
-  probe struct, tested without a terminal (`src/style.rs`).
-- **Detection** uses `std::io::IsTerminal`, stable since 1.70, which is why `atty` and `is-terminal` are
-  unnecessary.
-- **Progress** is one line on stderr, redrawn by a thread that lives exactly as long as the run
-  (`src/progress.rs`). A framework would give us bars, spinners, multi-bars and terminal-width queries; the
-  line here needs none of them, and a terminal-width query needs a platform call that `forbid(unsafe_code)`
-  rules out.
+Progress used to be the second half of this section: v0.8 shipped a hand-rolled line, about 200 lines and a
+thread, on the argument that a framework buys bars and terminal-width queries that one `write!` per 100 ms
+does not need. That argument held for an ASCII frame and a counter. It stopped holding when the line had to
+carry a bar and a spinner that redraw from several worker threads — §2.9 is what changed, and what it cost.
 
-The cost is roughly 300 lines of code with tests, against a dependency tree that would grow the binary by
-more than the feature is worth.
+### 2.9 `indicatif` — the progress line
+
+- **Version:** 0.18.x (0.18.6 in the lock) · **Licence:** MIT · **Unconditional** · **Granted v0.10**
+- **Why:** the line is now a spinner and a bar, redrawn while several worker threads run. That is three
+  problems we were solving badly by hand: a redraw rate shared with the terminal, a cursor that has to be
+  restored before the report prints, and the width of glyphs that are not ASCII. `indicatif` is the
+  maintained crate for exactly this (it is what `cargo`-adjacent tooling uses), it is small, and it is pure
+  Rust at the API level we touch.
+- **Configuration:** `default-features = false`. That drops `unicode-width` — a width table for text we never
+  truncate, where every glyph in the line (`⠋`, `█`, `░`) is one cell wide — and `wasmbind`, a clock for WASM
+  targets that have no meaning for a native binary.
+- **What we do not use:** `MultiProgress`, `wide_bar`/`wide_msg`, the iterator adapters, `HumanBytes` (the
+  report keeps its own integer formatter — that is the change that saved 20 KiB in v0.7.1,
+  [size-budget §5.3](size-budget.md#53-what-is-left-and-why-it-is-not-taken)), and any colour decision:
+  the SGR rules stay in `src/style.rs` and reach the spinner as a template string.
+- **What stays ours:** the two templates, the `mm:ss` clock (`{t}`, a `ProgressTracker`), the rule that the
+  line never appears in a pipe, and the 150 ms delay before the first frame. `src/progress.rs` is the same
+  size it was; what it no longer contains is the animation thread and the terminal handling.
+- **Transitive additions:** `console` 0.16 (ANSI parsing and the Windows console, `ansi-parsing` and `std`
+  only), `portable-atomic`, `unit-prefix`; `console` in turn brings `encode_unicode`, `libc` and, on Windows,
+  `windows-sys` with `windows-link`. Eight new lock entries, of which four compile into a Linux binary.
+- **`unsafe`:** `console` and `portable-atomic` contain `unsafe` — Windows console calls and fallback atomics.
+  Our code still forbids it (`#![forbid(unsafe_code)]`), and the reviewed surface is terminal I/O and a
+  counter; nothing there parses file content.
+- **Cost:** measured, not estimated — [size-budget §3](size-budget.md#3-feature-matrix) has the per-feature
+  table and the delta every row took. It is charged against the budget like any other growth, and the budget
+  was not raised in advance.
+- **Alternatives rejected:** keeping the hand-rolled line (that is what v0.8 shipped: ASCII frames, no bar,
+  no spinner); `pbr` and `progress_bar` (unmaintained); `linya` (less maintained, narrower); `console` alone
+  (gives a spinner, not the bar/clock plumbing, so the animation thread would have stayed ours);
+  `crossterm`/`termion` (terminal manipulation, raw mode, key reading — none of which this program does).
 
 ---
 
@@ -188,7 +221,7 @@ more than the feature is worth.
 | `libc` / `windows-sys` | not needed: `std` exposes permissions, timestamps and rename; platform-specific metadata we do not preserve anyway (see [safety](safety.md#3-metadata)) |
 | `log` / `env_logger` | a small stderr printer is enough; logging frameworks are not part of the binary |
 | `owo-colors`, `colored`, `anstream`, `termcolor` | five SGR sequences and a `bool` are the whole feature; the decision logic is 60 lines of tested code, and a crate costs more bytes than the strings it hides (§2.8) |
-| `indicatif`, `console`, `crossterm` | the progress line is one `write!` per 100 ms to stderr from one thread; a progress-bar framework brings terminal-width detection, styling and a dependency tree |
+| `crossterm`, `termion` | raw mode, key events, terminal resize: none of it is needed. The one terminal problem this program has is a redrawn line, and `indicatif` (§2.9) is that answer alone |
 | `atty` / `is-terminal` | `std::io::IsTerminal` has been stable since Rust 1.70, and the floor here is 1.88 |
 
 ---
@@ -218,17 +251,20 @@ file-level notice after review.
 Denied: GPL, AGPL, LGPL (static linking would require a relinking exception), SSPL, BUSL, and anything
 without a licence.
 
-Every Apache-2.0 dependency requires that its `NOTICE` content, if any, is reproduced in our `THIRD-PARTY`
-notice file. `cargo-deny` enforces the allow-list in CI and fails the build otherwise.
+Every Apache-2.0 dependency requires that its `NOTICE` content, if any, is reproduced in
+[`THIRD-PARTY.md`](../THIRD-PARTY.md), which lists every crate in the tree and its licence. `cargo-deny`
+enforces the allow-list in CI (`deny.toml`) and fails the build otherwise.
 
 ---
 
 ## 6. Supply chain
 
-- `Cargo.lock` is committed, so releases are reproducible from the lock file. It is generated by the
-  `.github/workflows/lockfile.yml` job, which is dispatchable once it exists on the default branch; until
-  then CI resolves dependencies without `--locked`. Switching CI to `--locked` is part of the first tagged
-  release.
+- `Cargo.lock` is committed, and every build in CI runs with `--locked`: a build cannot silently resolve a
+  different set of versions than the one that was reviewed. The lock is written by the
+  `.github/workflows/lockfile.yml` job, which regenerates it on a push to any branch and commits the result
+  back to that branch. That is not a convenience: the development environment for this project has no Rust
+  toolchain, so CI is the only writer of this file, and a pull request that adds a dependency would otherwise
+  arrive with a lock that `--locked` rejects.
 - Every dependency update is a pull request that records the new binary size and passes the full test suite.
 - CI runs `cargo deny check` (licences, duplicate versions, advisories) and `cargo audit`.
 - Dependencies with a `build.rs` are reviewed manually; none may perform network access or compile C.
@@ -242,5 +278,5 @@ notice file. `cargo-deny` enforces the allow-list in CI and fails the build othe
 
 A pure-`std` Tzim would have to implement DEFLATE, CRC-32 and a PNG decoder by hand. Those are exactly the
 components where a hand-written implementation is most likely to be subtly wrong — and a subtle bug in a
-decoder used for verification is the one failure this project cannot afford. Four small, audited crates are
+decoder used for verification is the one failure this project cannot afford. Five small, audited crates are
 a better trade than 3 000 lines of unproven code, provided they are pinned, reviewed and measured.

@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test --all-features 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}.log"
+          cargo test --all-features --locked 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}.log"
 
       - name: Publish failure log
         if: steps.test.outcome == 'failure'
@@ -41,6 +41,37 @@ jobs:
 
       - name: Fail the job
         if: steps.test.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  msrv:
+    name: msrv (1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      # The floor in `Cargo.toml` is a promise to everyone who builds from a
+      # source tarball or a distribution package. A dependency that silently
+      # requires a newer compiler breaks that promise, and this is the job that
+      # finds out.
+      - name: Build with the minimum supported toolchain
+        id: msrv
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo build --all-features --locked 2>&1 | tee /tmp/tzim-msrv.log
+
+      - name: Publish failure log
+        if: steps.msrv.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-msrv.log msrv
+
+      - name: Fail the job
+        if: steps.msrv.outcome == 'failure'
         shell: bash
         run: exit 1
 
@@ -59,7 +90,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tee /tmp/tzim-clippy.log
+          cargo clippy --all-targets --all-features --locked -- -D warnings 2>&1 | tee /tmp/tzim-clippy.log
 
       - name: Publish failure log
         if: steps.clippy.outcome == 'failure'
@@ -70,6 +101,132 @@ jobs:
 
       - name: Fail the job
         if: steps.clippy.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  # rustfmt has never run over this tree, and the environment the project is
+  # written in cannot run it (docs/testing.md §4.1). So on a branch push this job
+  # formats the tree and commits the result; on a pull request it only checks.
+  fmt:
+    name: fmt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # The same group as the `lockfile` job: the two writers must not race.
+    concurrency:
+      group: branch-write-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        if: github.event_name == 'pull_request'
+        id: check
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fmt --all -- --check 2>&1 | tee /tmp/tzim-fmt.log
+
+      - name: Format and commit
+        if: github.event_name != 'pull_request'
+        id: apply
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo fmt --all 2>&1 | tee /tmp/tzim-fmt.log
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "the tree is already formatted"
+            exit 0
+          fi
+          git --no-pager diff --stat | tee -a /tmp/tzim-fmt.log
+          git config user.name "tzim ci"
+          git config user.email "ci@tzim.invalid"
+          git add -A
+          git commit -m "style: cargo fmt, applied by CI"
+          if git push origin "HEAD:refs/heads/${{ github.ref_name }}"; then
+            echo "::error::rustfmt changed the tree; the formatted commit is pushed, re-run this job"
+          else
+            echo "::error::rustfmt changed the tree and the branch is not writable; run cargo fmt locally"
+          fi
+          exit 1
+
+      - name: Publish failure log
+        if: steps.check.outcome == 'failure' || steps.apply.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-fmt.log fmt
+
+      - name: Fail the job
+        if: steps.check.outcome == 'failure' || steps.apply.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  deny:
+    name: deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      # Licences, advisories, duplicate versions and registry sources, from the
+      # allow-list in docs/dependencies.md §5.
+      - name: cargo deny check
+        id: deny
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo deny check 2>&1 | tee /tmp/tzim-deny.log
+
+      - name: Publish failure log
+        if: steps.deny.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-deny.log deny
+
+      - name: Fail the job
+        if: steps.deny.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # Reads the committed lock file, so it tests what a release would ship.
+      - name: cargo audit
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo audit 2>&1 | tee /tmp/tzim-audit.log
+
+      - name: Publish failure log
+        if: steps.audit.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-audit.log audit
+
+      - name: Fail the job
+        if: steps.audit.outcome == 'failure'
         shell: bash
         run: exit 1
 
@@ -92,9 +249,15 @@ jobs:
           set -o pipefail
           # Default features only, which is what a release ships: `--all-features`
           # would compile the fuzz entry points into the measured binary.
-          cargo build --release --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/tzim-size.log
+          cargo build --release --locked --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/tzim-size.log
           ls -l target/x86_64-unknown-linux-musl/release/tzim
           file target/x86_64-unknown-linux-musl/release/tzim
+          # The released artifact must not need a C library. `file` is the cheap
+          # check that says so; a dynamic build would still pass the size gate.
+          file target/x86_64-unknown-linux-musl/release/tzim | grep -q "statically linked" || {
+            echo "the musl build is not statically linked" >&2
+            exit 1
+          }
           bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
@@ -128,7 +291,7 @@ jobs:
             "png,gzip,zip,ico,jpeg,tiff,zlib" \
             "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli"
           do
-            cargo build --release --target x86_64-unknown-linux-musl \
+            cargo build --release --locked --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2
             bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
             printf '%-38s %10s %8s\n' "$features" "$bytes" "$((bytes / 1024))" >> "$out"
@@ -143,7 +306,7 @@ jobs:
         run: |
           {
             bytes=$(cat /tmp/tzim-size-bytes.txt)
-            deps=$(cargo tree --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
+            deps=$(cargo tree --locked --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
             echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
             echo "normal dependency lines: ${deps}"
             echo
