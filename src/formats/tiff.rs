@@ -409,11 +409,28 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
     }
 
     // libtiff reverses the bits of a compressed strip before it inflates it, so
-    // `FillOrder` 2 survives only while the strip is uncompressed. Rewriting
-    // such a file as Deflate would produce one that Pillow/libtiff rejects with
-    // "incorrect header check" — a smaller file, and a broken one. Left alone.
+    // `FillOrder` 2 survives only while the strip is uncompressed. Two cases, and
+    // they are not the same news:
+    //
+    // - uncompressed: rewriting it as Deflate would produce a file Pillow/libtiff
+    //   rejects with "incorrect header check" — a smaller file, and a broken one.
+    //   Refusing keeps it readable;
+    // - already Deflate: the damage is done, and it was tzim 0.7 to 0.12.1 that
+    //   did it. Nothing can undo it — the bits of the compressed stream are
+    //   reversed, and re-compressing data that is no longer a stream cannot
+    //   recover pixels. Saying "Deflate would make it unreadable" about a file
+    //   that already is would send the reader round the same loop again, so this
+    //   branch says what happened and where the way out is.
     let fill_order = tiff.scalar(TAG_FILL_ORDER, Some(1))?;
     if fill_order != 1 {
+        if matches!(compression, COMPRESSION_DEFLATE | COMPRESSION_ADOBE_DEFLATE) {
+            return Err(Error::refused(format!(
+                "tiff: FillOrder {fill_order} with Deflate strips cannot be decoded by libtiff, and \
+                 re-compressing cannot repair it: the bits of the compressed data are reversed, \
+                 which is what tzim 0.7 to 0.12.1 wrote. Restore this file from a backup or from \
+                 its original source"
+            )));
+        }
         return Err(Error::refused(format!(
             "tiff: FillOrder {fill_order} (reversed bit order) is readable only while the \
              strips are uncompressed; Deflate would make the file one libtiff rejects"

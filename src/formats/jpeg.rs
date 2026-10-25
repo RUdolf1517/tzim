@@ -1570,7 +1570,8 @@ mod oracle {
             // every other refusal do, and nothing is written.
             Err(reason) => {
                 return Err(Error::refused(format!(
-                    "jpeg: the independent decoder cannot read this file, so it cannot cross-check it                      ({reason}); the file is untouched"
+                    "jpeg: the independent decoder cannot read this file, so it cannot \
+                     cross-check it ({reason}); the file is untouched"
                 )))
             }
         };
@@ -1613,6 +1614,28 @@ mod oracle {
         fn a_refusal_on_the_original_is_not_a_failure() {
             let err = cross_check(b"not a jpeg at all", b"also not").unwrap_err();
             assert!(matches!(err, Error::Refused(_)), "{err}");
+        }
+
+        /// The note is printed to someone whose file was just refused, so it has
+        /// to read as a sentence. v0.13.0 shipped it with a lost `\`
+        /// continuation, which left 22 spaces between `it` and `({reason})`.
+        #[test]
+        fn the_refusal_note_is_one_spaced_sentence() {
+            let err = cross_check(b"not a jpeg at all", b"also not").unwrap_err();
+            let text = err.to_string();
+            assert_eq!(
+                text.matches("  ").count(),
+                0,
+                "a lost line continuation leaves a gap in the middle of the message: {text:?}"
+            );
+            assert!(
+                text.contains("cannot cross-check it ("),
+                "the reason belongs in one parenthesised clause: {text:?}"
+            );
+            assert!(
+                text.ends_with("); the file is untouched"),
+                "the note must still say that nothing was written: {text:?}"
+            );
         }
 
         #[test]
