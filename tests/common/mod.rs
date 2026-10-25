@@ -1363,3 +1363,41 @@ pub fn tiff_strips(data: &[u8]) -> Vec<Vec<u8>> {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// zlib (RFC 1950)
+// ---------------------------------------------------------------------------
+
+/// A zlib stream containing `payload`, produced at `level`.
+pub fn build_zlib(payload: &[u8], level: u32) -> Vec<u8> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+    encoder.write_all(payload).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// The decompressed payload of a zlib stream.
+pub fn zlib_payload(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(data)
+        .read_to_end(&mut out)
+        .expect("decode zlib");
+    out
+}
+
+/// Rewrites the two header bytes to advertise a window of `2^(cinfo + 8)` bytes,
+/// keeping every other bit and recomputing the check value. The DEFLATE body is
+/// untouched, which is exactly the shape of a stream written with a small window
+/// by an encoder that chose one.
+pub fn zlib_with_window(data: &[u8], cinfo: u8) -> Vec<u8> {
+    let mut out = data.to_vec();
+    let cmf = (cinfo << 4) | 8;
+    // FLEVEL and FDICT are copied from the original; only CINFO changes.
+    let mut flg = out[1] & 0xe0;
+    while ((u16::from(cmf) << 8) | u16::from(flg)) % 31 != 0 {
+        flg += 1;
+        assert!(flg < 0xe0, "no valid FLG found");
+    }
+    out[0] = cmf;
+    out[1] = flg;
+    out
+}

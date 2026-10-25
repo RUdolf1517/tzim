@@ -8,9 +8,10 @@ queue in the roadmap says "contract before code", and a contract written without
 wish list: FLAC is the one format in the queue where the *lossless* part is easy and the *verifiable* part
 is the whole problem.
 
-**Status: no FLAC code exists, and none will be written until the dependency question in §7 is answered.**
-`docs/formats.md` says `contract written, not implemented`, and the binary does not claim the format
-anywhere.
+**Status: refused after measurement (§7).** No FLAC code exists, the contract in
+[guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) stays on record, and the binary does not
+claim the format. The reason is not difficulty: it is that the format has almost nothing left to give, and the
+encoder to collect it costs a quarter of the binary. §7 has the numbers.
 
 ---
 
@@ -158,26 +159,59 @@ parallelises across files and has its own reporting.
 
 ---
 
-## 7. Decision
+## 7. Decision: refused, and the measurement behind it
 
-**Proceed, when the dependencies are approved.** The transformation is the safest in the queue (integer
-PCM, exact comparison), the refusals are few and mechanical, and the format is common enough that
-supporting it is worth 0–3 %.
+The audit's first version said "proceed, if the dependencies are approved". That was a decision about *risk*.
+The decision that mattered turned out to be about *benefit*, so it was measured before it was made.
 
-**Blocked on:** permission to add `flacenc`, `claxon` and `md-5` to `Cargo.toml`. The project rule is that
-no dependency is added without an explicit yes, and this audit is the case for the yes — not a substitute
-for it.
+### 7.1 What a stronger encoder can buy
 
-**If the answer is no**, the next candidate in the queue that needs no new crates is **zlib / raw DEFLATE**
-(`.zlib`, `.zz`, and the `deflate` streams inside other formats): `flate2` is already in the binary, the
-container is nine bytes, and the contract is a page. It is narrower in value — files like that are rare —
-but it costs nothing and carries the same verification: inflate both, compare, re-deflate, compare.
+Method: `libFLAC` through the `soundfile` bindings, three deterministic 20-second stereo signals at 44.1 kHz
+and 16 bits (PCM = 3 528 000 bytes), encoded at every compression level the format defines, `0` (fastest)
+through `8` (`flac -8`, what most rippers and every modern convertor use).
 
-Two candidates are **not** recommended after this audit, and should be struck from the queue rather than
-carried as "research" forever:
+| Signal | L0 | L5 (the `flac` default) | L8 (`flac -8`) | L8 vs L5 | L8 vs L0 |
+| --- | --- | --- | --- | --- | --- |
+| musical material: six harmonics, vibrato, envelopes, a little noise | 2 702 393 | 2 640 081 | 2 629 953 | **−0.38 %** | −2.68 % |
+| two-tone signal | 820 596 | 712 583 | 701 494 | −1.56 % | −14.51 % |
+| white noise | 3 415 964 | 3 397 373 | 3 397 373 | 0.00 % | −0.54 % |
 
-- **WOFF2** — the payload is Brotli over a transformed glyph table. Re-encoding needs a Brotli encoder, and
-  verifying it needs the *same* library to reverse the transform, which breaks verification independence.
-  It fails the same test that removes WebP from the plan.
-- **PDF** — unchanged from [formats §5](formats.md#5-refused-formats): no verifiable
-  object-level comparison without a renderer.
+Read the middle column: it is the *distance between the default encoder and the strongest one*, inside the
+same, mature, reference implementation. On material that behaves like music that distance is **0.4 %**; on
+real recordings mastered at `-8` it is zero, because there is nothing left to find.
+
+FLAC is not PNG. A PNG has a weak entropy stage — zlib at whatever level the editor happened to use — so
+recompressing it with a better filter chain and a stronger encoder finds 5–45 %. FLAC is a linear predictor
+followed by Rice coding: the encoder's job is to choose the order and the partition, and both libFLAC and
+`flacenc` search the same space. The remaining 0.4 % is the difference between two searches of a space that
+is already almost exhausted.
+
+### 7.2 What it would cost
+
+| Cost | Estimate | Basis |
+| --- | --- | --- |
+| handler code | ~12 000 lines, none of it ours | `flacenc` 0.5.1 (~10 k) + `claxon` 0.4.3 (~2.2 k) |
+| binary | **+150…300 KiB**, i.e. 920 KiB → 1.1–1.2 MiB | the repository's own JPEG codec is 1 600 lines and costs 52 KiB; this is 7.5× the code |
+| risk | an encoder younger than `libFLAC` by two decades | a worse encoder writes a larger file, the contract refuses it, and the feature does nothing at all |
+
+A quarter of the binary for 0.4 % of a file — and on the files people actually have, for 0 %. That is a worse
+trade than any decision recorded in [size-budget §5](size-budget.md#5-options-considered), including the ones
+that were rejected for costing 20 KiB.
+
+**The free part is not worth it either.** Dropping `PADDING` (usually 8 KiB) under `--strip-metadata` is 0.03 %
+of a 30 MB track. Metadata removal is not a reason to support a format.
+
+### 7.3 What happens to the work that was done
+
+The contract stays ([guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)). It cost nothing to
+write, it is correct, and if the calculus ever changes — an encoder with a materially better search, or a
+FLAC subset nobody has covered — the analysis does not have to start over. `docs/formats.md` records the
+format as **refused**, not as "research", because a queue that never shrinks is not a queue.
+
+The queue that remains:
+
+| Candidate | State | Why |
+| --- | --- | --- |
+| zlib / raw DEFLATE | **zlib implemented in v0.9**, raw DEFLATE refused | the zlib container has a signature and a checksum; raw DEFLATE has neither, so it cannot be detected without guessing |
+| WOFF2 | struck | Brotli re-encoding cannot be verified without the encoder itself |
+| PDF | struck | no verifiable object-level comparison without a renderer |

@@ -197,17 +197,31 @@ Nothing here changes a byte of output:
 - the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)
   and the [audit](flac-audit.md) behind it.
 
-### v0.9+ — research queue
+### v0.9 — zlib, and the end of the format queue — **implemented**
 
-A format is added only after its contract is written; these are the candidates left, in the order the
-audit in [flac-audit §7](flac-audit.md#7-decision) recommends:
+- **zlib (RFC 1950)** joins the handlers: recompress the DEFLATE stream, keep the two header bytes and the
+  Adler-32 verbatim ([guarantees §4.10](guarantees.md#410-zlib-rfc-1950--v09)). No new dependency — `flate2`
+  was already there, and the Adler-32 is twelve lines of arithmetic.
+- **Raw DEFLATE is refused**, not deferred: a bare DEFLATE stream has no signature, so recognising one would
+  mean guessing ([formats §5](formats.md#5-refused-formats)).
+- **FLAC is refused after measurement** ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)):
+  0.4 % on musical material, 0 % on files already written at `flac -8`, for ~150–300 KiB of binary.
 
-| Candidate | State | Blocker |
+### v0.10+ — the queue after this
+
+The queue is empty, and that is the result rather than an omission. What is left was examined and refused
+with a reason, so the next release does not start with "add another format":
+
+| Candidate | State | Why |
 | --- | --- | --- |
-| FLAC | contract written | two crates and a hash, none of them approved yet |
-| zlib / raw DEFLATE | not started, **no new dependency** | only the decision to do it |
-| WOFF2 | **recommended for removal** | Brotli re-encoding cannot be verified without the encoder |
-| PDF | **no** | no verifiable object-level comparison |
+| FLAC | refused, measured | 0.4 % for a quarter of the binary |
+| WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
+| PDF | refused | no verifiable object-level comparison without a renderer |
+| WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
+| raw DEFLATE | refused | no signature: recognition would be a guess |
+
+A new format is admitted only by [formats §4](formats.md#4-admission-criteria-for-a-new-format), and the
+first question it now asks is not "can it be verified" but "is there anything left to win".
 
 ---
 

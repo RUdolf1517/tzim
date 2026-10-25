@@ -200,7 +200,7 @@ tzim [OPTIONS] <PATH>...
                              not affect the content (not lossless, see below)
       --nested               optimize supported files inside archives
       --max-depth <N>        nesting limit (default: 3)
-      --formats <LIST>       png, gzip, zip, ico, jpeg, tiff
+      --formats <LIST>       png, gzip, zip, ico, jpeg, tiff, zlib
       --zopfli               use the slower, stronger encoder
       --follow-symlinks      resolve and follow symbolic links
       --allow-hardlinks      process files with more than one hard link
@@ -251,9 +251,9 @@ documentation is checked against:
 
 ```
 $ tzim -i
-tzim 0.8.0 — shrink the file, never the information
+tzim 0.9.0 — shrink the file, never the information
 ...
-Formats in this build: PNG, gzip, ICO/CUR, JPEG, TIFF, ZIP
+Formats in this build: PNG, gzip, ICO/CUR, JPEG, TIFF, ZIP, ZLIB
 ...
   G4  metadata removed on request, and only with --strip-metadata
 ```
@@ -301,6 +301,7 @@ If you want it gone, say so. `--strip-metadata` removes a fixed list and nothing
 | ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
 | JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, every coefficient |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+| zlib | nothing: the header has no name, comment or timestamp | header, Adler-32, payload |
 
 `--strip-metadata` is the one request that makes the output differ from the input in more than its encoding,
 so it is never on by default, never implied by another flag, and every line it rewrites says
@@ -332,7 +333,8 @@ list is in [docs/safety.md](docs/safety.md#3-metadata).
 | Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
 | JPEG | v0.4 | **implemented**, opt-in | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
 | TIFF (classic, strips) | v0.7 | **implemented** | Recompress strips (or compress uncompressed ones); every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
-| FLAC | v0.9+ | **contract written, not implemented** | Lossless re-encode; metadata blocks, stream MD5 and seek points preserved — [contract](docs/guarantees.md#49-flac--contract-written-not-implemented), [audit](docs/flac-audit.md) | — |
+| zlib (`.zlib`, `.zz`) | v0.9 | **implemented** | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte; a stream with a preset dictionary or a window below 32 KiB is refused | G3 |
+| FLAC | — | **refused after measurement** | A stronger encoder buys 0.4 % on music and costs ~150–300 KiB of binary, so the contract was written and the code was not — [audit](docs/flac-audit.md) | — |
 | PDF, WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
 
 Progressive, arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason

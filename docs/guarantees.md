@@ -86,6 +86,7 @@ would suggest more than any of these delivers.
 | --- | --- | --- | --- |
 | PNG | V3 (own chunk walker) | **V1** (`png` crate decodes both files, pixels compared) | A framing error that both sides accept; the IDAT payload is compared through an independent inflater, so it cannot hide a content change |
 | gzip | V3 (own header walker) | **V1** (`flate2` decodes both bodies; CRC-32 and ISIZE recomputed) | A header misreading; the payload comparison would still be independent |
+| zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
 | JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
@@ -115,7 +116,8 @@ every serious optimizer has it and users otherwise reach for a tool that removes
 | JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop/IPTC), `COM` | `APP0` (JFIF density), `APP2` (ICC), `APP14` (Adobe colour transform), every other `APPn`, all quantization and Huffman tables, every DCT coefficient |
 | ICO / CUR | nothing of its own; embedded PNGs are stripped under the PNG rule | the directory, bitmap entries, every PNG chunk in the keep list above |
 | TIFF | the documentation tags listed in [§4.8](#48-tiff-classic-baseline-strips--v07) | colour, geometry, `Orientation`, ICC, strips, unknown tags |
-| FLAC (when implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
+| FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
+| zlib | nothing: the header has no name, comment or timestamp, and `FLEVEL` describes the encoder | every byte of the header and the trailer |
 
 Rules that hold in every format:
 
@@ -510,12 +512,18 @@ does not match `RowsPerStrip` × row bytes for the last strip — all leave the 
 nothing on LZW (refused). This is the honest range: an uncompressed 8-bit RGB scan shrinks by roughly the
 entropy of its content, while a TIFF from a modern scanner is often already Deflate- or LZW-compressed.
 
-### 4.9. FLAC — contract written, not implemented
+### 4.9. FLAC — refused after measurement
 
-**Status: contract, no code.** The audit behind it is [flac-audit.md](flac-audit.md); the implementation
-waits for the dependency decision recorded there (§7). Nothing in this section is a claim that the binary
-supports FLAC: `docs/formats.md` says `contract written, not implemented`, and `--list-formats` will name
-the format only when the handler exists and its tests pass.
+**Status: refused, contract kept.** The audit behind it is [flac-audit.md](flac-audit.md). It was measured
+before it was decided: a stronger encoder buys **0.4 %** on musical material and **0 %** on files already
+written at `flac -8`, while the encoder and the independent decoder together cost roughly **+150…300 KiB** of
+binary — a quarter of it — for a format that is already entropy-coded to its limit. The numbers are in
+[flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it).
+
+Nothing in this section is a claim that the binary supports FLAC: the handler does not exist,
+`--list-formats` does not name the format, and `docs/formats.md` records it as refused. The contract is kept
+because it is correct and free, and because a future encoder with a materially better search would restart
+from here rather than from nothing. The clauses below are what such an implementation would have to satisfy.
 
 **Transformation.** Re-encode the audio frames with a better encoder. The decoded samples are identical;
 the frames, their lengths and the byte offsets that point at them are not, because a FLAC encoder is free
@@ -588,6 +596,81 @@ rule is "strictly smaller".
 allows; files from older settings, hardware recorders or low-effort rips have 1–3 % left. This contract does
 not promise more than the format can give, and the tool's refusal to write a larger file is what protects
 the user from the rest.
+
+### 4.10. zlib (RFC 1950) — v0.9
+
+**Transformation.** Recompress the DEFLATE stream. The two header bytes and the four trailer bytes are
+copied verbatim; only the bytes between them change.
+
+**Preserved, byte-identically:**
+
+- the two header bytes exactly as they appear in the input: `CM`, `CINFO`, `FLEVEL` and `FCHECK`. `CINFO`
+  is a promise about the encoder's window, so preserving it is not cosmetic; `FLEVEL` is a hint about the
+  level that produced the stream, and a stale hint is still the input's own value;
+- the decompressed payload, byte for byte and in length;
+- the trailing `Adler-32`, big-endian (recomputed from the decompressed bytes, and required to equal the
+  input's value);
+- the number of streams (exactly one).
+
+**Allowed to change:**
+
+- the DEFLATE body bytes and length;
+- the total file length.
+
+**Accepted subset** — the file is rewritten only when all of these hold, and is skipped with a reason
+otherwise:
+
+- `CM = 8` (DEFLATE). Every other method is refused;
+- `CINFO ≤ 7`, and `CINFO = 7` (a 32 KiB window) in particular. A stream that declares a smaller window is
+  refused: this build's encoder always uses a 32 KiB window and is free to emit distances up to it, and a
+  decoder that honours the declared window would then reject or mis-decode the result. Refusing is the only
+  answer that cannot produce a broken file;
+- `FDICT = 0`. A preset dictionary means the payload cannot be decoded without bytes that are not in the
+  file, so there is nothing to verify against;
+- the two header bytes, read big-endian, are a multiple of 31 (RFC 1950 §2.2), and neither the header nor
+  the DEFLATE stream is truncated;
+- the DEFLATE stream ends exactly where the trailer begins. A second stream or any trailing byte is refused
+  rather than concatenated or dropped;
+- the trailer's `Adler-32` matches the decompressed payload. A mismatch is *corruption*, not a variation.
+
+**Verification** — structure **V3** (this repository's header reader), content **V1** (`flate2`/`miniz_oxide`
+decodes both files, and the `Adler-32` is recomputed by code in this repository, not by the encoder):
+
+1. both files parse under the accepted subset;
+2. the candidate's two header bytes equal the input's;
+3. the candidate's four trailer bytes equal the input's;
+4. decompressing both files yields identical byte sequences and identical lengths;
+5. `candidate.len() < input.len()`.
+
+**Refused (skipped, exit 0):** `CM ≠ 8`, `CINFO < 7`, `FDICT = 1`, trailing data after the stream. The
+file is valid and is left untouched.
+
+**Corrupt (failed, exit 1):** a header that fails the check value, a truncated stream, an `Adler-32` that
+does not match, a DEFLATE stream that does not decode. All leave the original untouched.
+
+**`--strip-metadata`** does nothing here, and says nothing: a zlib header carries no name, no comment and no
+timestamp, and `FLEVEL` describes the encoder rather than the file. The flag is accepted and the output is
+the same as without it.
+
+**A note on detection.** A zlib header is two bytes with internal redundancy — `CM = 8`, `CINFO ≤ 7`,
+`FDICT = 0`, a multiple of 31 — which is weaker than a magic number: roughly one random file in two thousand
+passes it. Detection is therefore a *hint*, and the handler validates everything again before writing
+anything. A false positive costs one `failed` line and an untouched file, never a rewrite. The bytes are
+never at risk, only the line count.
+
+**Expected gain:** 0–10 %, and it depends entirely on who wrote the file. Streams from a default `zlib`
+level 6 — the level every library, HTTP client and PNG-less tool uses by accident — have 2–8 % left; streams
+already written at level 9 have nothing. `--zopfli` adds the usual 1–5 % at 10–100× the CPU cost.
+
+**Raw DEFLATE is not supported, deliberately.** A bare DEFLATE stream has no header, no trailer and no
+signature: there is no byte sequence that identifies one, so a file cannot be recognised without trying to
+decompress every file passed to the tool and accepting whatever happens to parse. That guesses, and guessing
+is the one thing this project does not do. It is refused in [formats §5](formats.md#5-refused-formats) with
+the same reasoning.
+
+**Verification IDs:** `T-ZL-01` … `T-ZL-08`.
+
+---
 
 ---
 

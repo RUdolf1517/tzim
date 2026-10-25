@@ -121,7 +121,7 @@ OPTIONS:
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
         --formats <LIST>       only process these formats: png, gzip, zip, ico,
-                               jpeg, tiff; JPEG is off unless named here
+                               jpeg, tiff, zlib; JPEG is off unless named here
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link

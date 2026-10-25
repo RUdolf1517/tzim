@@ -18,6 +18,7 @@ Formats are detected by **content**, never by file name:
 | APNG | PNG signature plus a valid `acTL` chunk before the first IDAT |
 | gzip | `1F 8B` and `CM = 08` |
 | ZIP | `50 4B 03 04` (local header) or `50 4B 05 06` (empty archive) |
+| zlib | `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, and the two bytes big-endian divisible by 31 (RFC 1950 §2.2) |
 | ICO / CUR | `00 00 01 00` / `00 00 02 00` plus a valid directory |
 
 The extension is used only for two things: the `--include` / `--exclude` filters, and human-readable
@@ -42,7 +43,8 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
 | JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
 | TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
-| FLAC | v0.8+ | **contract written, not implemented** | Lossless re-encode, every metadata block preserved; frames and seek offsets are the only things that move | 0–3 %, and 0 % is the common answer | high | [§4.9](guarantees.md#49-flac--contract-written-not-implemented) |
+| zlib (`.zlib`, `.zz`) | v0.9 | implemented | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | 0–10 %, depends on the level that wrote the file | medium | [§4.10](guarantees.md#410-zlib-rfc-1950--v09) |
+| FLAC | — | **refused after measurement** | Would re-encode losslessly, but a stronger encoder buys 0.4 % and costs a quarter of the binary | 0–0.4 % | — | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
 
 ### ZIP-based formats covered by the ZIP handler
 
@@ -124,6 +126,7 @@ Refusals are permanent design decisions, not a backlog. Each has a reason that f
 | **HTML / CSS / JS / SVG / XML / JSON** | "Optimization" here means minification: removing comments, whitespace and redundant constructs. That is information removal and is forbidden. SVGZ is supported because it is a gzip file, and only the gzip layer is touched. |
 | **BMP / WAV / TXT / raw data** | No internal compression; the only way to shrink them is to change format, which Tzim does not do. |
 | **xz / bzip2 / zstd / 7z / RAR** | Recompression requires a codec dependency with a large binary cost and unpredictable gains; changing the frame format risks compatibility with older decoders. Not worth the risk for the benefit. |
+| **Raw DEFLATE** | A bare DEFLATE stream has no header, no trailer and no signature: nothing identifies one, so recognising it would mean attempting to decompress every file passed to the tool and accepting whatever parses. That is guessing. The zlib container (above) is supported precisely because it has a header and a checksum to check. |
 | **GIF** | LZW re-encoding yields at most a couple of percent while requiring a full LZW codec and careful handling of extensions, disposal and transparency. The risk/benefit ratio is worse than for any supported format. |
 | **Office binary formats (.doc, .xls, .ppt)** | Compound File Binary containers with in-place structures; rewriting them safely is not tractable. Their OOXML successors are ZIP files and are supported through the ZIP handler. |
 | **SQLite databases, mailbox files, disk images** | In-place page structures; any rewrite is a different operation (vacuum, reindex) with its own semantics and its own failure modes. |

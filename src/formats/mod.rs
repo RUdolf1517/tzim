@@ -13,6 +13,8 @@ pub mod png;
 pub mod tiff;
 #[cfg(feature = "zip")]
 pub mod zip;
+#[cfg(feature = "zlib")]
+pub mod zlib;
 
 /// Whether this build contains a handler for `format`.
 pub const fn compiled(format: Format) -> bool {
@@ -23,6 +25,7 @@ pub const fn compiled(format: Format) -> bool {
         Format::Ico => cfg!(feature = "ico"),
         Format::Jpeg => cfg!(feature = "jpeg"),
         Format::Tiff => cfg!(feature = "tiff"),
+        Format::Zlib => cfg!(feature = "zlib"),
     }
 }
 
@@ -47,6 +50,9 @@ pub fn compiled_names() -> Vec<&'static str> {
     if cfg!(feature = "tiff") {
         out.push("tiff");
     }
+    if cfg!(feature = "zlib") {
+        out.push("zlib");
+    }
     out
 }
 
@@ -63,6 +69,7 @@ pub struct Allow {
     pub ico: bool,
     pub jpeg: bool,
     pub tiff: bool,
+    pub zlib: bool,
 }
 
 impl Default for Allow {
@@ -76,6 +83,7 @@ impl Default for Allow {
             ico: cfg!(feature = "ico"),
             jpeg: false,
             tiff: cfg!(feature = "tiff"),
+            zlib: cfg!(feature = "zlib"),
         }
     }
 }
@@ -92,6 +100,7 @@ impl Allow {
             ico: false,
             jpeg: false,
             tiff: false,
+            zlib: false,
         };
         for name in names {
             let (format, slot) = match name.as_str() {
@@ -101,9 +110,10 @@ impl Allow {
                 "ico" | "cur" => (Format::Ico, &mut allow.ico),
                 "jpeg" | "jpg" => (Format::Jpeg, &mut allow.jpeg),
                 "tiff" | "tif" => (Format::Tiff, &mut allow.tiff),
+                "zlib" => (Format::Zlib, &mut allow.zlib),
                 other => {
                     return Err(Error::usage(format!(
-                        "unknown format `{other}`; expected png, gzip, zip, ico, jpeg or tiff"
+                        "unknown format `{other}`; expected png, gzip, zip, ico, jpeg, tiff or zlib"
                     )))
                 }
             };
@@ -128,6 +138,7 @@ impl Allow {
             Format::Ico => self.ico,
             Format::Jpeg => self.jpeg,
             Format::Tiff => self.tiff,
+            Format::Zlib => self.zlib,
         }
     }
 
@@ -151,6 +162,9 @@ impl Allow {
         }
         if self.tiff {
             out.push("tiff");
+        }
+        if self.zlib {
+            out.push("zlib");
         }
         out
     }
@@ -214,6 +228,8 @@ pub fn optimize(
         Format::Jpeg => jpeg::optimize(input, dst, opts)?,
         #[cfg(feature = "tiff")]
         Format::Tiff => tiff::optimize(input, dst, opts)?,
+        #[cfg(feature = "zlib")]
+        Format::Zlib => zlib::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -246,6 +262,8 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options)
         Format::Jpeg => jpeg::verify(original, candidate, opts),
         #[cfg(feature = "tiff")]
         Format::Tiff => tiff::verify(original, candidate, opts),
+        #[cfg(feature = "zlib")]
+        Format::Zlib => zlib::verify(original, candidate, opts),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -294,6 +312,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "ZIP",
         "recompress DEFLATE entries",
         "names, extra fields, comments, order and attributes; signed archives refused",
+    ));
+    #[cfg(feature = "zlib")]
+    rows.push((
+        "ZLIB",
+        "recompress the DEFLATE stream",
+        "header preserved byte for byte; Adler-32 recomputed and matched",
     ));
     rows
 }
