@@ -29,7 +29,6 @@
 //! that the line never appears in a pipe.
 
 use std::fmt;
-use std::fmt::Write as _;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -214,11 +213,14 @@ mod tests {
         assert!(BATCH_PLAIN.contains("{t}"));
         assert!(!ONE_PLAIN.contains("{bar"));
         assert!(ONE_PLAIN.ends_with("converting…"));
-        // Colour is decoration: the same keys, plus styles.
+        // Colour is decoration: the same keys, plus a style after the colon.
         for (plain, colour) in [(ONE_PLAIN, ONE_COLOUR), (BATCH_PLAIN, BATCH_COLOUR)] {
-            for key in ["{spinner}", "{t}"] {
+            for key in ["{spinner", "{t}", "{bar", "{pos}/{len}"] {
                 assert_eq!(plain.contains(key), colour.contains(key), "{key}");
             }
+            // The coloured variant adds styles and nothing else.
+            assert!(colour.contains(".green"), "{colour}");
+            assert!(!plain.contains('.'), "{plain}");
         }
     }
 

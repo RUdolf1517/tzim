@@ -251,13 +251,17 @@ jobs:
           # would compile the fuzz entry points into the measured binary.
           cargo build --release --locked --target x86_64-unknown-linux-musl 2>&1 | tee /tmp/tzim-size.log
           ls -l target/x86_64-unknown-linux-musl/release/tzim
-          file target/x86_64-unknown-linux-musl/release/tzim
           # The released artifact must not need a C library. `file` is the cheap
           # check that says so; a dynamic build would still pass the size gate.
-          file target/x86_64-unknown-linux-musl/release/tzim | grep -q "statically linked" || {
-            echo "the musl build is not statically linked" >&2
-            exit 1
-          }
+          # The output is captured rather than piped into `grep -q`: this script
+          # runs under `pipefail`, and `grep -q` closing the pipe early makes the
+          # pipeline look like a failure.
+          kind="$(file -b target/x86_64-unknown-linux-musl/release/tzim)"
+          echo "$kind"
+          case "$kind" in
+            *"statically linked"*) ;;
+            *) echo "the musl build is not statically linked" >&2; exit 1 ;;
+          esac
           bytes=$(stat -c '%s' target/x86_64-unknown-linux-musl/release/tzim)
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
