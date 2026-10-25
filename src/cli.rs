@@ -32,6 +32,8 @@ pub struct Args {
     pub max_pixels: u64,
     pub max_uncompressed: u64,
     pub max_ratio: u64,
+    /// The most any one job may be expected to need, in bytes (#51).
+    pub memory_budget: u64,
     pub strip_metadata: bool,
     pub nested: bool,
     pub max_depth: u32,
@@ -49,6 +51,10 @@ pub const DEFAULT_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 pub const DEFAULT_MAX_PIXELS: u64 = 100_000_000;
 pub const DEFAULT_MAX_UNCOMPRESSED: u64 = 8 * 1024 * 1024 * 1024;
 pub const DEFAULT_MAX_RATIO: u64 = 1000;
+/// Zero asks for a budget derived from the other limits, which is what the
+/// defaults do: see `pipeline::derived_memory_budget`. Lower it to what the
+/// machine actually has — that is the point of the flag (docs/safety.md §7.1).
+pub const DEFAULT_MEMORY_BUDGET: u64 = 0;
 
 impl Default for Args {
     fn default() -> Self {
@@ -67,6 +73,7 @@ impl Default for Args {
             max_pixels: DEFAULT_MAX_PIXELS,
             max_uncompressed: DEFAULT_MAX_UNCOMPRESSED,
             max_ratio: DEFAULT_MAX_RATIO,
+            memory_budget: DEFAULT_MEMORY_BUDGET,
             strip_metadata: false,
             nested: false,
             max_depth: 3,
@@ -118,6 +125,9 @@ OPTIONS:
         --max-uncompressed <BYTES>
                                refuse archives that expand beyond this (default: 8589934592)
         --max-ratio <N>        refuse archives with a ratio above N:1 (default: 1000)
+        --memory-budget <BYTES>
+                               skip a file whose worst case would exceed this
+                               many bytes; default derived from the limits above
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
         --formats <LIST>       only process these formats: png, gzip, zip, ico,
@@ -259,6 +269,7 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "--max-pixels" => out.max_pixels = parse_u64(&name, &take_value(inline)?)?,
             "--max-uncompressed" => out.max_uncompressed = parse_u64(&name, &take_value(inline)?)?,
             "--max-ratio" => out.max_ratio = parse_u64(&name, &take_value(inline)?)?,
+            "--memory-budget" => out.memory_budget = parse_u64(&name, &take_value(inline)?)?,
             "--formats" => {
                 let v = take_value(inline)?;
                 let names = split_list(&v);
@@ -385,6 +396,33 @@ mod tests {
         assert_eq!(args.paths.len(), 1);
         assert!(!args.recursive);
         assert_eq!(args.max_size, DEFAULT_MAX_SIZE);
+    }
+
+    /// #51: the flag exists, takes a byte count, and defaults to "derive it".
+    #[test]
+    fn memory_budget_flag() {
+        assert_eq!(parse_ok(&["a.png"]).memory_budget, DEFAULT_MEMORY_BUDGET);
+        assert_eq!(DEFAULT_MEMORY_BUDGET, 0, "0 means: derive from the limits");
+        assert_eq!(
+            parse_ok(&["--memory-budget", "1048576", "a.png"]).memory_budget,
+            1_048_576
+        );
+        assert_eq!(
+            parse_ok(&["--memory-budget=1048576", "a.png"]).memory_budget,
+            1_048_576
+        );
+        assert!(
+            HELP.contains("--memory-budget"),
+            "the flag belongs in --help"
+        );
+        let bad: Vec<OsString> = ["--memory-budget", "lots", "a.png"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        assert!(
+            parse(bad.into_iter()).is_err(),
+            "a non-numeric budget is a usage error, not a zero"
+        );
     }
 
     #[test]

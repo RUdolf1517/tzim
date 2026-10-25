@@ -906,6 +906,179 @@ fn exists(path: &Path) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Memory budget (#51)
+// ---------------------------------------------------------------------------
+
+/// The number the estimator charges for a PNG fixture: the file twice (the input
+/// and the candidate read back) plus the two RGBA buffers it decodes to.
+fn png_worst_case(bytes: &[u8], spec: &PngSpec) -> u64 {
+    2 * bytes.len() as u64 + 8 * u64::from(spec.width) * u64::from(spec.height)
+}
+
+/// #51: a file whose declared dimensions put it above the budget is `skipped`
+/// with a reason, is never read, and is byte-identical afterwards. Exit 0 — a
+/// configured bound is not an error.
+#[test]
+fn a_file_above_the_memory_budget_is_skipped_and_untouched() {
+    let ws = Workspace::new("budget-skip");
+    let spec = PngSpec {
+        width: 128,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("photo.png", &original);
+    let cost = png_worst_case(&original, &spec);
+    let budget = (cost - 1).to_string();
+
+    let (code, stdout, stderr) = run(
+        &["photo.png", "--memory-budget", &budget, "--json"],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "expected a skip, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("--memory-budget"),
+        "the reason must name the flag that caused it: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a skipped file must not be touched"
+    );
+}
+
+/// #51: the boundary is exact — at the budget the file is processed, one byte
+/// above it is skipped.
+#[test]
+fn the_memory_budget_boundary_is_exact() {
+    let ws = Workspace::new("budget-boundary");
+    let spec = PngSpec {
+        width: 128,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let cost = png_worst_case(&original, &spec);
+
+    // Two copies of the same file, because the charge is computed from the file
+    // as it is *now*: an optimized copy is smaller and would no longer be at the
+    // boundary. Each case starts from the original.
+    let at = ws.write("at.png", &original);
+    let above = ws.write("above.png", &original);
+
+    // Exactly at the budget: processed as usual.
+    let exact = cost.to_string();
+    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &exact, "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"optimized\""),
+        "a file exactly at the budget must be processed: {stdout}"
+    );
+    assert!(
+        std::fs::read(&at).unwrap().len() < original.len(),
+        "the accepted file must actually be optimized"
+    );
+
+    // One byte less than it needs: skipped before it is read, untouched.
+    let one_less = (cost - 1).to_string();
+    let (code, stdout, stderr) = run(
+        &["above.png", "--memory-budget", &one_less, "--json"],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "one byte short of the budget must be skipped: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&above).unwrap(),
+        original,
+        "a skipped file is byte-identical"
+    );
+}
+
+/// #51: the budget must not change the result for a file that fits. The default
+/// budget is derived from the other ceilings, so it admits everything they do.
+#[test]
+fn a_file_that_fits_is_optimized_exactly_as_before() {
+    let spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+
+    let default_run = Workspace::new("budget-default");
+    default_run.write("a.png", &original);
+    let (code, stdout, stderr) = run(&["a.png", "--json"], &default_run.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
+    let without_flag = std::fs::read(default_run.file("a.png")).unwrap();
+
+    let explicit_run = Workspace::new("budget-explicit");
+    explicit_run.write("a.png", &original);
+    let (code, stdout, stderr) = run(
+        &["a.png", "--memory-budget", "17179869184", "--json"],
+        &explicit_run.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
+    let with_flag = std::fs::read(explicit_run.file("a.png")).unwrap();
+
+    assert_eq!(
+        without_flag, with_flag,
+        "the derived default and an explicit generous budget must produce the same file"
+    );
+}
+
+/// #51: the container term is real — a small ZIP is charged its decompression
+/// ceiling, because that is the one cost a file length cannot bound.
+#[test]
+fn a_container_is_charged_its_decompression_ceiling() {
+    let ws = Workspace::new("budget-zip");
+    let entry = ZipEntrySpec::deflated("data.txt", &compressible(4096), 1);
+    let original = build_zip(&[entry], b"");
+    let path = ws.write("small.zip", &original);
+
+    // 8 GiB of allowance against a 100 KiB budget: skipped before it is read.
+    let (code, stdout, stderr) = run(
+        &["small.zip", "--memory-budget", "102400", "--json"],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"skipped\""),
+        "a container is charged its decompression ceiling: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    // With a decompression ceiling that fits, the same archive is processed.
+    let (code, stdout, stderr) = run(
+        &[
+            "small.zip",
+            "--memory-budget",
+            "102400",
+            "--max-uncompressed",
+            "8192",
+            "--json",
+        ],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        !stdout.contains("\"status\":\"skipped\""),
+        "lowering --max-uncompressed must admit the archive: {stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // ZIP
 // ---------------------------------------------------------------------------
 
@@ -2307,6 +2480,38 @@ fn tiff_lzw_is_skipped_because_there_is_no_encoder() {
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
+/// Issue #54's job found this the hard way: `pillow-tiff_gray_2_4_bpp_hopper*R.tif`
+/// and `pillow-16bit.r.tif` were rewritten into files Pillow then refused with
+/// `decoder error -2`. The `R` suffix is the whole story — `FillOrder` 2, bits
+/// reversed inside each byte. libtiff reverses the bits of a compressed strip
+/// before it inflates it, so `FillOrder` 2 is decodable only while the strip is
+/// uncompressed: the rewrite was shrinking files by breaking them.
+#[test]
+fn tiff_reversed_bit_order_is_skipped() {
+    let ws = Workspace::new("tiff-fill-order");
+    let spec = TiffSpec {
+        // FillOrder 2 (lsb-to-msb). The fixture's bytes are not really
+        // reversed, so the refusal has to come from the tag.
+        fill_order: Some(2),
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("reversed.tif", &original);
+
+    let (code, stdout, stderr) = run(&["reversed.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("FillOrder 2"), "{stdout}");
+    assert!(
+        stdout.contains("libtiff"),
+        "the message must say why, not just no: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a refused file stays byte-identical"
+    );
+}
+
 #[test]
 fn tiff_predictor_is_skipped() {
     let ws = Workspace::new("tiff-predictor");
@@ -3124,9 +3329,16 @@ fn a_coincidental_zlib_header_is_unsupported_and_never_written() {
     let (code, stdout, stderr) = run(&["fake.zlib"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("unsupported"), "{stdout}");
+    // #62: the note used to say "this is not a zlib stream", which is false for
+    // a real stream cut to a few dozen bytes — the decoder cannot tell the two
+    // apart, so the message names both possibilities.
     assert!(
-        stdout.contains("not a zlib stream"),
+        stdout.contains("either the header was a coincidence or the stream is too short to tell"),
         "the note has to say what was decided and why: {stdout}"
+    );
+    assert!(
+        !stdout.contains("not a zlib stream"),
+        "the decoder cannot know that: {stdout}"
     );
     assert_eq!(std::fs::read(&path).unwrap(), data);
 }

@@ -31,6 +31,7 @@ bin="${1:?usage: corpus.sh <tzim-binary> [work-dir]}"
 work="${2:-${RUNNER_TEMP:-/tmp}/tzim-corpus}"
 corpus="$work/corpus"
 allowlist="$repo_root/.github/corpus-allowlist.txt"
+baseline="$repo_root/.github/corpus-refusals.txt"
 
 rm -rf "$work"
 bash "$repo_root/.github/scripts/corpus-fetch.sh" "$work"
@@ -45,7 +46,7 @@ manifest > "$work/manifest-before.txt"
 run() {
     local out="$1" err="$2"
     set +e
-    "$bin" --formats png,gzip,zip,ico,jpeg,tiff --jobs 2 --json -r "$corpus" \
+    "$bin" --formats png,gzip,zip,ico,jpeg,tiff,zlib --jobs 2 --json -r "$corpus" \
         > "$out" 2> "$err"
     local code=$?
     set -e
@@ -66,10 +67,12 @@ if [ -s "$work/run1.err" ]; then
 fi
 
 echo "== gate =="
-python3 - "$work" "$first_code" "$second_code" "$allowlist" <<'PY'
+python3 - "$work" "$first_code" "$second_code" "$allowlist" "$baseline" <<'PY'
 import collections, fnmatch, json, os, sys
 
-work, first_code, second_code, allow_path = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+work, first_code, second_code, allow_path, baseline_path = (
+    sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5]
+)
 
 allow = []
 if os.path.exists(allow_path):
@@ -182,10 +185,43 @@ def reason(record):
         clause = clause[:58].rsplit(" ", 1)[0] + "..."
     return clause
 
+refused = [r for r in files1 if r.get("status") in ("skipped", "failed", "unsupported")]
+by_reason = collections.Counter(reason(r) for r in refused)
+
 if skipped:
-    by_reason = collections.Counter(reason(r) for r in skipped)
     lines.append("Skipped, by reason: " +
                  "; ".join(f"{text} ({count})" for text, count in by_reason.most_common(6)))
+    lines.append("")
+
+# The full refusal set, one `<path>\t<reason>` per line: it is the artifact a
+# human diffs when a baseline row has to change (#36).
+with open(os.path.join(work, "refusals.txt"), "w", encoding="utf-8") as fh:
+    root = os.path.join(work, "corpus")
+    for record in sorted(refused, key=lambda r: r["path"]):
+        try:
+            name = os.path.relpath(record["path"], root)
+        except ValueError:
+            name = os.path.basename(record["path"])
+        fh.write(f"{name}\t{reason(record)}\n")
+
+# The same table in the report, collapsed and **bounded**: `ci-report.sh`
+# publishes the last 150 lines of the report, so a section that grows without a
+# limit silently pushes the numbers out of the comment (it did, on the first run
+# of this block). Thirty lines is enough to recognise a reason, and the full list
+# is in the `corpus-run` artifact.
+if refused:
+    with open(os.path.join(work, "refusals.txt"), encoding="utf-8") as fh:
+        entries = [line.rstrip("\n") for line in fh]
+    lines.append(
+        f"<details><summary>The refused set, first {min(len(entries), 30)} of "
+        f"{len(entries)} (all of it in the `corpus-run` artifact)</summary>"
+    )
+    lines.append("")
+    lines.append("```")
+    lines.extend(entries[:30])
+    lines.append("```")
+    lines.append("")
+    lines.append("</details>")
     lines.append("")
 if failed:
     lines.append("### Files that failed")
@@ -206,6 +242,40 @@ text = "\n".join(lines)
 print(text)
 with open(os.path.join(work, "summary.md"), "w", encoding="utf-8") as fh:
     fh.write(text + "\n")
+
+# The refused set has a baseline (#36). `docs/testing.md` promised that "the set
+# of refused files is unchanged" fails the run, and nothing checked it: a
+# construct that silently stopped being refused was invisible. The baseline is a
+# count per reason, not a file list, because the reason is what a regression
+# changes (`tiled layout is not supported` becoming `optimized` is the defect);
+# the per-file list is written to refusals.txt and uploaded with the report.
+expected = {}
+if os.path.exists(baseline_path):
+    with open(baseline_path, encoding="utf-8") as fh:
+        for number, line in enumerate(fh, 1):
+            line = line.split("#", 1)[0].rstrip("\n")
+            if not line.strip():
+                continue
+            count, _, text = line.partition("\t")
+            try:
+                expected[text.strip()] = int(count)
+            except ValueError:
+                problem(f"corpus-refusals.txt:{number}: expected `<count><TAB><reason>`")
+else:
+    print("::warning:: no .github/corpus-refusals.txt; the refused set is not checked")
+
+for text, count in sorted(expected.items()):
+    actual = by_reason.get(text, 0)
+    if actual != count:
+        problem(
+            f"refused set changed: `{text}` was {count}, now {actual}. "
+            "If that is intended, update .github/corpus-refusals.txt in this pull request "
+            "and say why in the description."
+        )
+
+new_reasons = {text: count for text, count in by_reason.items() if text not in expected}
+for text, count in sorted(new_reasons.items()):
+    print(f"::warning:: a refusal reason missing from the baseline ({count}): {text}")
 
 if problems:
     print()

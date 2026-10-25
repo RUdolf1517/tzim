@@ -1,0 +1,32 @@
+# The refused set, counted per reason.
+#
+# `.github/scripts/corpus.sh` writes every file the run did not optimize to
+# `refusals.txt` and compares this table with it: a reason whose count changed,
+# or disappeared, fails the run. That is the assertion `docs/testing.md` §4 has
+# been claiming since 0.10 — "the set of refused files is unchanged" — and it is
+# the only thing that notices a construct that silently stops being refused and
+# starts being rewritten instead (issue #36).
+#
+# Format: `<count><TAB><reason>`, where the reason is the clause the report shows
+# — the handler prefix, the aside after `;` and any `(…)` removed, because those
+# are the parts that change without meaning anything.
+#
+# A count that legitimately changes is updated in the same pull request that
+# changes it, with the reason in the description. Reasons that are not listed
+# here are reported as warnings, not failures, so a new refusal is visible
+# without blocking a release on a table nobody has regenerated.
+#
+# Counts below are from the 0.12.1 corpus run (`tzim-ci:corpus:c012ba5`), which
+# used the same pinned archives as this file's neighbours. A reason found there
+# but not here was not distinguishable from its neighbours in that run's report.
+# The six rows from `compression 4` down come from the run that added the zlib
+# streams (issue #36), which printed the full top-six list; `FillOrder 2` appeared
+# in the run that fixed the TIFF writer (issue #54), and it belongs in the table
+# because five files stopped being optimized and started being refused.
+12	more than one IFD
+12	compression 4 is not rewritten by this build
+9	tiled layout is not supported
+8	only baseline sequential
+6	tag 34665 carries an offset to another structure, which a...
+5	IFD entries are not in ascending tag order
+5	FillOrder 2

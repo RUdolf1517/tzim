@@ -1,6 +1,6 @@
 [package]
 name = "tzim"
-version = "0.12.1"
+version = "0.13.0"
 edition = "2021"
 rust-version = "1.88"
 description = "Lossless file optimizer: shrink the file, never the information"
@@ -25,11 +25,14 @@ path = "src/main.rs"
 crc32fast = { version = "1.5", optional = true }
 flate2 = { version = "1.1", optional = true, default-features = false, features = ["rust_backend"] }
 png = { version = "0.18", optional = true, default-features = false }
-# The progress line. Not optional: it is interface, not a handler, so every
-# build carries it; `default-features = false` drops a width table and a WASM
-# clock (docs/dependencies.md §2.9).
-indicatif = { version = "0.18", default-features = false }
 zopfli = { version = "0.8", optional = true, default-features = false, features = ["std"] }
+# The independent JPEG decoder, used only to verify a candidate the way a third
+# party would read it (docs/guarantees.md §2.6, issue #39). `rayon` is on by
+# default and is turned off: a second thread pool in a tool that already has a
+# worker pool is a cost with no benefit for one 8×8 block at a time.
+# `platform_independent` drops the SIMD module, which is what makes the crate
+# `forbid(unsafe_code)` instead of merely `deny`. docs/dependencies.md §2.10.
+jpeg-decoder = { version = "0.3", optional = true, default-features = false, features = ["platform_independent"] }
 
 [features]
 # One feature per handler family, so a build can drop what it will never see.
@@ -41,9 +44,24 @@ zip = ["dep:flate2", "dep:crc32fast"]
 # ICO entries are either PNG images (which need the PNG handler) or bitmaps that
 # are copied verbatim, so the feature is a thin layer over `png`.
 ico = ["png"]
-# The JPEG codec is part of this repository and pulls in no crate, so the
-# feature costs nothing but the code it gates.
+# The JPEG codec is part of this repository, so the handler costs nothing but the
+# code it gates.
 jpeg = []
+# Verification of a JPEG candidate by an independent decoder, which closes the
+# hole `guarantees.md` §2.6 names: a codec shared by the writer and the checker
+# cannot catch a defect symmetric in itself.
+#
+# **Off by default, and the measurement is why.** #39 approved this on one
+# condition — the shipping binary must not grow past 1 049 440 bytes, the v0.12.1
+# measurement — and it does not fit, even with `indicatif`'s 96 KiB returned:
+# `jpeg-decoder` costs more than that. Rather than grow the binary or break the
+# condition, the feature exists, is tested in CI on every run, and is what
+# `--all-features` and the `third-party` job exercise:
+#
+#     cargo build --release --features jpeg-v1
+#
+# `docs/dependencies.md` §2.10 and `docs/size-budget.md` §3 carry the numbers.
+jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]
 # TIFF only needs the DEFLATE codec that PNG and gzip already bring in.
 tiff = ["dep:flate2"]
 # zlib streams (RFC 1950) are DEFLATE plus a two-byte header and an Adler-32
@@ -69,15 +87,6 @@ incremental = false
 # full optimization even though this crate is not.
 [profile.release.package."*"]
 opt-level = 3
-
-# The progress line is drawn at most ten times a second and does no work that a
-# file's bytes depend on, so it is the one place where the smaller setting costs
-# nothing. Measured, not assumed: docs/size-budget.md §5.2.
-[profile.release.package.console]
-opt-level = "s"
-
-[profile.release.package.indicatif]
-opt-level = "s"
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -3,9 +3,10 @@
 Related: [size budget](size-budget.md) · [formats](formats.md)
 
 Tzim exists partly as a reaction to file optimizers with enormous dependency trees. Every dependency is
-therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. v0.10 is the
-first release since v0.1 to answer yes: one crate, for the progress line, at the user's explicit request
-(§2.9).
+therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. Two
+exceptions have been granted and both are on this page: `indicatif`, added in v0.10 for the progress line and
+**removed again in v0.13** (§2.9), and `jpeg-decoder`, added in v0.13 to put a decoder that shares no code
+with this repository on the far side of the JPEG comparison (§2.10).
 
 The project targets **Rust 1.88** (edition 2021). The floor is set by the optional Zopfli encoder; the PNG
 decoder requires 1.81 and `flate2` requires 1.67. Keeping the floor at 1.88 means one toolchain for
@@ -95,17 +96,19 @@ Additional requirements:
 | `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
-| `indicatif` | yes | always | the progress line | in every build |
+| `jpeg-decoder` | yes | feature `jpeg-v1` (**not** in `default`) | second opinion on a JPEG candidate | only with `jpeg-v1` |
 
-Five direct dependencies. Four are behind a feature, which is what makes the feature matrix in
-[size-budget §3](size-budget.md#3-feature-matrix) meaningful. `indicatif` is not: the progress line is part
-of the interface rather than of a format handler, so every build carries it (§2.9), and a build with
-`--no-default-features --features png` compiles `png`, `flate2`, `crc32fast` and the progress stack.
+Five direct dependencies, and every one of them is behind a feature: a build with
+`--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
+unconditional crate any more — the progress line, which used to be one (§2.9), is drawn by
+`src/progress.rs` again. `jpeg-v1` is the first dependency since v0.1 that a *published* build does not carry:
+it is available, tested on every CI run, and off by default (§2.10).
 
 The JPEG, ICO, TIFF and zlib handlers add code, not crates. **v0.4, v0.6, v0.7 and v0.9 added none**:
 §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a codec that
-was already in the tree. **v0.10 adds exactly one**, at the user's request and after the argument in §2.9;
-that grant is not a precedent, and the next candidate still has to answer every question in §1.
+was already in the tree. **v0.10 added one** for the progress line and **v0.13 removed it** (§2.9);
+**v0.13 added `jpeg-decoder`** for the `jpeg-v1` feature after the argument in §2.10. Each grant is argued on
+its own, and the next candidate still has to answer every question in §1.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 
@@ -130,8 +133,11 @@ instead of using a vetted crate.
   exercised by a 4 000-case property test.
 - **Verification is stronger, not weaker.** Because both encode and decode live here, the verifier can
   compare coefficients rather than pixels — a condition that implies pixel identity but is not implied by
-  it. The residual risk (a bug shared by encoder and decoder) is recorded in
-  [guarantees](guarantees.md#47-jpeg--v04-opt-in) and [benchmarks](benchmarks.md).
+  it. That is also the residual risk: a defect symmetric in the two would be invisible. v0.13 answers it
+  where it can be answered cheaply, with a decoder nobody in this repository wrote: `jpeg-decoder` decodes
+  both sides of an accepted candidate and the decoded pixels must be identical (§2.10). The pixel path is
+  therefore used for *verification*, never for the transformation — the distinction the first bullet above
+  turns on, and the reason v0.4 needed no crate even though v0.13 uses one.
 
 ### 2.7 FLAC: the crates it would have needed
 
@@ -164,44 +170,79 @@ Colour is six byte strings (`\x1b[1m`, `\x1b[2m`, `\x1b[31m`, `\x1b[32m`, `\x1b[
 tested without a terminal (`src/style.rs`). Detection uses `std::io::IsTerminal`, stable since 1.70, which is
 why `atty` and `is-terminal` are unnecessary.
 
-Progress used to be the second half of this section: v0.8 shipped a hand-rolled line, about 200 lines and a
-thread, on the argument that a framework buys bars and terminal-width queries that one `write!` per 100 ms
-does not need. That argument held for an ASCII frame and a counter. It stopped holding when the line had to
-carry a bar and a spinner that redraw from several worker threads — §2.9 is what changed, and what it cost.
+Progress is the second half of this section again. v0.8 shipped a hand-rolled line — about 200 lines and a
+thread — on the argument that a framework buys bars and terminal-width queries that one `write!` per 100 ms
+does not need. v0.10 gave up on that argument when the line grew a bar, a spinner, a rate and an ETA, and
+took `indicatif`. v0.13 gives the argument back: the line is drawn here again, and §2.9 is the account of
+both decisions, because a dependency removed is worth as much documentation as one added.
 
-### 2.9 `indicatif` — the progress line
+### 2.9 `indicatif` — added in v0.10, removed in v0.13
 
-- **Version:** 0.18.x (0.18.6 in the lock) · **Licence:** MIT · **Unconditional** · **Granted v0.10**
-- **Why:** the line is now a spinner and a bar, redrawn while several worker threads run. That is three
-  problems the hand-rolled version was not solving: a redraw rate shared with the terminal, a cursor that has
-  to be restored before the report prints, and the width of glyphs that are not ASCII. `indicatif` is the
-  crate the console-rs project maintains for exactly this, MIT-licensed, with a plain synchronous API — no
-  runtime, no macros, no `build.rs`.
-- **Configuration:** `default-features = false`. That drops `unicode-width` — a width table for text we never
-  truncate, where every glyph in the line (`⠋`, `█`, `░`) is one cell wide — and `wasmbind`, a clock for WASM
-  targets that have no meaning for a native binary.
-- **What we do not use:** `MultiProgress`, `wide_bar`/`wide_msg`, the iterator adapters, `HumanBytes` (the
-  report keeps its own integer formatter — that is the change that saved 20 KiB in v0.7.1,
-  [size-budget §5.3](size-budget.md#53-what-is-left-and-why-it-is-not-taken)), and any colour decision:
-  the SGR rules stay in `src/style.rs` and reach the spinner as a template string.
-- **What stays ours:** the two templates, the `mm:ss` clock (`{t}`, a `ProgressTracker`), the rule that the
-  line never appears in a pipe, and the 150 ms delay before the first frame. `src/progress.rs` grows from 204
-  to 263 lines and shrinks in responsibility: the animation thread, the frame rotation and the terminal
-  handling are gone, the tests that used to check frame text now check that the templates parse.
-- **Transitive additions:** `console` 0.16 (ANSI parsing and the Windows console, `ansi-parsing` and `std`
-  only), `portable-atomic`, `unit-prefix`; `console` in turn brings `encode_unicode`, `libc` and, on Windows,
-  `windows-sys` with `windows-link`. Eight new lock entries, of which five compile into a Linux binary.
-- **`unsafe`:** `console` and `portable-atomic` contain `unsafe` — Windows console calls and fallback atomics.
-  Our code still forbids it (`#![forbid(unsafe_code)]`), and the reviewed surface is terminal I/O and a
-  counter; nothing there parses file content.
-- **Cost:** measured, not estimated: **96 KiB** in the shipping binary, 112 KiB before `indicatif` and
-  `console` were moved to `opt-level = "s"` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)).
-  That is a tenth of the binary for the progress line, and it is charged against the budget like any other
-  growth — the budget was re-computed from the measurement afterwards, not raised in advance.
-- **Alternatives rejected:** keeping the hand-rolled line (that is what v0.8 shipped: ASCII frames, no bar,
-  no spinner); `pbr` and `progress_bar` (unmaintained); `linya` (less maintained, narrower); `console` alone
-  (gives a spinner, not the bar/clock plumbing, so the animation thread would have stayed ours);
-  `crossterm`/`termion` (terminal manipulation, raw mode, key reading — none of which this program does).
+**Removed.** `indicatif` and its `console` dependency cost **96 KiB** of a 1 049 440-byte binary — the
+measurement is [size-budget §1](size-budget.md#1-budget) — and the progress line is about 250 lines
+of code either way. [issue #53](https://github.com/RUdolf1517/tzim/issues/53) asked for the line to be drawn here again, with one condition: the result has
+to be *prettier* than the `indicatif` line, not plainer. It is:
+
+```
+⠹ 01:12 [████████▏···]  37/148  6.2/s  eta 00:18
+```
+
+What the crate did that had to be rebuilt: one write per frame (100 ms cap) from a single ticker thread,
+padded to the previous width so shrinking text does not leave debris, erased on drop and before the report,
+`COLUMNS` for the width with a sane fallback, an ETA that waits for three seconds and two completions so it
+cannot start out absurd, and text that is clipped by *display* width rather than byte count — the wcwidth
+table lives in `src/report.rs` and is shared with the report, so the two cannot disagree about a CJK name.
+The first frame still waits 150 ms, and nothing is drawn when stderr is not a terminal.
+
+The lesson recorded, because it is the reason this section exists: a crate that renders a bar was 9 % of the
+binary, and the argument that justified it ("a bar, a spinner and a rate are three problems") was answered by
+250 lines of arithmetic that also fixed the two defects the crate had left — an ETA that appeared after one
+sample and a frame that could be wider than the terminal.
+
+- **History:** version 0.18.x, MIT, unconditional, granted v0.10 by the user after the argument above.
+  `default-features = false` dropped `unicode-width` and `wasmbind`. Transitive additions were `console` 0.16
+  (ANSI parsing and the Windows console), `portable-atomic`, `unit-prefix`, and through `console`:
+  `encode_unicode`, `libc`, `windows-sys`, `windows-link`. Eight lock entries, five of them compiling into a
+  Linux binary, and `unsafe` in two of the crates.
+- **Alternatives to a hand-drawn line, still rejected:** `pbr` and `progress_bar` (unmaintained);
+  `linya` (less maintained, narrower); `console` alone (a spinner, not the bar/clock plumbing, so the
+  animation thread would have stayed ours); `crossterm`/`termion` (terminal manipulation, raw mode, key
+  reading — none of which this program does).
+
+### 2.10 `jpeg-decoder` — the second opinion on a JPEG candidate
+
+- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, on in `default` · **Granted v0.13** (issue
+  #39, owner decision "option 3")
+- **Why:** the JPEG comparison had one author on both sides. `verify` compares coefficients, marker structure
+  and bytes, all through code in this repository; a defect symmetric in the encoder and the decoder — a
+  wrong DC prediction direction that both agree on — would be invisible. `jpeg-decoder` is an independent
+  implementation: it shares no line with `src/formats/jpeg.rs`, so its pixels and ours disagreeing is
+  evidence one of us has a bug.
+- **Configuration:** `default-features = false` with `platform_independent`. That drops `rayon` (this
+  repository has no async runtime and no thread pool in a handler), `nasm`/SIMD assembly paths, and the
+  platform-specific intrinisics that would put `unsafe` and a second build toolchain in the tree. The
+  remaining code is pure Rust — the crate's own `unsafe` is in the paths we do not compile — and the
+  `forbid(unsafe_code)` lint on our crate is untouched.
+- **What it is not for:** it cannot replace the handler. It returns pixels, and re-encoding from pixels is
+  the lossy transformation the invariant forbids (§2.6). It is a *verifier*, called once per accepted
+  candidate, on the two byte buffers that verification already has in memory.
+- **Cost:** the pixels of one side at a time are hashed with CRC-32 and dropped, so verification is not
+  charged two extra decoded images; the memory accounting in
+  [safety §7.1](safety.md#71-memory--an-enforced-budget) says `7 × pixels` per side with that in mind.
+- **Why the published builds do not have it.** #39 was approved on one condition: the shipping binary must not
+  grow past 1 049 440 bytes, the v0.12.1 measurement. It does not fit — [size budget §3](size-budget.md#3-feature-matrix)
+  has the two numbers — so the feature ships off rather than the condition being renegotiated. What the user
+  gets instead is the same check in CI, on real files, with a decoder that is even further from this
+  repository: the `third-party` job decodes the corpus with Pillow before and after
+  ([testing](testing.md#the-third-party-decoder-job)). A build that wants the check inside the binary has one
+  command for it: `cargo build --release --features jpeg-v1`.
+- **What it changes for a user:** a file whose candidate disagrees with an independent decoder is `failed`,
+  exit 1, original untouched — a class of defect that previously would have been reported as `optimized`. If
+  the independent decoder refuses the *original*, the file is `skipped` with that reason: the oracle cannot
+  be used as a verdict on a file it cannot read, and a JPEG this program understands but `jpeg-decoder` does
+  not is not a reason to fail a run.
+- **Turning it off:** `--no-default-features --features png,gzip,zip,ico,jpeg,tiff,zlib` builds exactly the
+  binary of 0.12.1, and `docs/guarantees.md#26-the-verification-method-per-format` says so in the JPEG row.
 
 ---
 
@@ -218,12 +259,12 @@ carry a bar and a spinner that redraw from several worker threads — §2.9 is w
 | `zip` | its writer does not guarantee preservation of every extra field, the archive order, or a prepended prefix; our contract requires byte-level fidelity (see [formats](formats.md#5-refused-formats)) |
 | `oxipng` | pulls `libdeflater` (C), `indexmap`, `rgb`, `rustc-hash`, `log`; and verifying oxipng with oxipng would defeat the independence requirement |
 | `mozjpeg-sys`, `turbojpeg` | C codecs behind `unsafe` FFI; they do expose DCT coefficients, but they break the no-`unsafe` rule, need a C toolchain on three platforms plus musl, and add hundreds of KiB (see §2.6) |
-| `jpeg-decoder`, `zune-jpeg` | correct and fast, but they return pixels; re-encoding from pixels would be lossy |
+| `zune-jpeg` | returns pixels; re-encoding from pixels would be lossy (§2.6). `jpeg-decoder` was accepted for *verification* only, under the `jpeg-v1` feature (§2.10) |
 | `image` | a large umbrella crate; we need one decoder for one format |
 | `libc` / `windows-sys` | not needed: `std` exposes permissions, timestamps and rename; platform-specific metadata we do not preserve anyway (see [safety](safety.md#3-metadata)) |
 | `log` / `env_logger` | a small stderr printer is enough; logging frameworks are not part of the binary |
 | `owo-colors`, `colored`, `anstream`, `termcolor` | five SGR sequences and a `bool` are the whole feature; the decision logic is 60 lines of tested code, and a crate costs more bytes than the strings it hides (§2.8) |
-| `crossterm`, `termion` | raw mode, key events, terminal resize: none of it is needed. The one terminal problem this program has is a redrawn line, and `indicatif` (§2.9) is that answer alone |
+| `crossterm`, `termion` | raw mode, key events, terminal resize: none of it is needed. The one terminal problem this program has is a redrawn line, and since v0.13 that line is `src/progress.rs` (§2.9) |
 | `atty` / `is-terminal` | `std::io::IsTerminal` has been stable since Rust 1.70, and the floor here is 1.88 |
 
 ---

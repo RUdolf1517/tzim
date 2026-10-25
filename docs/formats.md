@@ -42,7 +42,7 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | APNG | v0.3 | implemented | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
 | JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
-| TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
+| TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW or `FillOrder 2` | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
 | zlib (`.zlib`, `.zz`) | v0.9 | implemented | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | 0–10 %, depends on the level that wrote the file | medium | [§4.10](guarantees.md#410-zlib-rfc-1950--v09) |
 | FLAC | — | **refused after measurement** | Would re-encode losslessly, but a stronger encoder buys 0.4 % and costs a quarter of the binary | 0–0.4 % | — | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
 

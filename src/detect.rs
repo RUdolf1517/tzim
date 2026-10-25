@@ -114,12 +114,27 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     None
 }
 
+/// What the first bytes of a file say about it.
+///
+/// `pixels` is filled only when the answer is in the header this probe already
+/// reads: a PNG carries its dimensions at a fixed offset. Everything else is
+/// left to the configured ceilings, because learning it would mean reading the
+/// file, and the point of the probe is to happen *before* that.
+pub struct Probe {
+    pub format: Option<Format>,
+    pub pixels: Option<u64>,
+}
+
+/// How many bytes of a file [`probe_path`] reads: enough for the format
+/// signature and for a PNG's `IHDR` dimensions.
+const PROBE_BYTES: usize = 24;
+
 /// Reads the first bytes of a file without loading it.
-pub fn detect_path(path: &Path) -> Result<Option<Format>> {
+pub fn probe_path(path: &Path) -> Result<Probe> {
     use std::io::Read;
 
     let mut file = fs::File::open(path)?;
-    let mut buf = [0u8; 16];
+    let mut buf = [0u8; PROBE_BYTES];
     let mut filled = 0;
     while filled < buf.len() {
         match file.read(&mut buf[filled..])? {
@@ -127,7 +142,24 @@ pub fn detect_path(path: &Path) -> Result<Option<Format>> {
             n => filled += n,
         }
     }
-    Ok(detect(&buf[..filled]))
+    let head = &buf[..filled];
+    let format = detect(head);
+    // The eight-byte signature, then the IHDR length and type (8), then width
+    // and height (8): the dimensions end at offset 24.
+    let pixels = match format {
+        Some(Format::Png) if filled >= PROBE_BYTES && head[12..16] == *b"IHDR" => {
+            let width = u32::from_be_bytes([head[16], head[17], head[18], head[19]]) as u64;
+            let height = u32::from_be_bytes([head[20], head[21], head[22], head[23]]) as u64;
+            Some(width.saturating_mul(height))
+        }
+        _ => None,
+    };
+    Ok(Probe { format, pixels })
+}
+
+/// The format alone, for callers that do not need the dimensions.
+pub fn detect_path(path: &Path) -> Result<Option<Format>> {
+    Ok(probe_path(path)?.format)
 }
 
 /// Normalizes an extension for `--include` / `--exclude` matching.
@@ -325,6 +357,55 @@ mod tests {
     #[test]
     fn gzip_with_other_compression_method_is_not_detected() {
         assert_eq!(detect(&[0x1f, 0x8b, 0x07]), None);
+    }
+
+    /// #51: the probe answers the pixel count for a PNG, because its dimensions
+    /// sit in the header it already reads. Everything else stays unknown.
+    #[test]
+    fn the_probe_reads_png_dimensions_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("tzim-probe-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let mut png = PNG_SIGNATURE.to_vec();
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&300u32.to_be_bytes());
+        png.extend_from_slice(&200u32.to_be_bytes());
+        png.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let path = dir.join("a.png");
+        fs::write(&path, &png).unwrap();
+        let probe = probe_path(&path).unwrap();
+        assert_eq!(probe.format, Some(Format::Png));
+        assert_eq!(probe.pixels, Some(60_000));
+
+        // A PNG cut off inside its `IHDR` is still a PNG, but its dimensions are
+        // unknown — the estimator falls back to `--max-pixels` rather than
+        // guessing from a partial number.
+        let short = dir.join("short.png");
+        fs::write(&short, &png[..20]).unwrap();
+        let probe = probe_path(&short).unwrap();
+        assert_eq!(probe.format, Some(Format::Png));
+        assert_eq!(probe.pixels, None);
+
+        // A JPEG and a TIFF have no dimensions at a fixed offset.
+        let jpeg = dir.join("a.jpg");
+        fs::write(
+            &jpeg,
+            [0xff, 0xd8, 0xff, 0xe0, 0, 0x10, b'J', b'F', b'I', b'F'],
+        )
+        .unwrap();
+        let probe = probe_path(&jpeg).unwrap();
+        assert_eq!(probe.format, Some(Format::Jpeg));
+        assert_eq!(probe.pixels, None);
+
+        // An empty file has neither.
+        let empty = dir.join("empty");
+        fs::write(&empty, b"").unwrap();
+        let probe = probe_path(&empty).unwrap();
+        assert_eq!(probe.format, None);
+        assert_eq!(probe.pixels, None);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

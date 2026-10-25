@@ -234,7 +234,7 @@ around the code that had stopped being true:
   recorded with the run id ([benchmarks §3.2](benchmarks.md#32-against-the-established-tools)).
 - **The progress line is `indicatif`**, at the user's request: a spinner for one file, a clock, a bar and a
   counter for a batch ([cli §10](cli.md#10-colour-and-progress)). It is the first dependency granted since
-  v0.1 and the only one not behind a feature ([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
+  v0.1 and the only one not behind a feature ([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
 - **The README fits on one screen**: badges, five lines, the format table, and the pitch — contract and
   refusal — where a stranger reads it first.
 
@@ -283,18 +283,35 @@ The tag was cut from `main` after those tests failed before the fix and passed a
   and a 70-level tree. The cycle test disproved a sentence in `cli.md` on its first run: what stops a cycle is
   the kernel's `ELOOP`, not the 64-level guard.
 
-### v0.12.2 — the memory budget, and the room the JPEG decoder needs — **planned**
+### v0.13 — bytes, a line, and a second opinion — **implemented**
 
-- **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
-  reason instead of being read. `--jobs` bounds how many files are in flight, not how many bytes they need,
-  and [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) says so until this lands.
-- **The progress line is drawn by hand** (#53): `indicatif` + `console` leave the tree for 92–96 KiB, and what
-  replaces them is prettier, not merely cheaper — a partial-cell bar, a rate, an ETA. This is the item that
-  pays for the independent JPEG decoder in #39, which is why it comes first: the decoder is a few hundred
-  bytes of verification that this project wants and does not yet pay for.
+The six issues 0.12 opened against itself, and the first release since v0.1 that removes a dependency:
 
-The memory budget is not a size change; the progress line is the only one, and it is the one that buys the
-room for #39. The tag is cut from `main` only after each test fails before its fix and passes after it.
+- **A memory budget** (#51, owner decision O2-D): the limit counts bytes rather than files, and a file above it
+  is `skipped` with a reason instead of being read — checked before `fs::read`, with the verification buffers
+  in the arithmetic ([safety §7.1](safety.md#71-memory--an-enforced-budget)).
+- **`indicatif` is gone** (#53): the progress line is 250 lines of `src/progress.rs` again, 96 KiB lighter and
+  *better* — a 64-position bar, a rate over the last eight completions, an ETA that waits for evidence, and
+  clipping by display width ([cli §10](cli.md#10-colour-and-progress),
+  [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
+- **A JPEG decoder nobody here wrote** (#39): `jpeg-decoder` verifies both sides of an accepted candidate,
+  which closes the symmetric-codec hole [guarantees §2.6](guarantees.md#26-verification-independence) had been
+  describing since v0.4. Approved on one condition — the binary must not grow past 1 049 440 bytes — and the
+  measurement said **+118 784 bytes**, more than the 96 KiB the progress line gave back. The condition was
+  kept and the decoder is not in the shipped default: `jpeg-v1` exists, CI tests it on every run, and one
+  flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
+- **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
+  with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
+  prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)). It found a defect on its
+  first run: five Pillow TIFFs with `FillOrder 2` were being compressed into files libtiff cannot decode, and
+  the writer now refuses them ([guarantees §4.8](guarantees.md#48-tiff-classic-baseline-strips--v07)).
+- **The three coverage gaps** (#36): `tiff` and `zlib` in the fuzz build, seeds for `strip`, zlib in the
+  corpus, and a baseline for the refused set — the assertion `testing.md` had been claiming since 0.10.
+- **The 0.12.1 errata** (#62): the size job's own line confirms the binary did not move and the tarball deltas
+  are packing; the zlib note stops claiming more than the decoder knows
+  ([size-budget §1](size-budget.md#errata-the-v0121-same-size-claim)).
+
+The tag is cut from `main` only after each test fails before its fix and passes after it.
 
 ### v0.13+ — the queue after this
 

@@ -101,6 +101,7 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
+| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so `--jobs` no longer has to be lowered to protect memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
@@ -163,7 +164,7 @@ tree of 2000 unrelated files has a ~63 % chance of containing one. Such a file d
 line reads
 
 ```
-receipt.bin      -      unsupported: zlib: the header passes the container's check but nothing decodes; this is not a zlib stream (the file is untouched)
+receipt.bin      -      unsupported: zlib: nothing decodes behind the header; either the header was a coincidence or the stream is too short to tell (the file is untouched)
 ```
 
 Exit `0`, and the file is byte-identical afterwards. A `.zlib` that decoded at least one byte and then broke
@@ -288,7 +289,8 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 | --- | --- | --- |
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
-| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) |
+| jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| memory budget, per file | the sum of the other ceilings | bounds the bytes one job may cost; a file above it is skipped before it is read |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |
@@ -297,9 +299,22 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 Limits produce `skipped`, never `failed`: hitting a configured bound is not an error.
 
 `--jobs` is about parallelism, not about memory: the whole file and its candidate are held in memory, and a
-decoded image can cost hundreds of megabytes per side. The real ceiling and the numbers behind it are in
-[safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget); `--max-pixels` and `--max-size` are the two
-flags that actually reduce it.
+decoded image can cost hundreds of megabytes per side. Bytes are bounded by `--memory-budget`, which is
+checked against a computed worst case **before the file is read**: a file above it is `skipped` with a
+reason and never reaches `fs::read`. The charge covers the file, the candidate read back for verification,
+the decoded buffers on both sides of the comparison, and — for a container — `--max-uncompressed`.
+
+The default is derived from the other ceilings and therefore never skips a file that they admit, which also
+means it is not protection against a machine with less memory than the ceilings promise. Say how much you
+have:
+
+```console
+$ tzim --jobs 4 --memory-budget 2147483648 ~/Photos
+```
+
+The budget is per file, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with
+RAM. `--max-pixels` and `--max-uncompressed` lower the charge itself; the full table is in
+[safety §7.1](safety.md#71-memory--an-enforced-budget).
 
 ---
 
@@ -400,20 +415,32 @@ While the work is in progress Tzim draws one line on **stderr**. The shape follo
 
 ```
 ⠋ converting…
-⠋ 00:01 [████░░░░] 3/12
+⠹ 01:12 [████████▏···]  37/148  6.2/s  eta 00:18
 ```
 
 The first line is a single file: there is no counter to show, so the spinner and the verb are the whole
-message. The second is a batch: the clock, the bar and the position, in the order the eye looks for them.
+message. The second is a batch: the clock, the bar and the position, in the order the eye looks for them,
+and then the two numbers that answer "how long" — the rate and, once it can be trusted, the estimate.
 
 - the spinner has ten braille frames and advances every 100 ms;
-- the bar is eight cells — `█` done, `░` remaining — and it is drawn only when there is more than one file;
+- the bar is eight cells of eight sub-cells each — 64 positions between empty and full, so a bar over a
+  hundred files still moves — drawn only when there is more than one file. A finished run pins it full;
+- the rate is taken over the last eight completions, so it follows a change in file size instead of
+  averaging the whole run; it appears after the second completion and not before, because one sample is
+  not a rate;
+- `eta` appears only after **three seconds and two completions**. Under those conditions the number says
+  more about the first file than about the run, and a wildly wrong estimate is worse than none;
 - the clock is `mm:ss`, counted from the start of the run. Past 99 minutes it grows to three digits rather
   than wrapping, because a run that long is a thing the reader wants to know about;
+- when the terminal is too narrow for all of it, `eta` goes first, then the rate: the budget is spent on the
+  spinner, the clock, the position and the bar, which is what the eye uses. A file name is never printed —
+  it would make the line as wide as the deepest directory and turn a status indicator into noise;
 - the line appears only after 150 ms, so a run that finishes quickly does not flash, and it is erased before
-  the first result is printed, so the report never shares a row with it;
-- it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
-  into noise. The position, the clock and the bar are the information;
+  the first result is printed, so the report never shares a row with it. Every frame is padded to the width
+  of the previous one, so a shorter frame does not leave debris;
+- the width comes from `COLUMNS` when it is set and parses, and from 80 otherwise. Truncation counts
+  **display cells**, not bytes, through the same wcwidth table the report uses — a CJK or combining file
+  name cannot push the bar off the screen, and the tail of the line is never cut mid-escape;
 - the spinner and the bar are coloured by the same decision as the rest of stderr (the table above) and are
   plain when colour is off, so `NO_COLOR=1` produces no escape sequence anywhere;
 - it is written to stderr only. stdout carries the report, one result per line, and nothing else.
@@ -422,11 +449,11 @@ It is drawn only when **all** of these hold: stderr is a terminal, the run has a
 `--quiet`, `--json` and `--no-progress` are absent. A line of `\r` frames belongs on a terminal; in a log
 file or a CI transcript it is noise that hides the lines around it.
 
-The drawing is [`indicatif`](https://crates.io/crates/indicatif) 0.18. It is the one dependency in this
-project that is not behind a feature flag: the templates and the `mm:ss` clock are ours, but keeping a line
-redrawn from several worker threads consistent with the terminal, at the right width, is not a problem worth
-solving twice. What it costs in bytes is in [size-budget §3](size-budget.md#3-feature-matrix), and why it was
-admitted is in [dependencies §2.9](dependencies.md#29-indicatif--the-progress-line).
+The drawing is `src/progress.rs` — about 250 lines, no dependency. Until v0.13 it was
+[`indicatif`](https://crates.io/crates/indicatif) 0.18, which cost 96 KiB, a tenth of the binary, for one
+line; [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013) records both
+decisions, and the removal was on the condition that the line get *better*, which is where the 64-position
+bar, the recency-weighted rate and the two ETA gates come from.
 
 The progress line is not a measurement. `Summary:` is.
 

@@ -11,20 +11,25 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.10.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Commit | v0.13.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
 | Target | `x86_64-unknown-linux-musl` (static-pie, no libc dependency, no interpreter) |
-| Profile | `--release`, `opt-level = "s"` for this crate and for `indicatif`/`console`, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
-| Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **1 049 440 bytes (1 024 KiB)** |
-| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 19 |
-| Budget for this profile | 1 179 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 155 KiB |
+| Profile | `--release`, `opt-level = "s"` for this crate, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
+| Features in the binary | every runtime feature; `fuzz-api` is excluded by construction and `jpeg-v1` is off by default |
+| **Size** | **979 808 bytes (956 KiB)** |
+| Change from v0.12.1 | **−69 632 bytes (−68 KiB)** |
+| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 14 (was 19) |
+| Gate | 979 808 bytes, exactly — [size-budget §1](size-budget.md#1-budget) |
 
-Of those 1 024 KiB, **96 KiB is the progress line**: `indicatif` and `console`, added in v0.10.0 at the user's
-request. Sixteen of those were recovered by compiling the two crates at `opt-level = "s"` instead of the
-wildcard `3` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)), and the rest is the
-price of not writing a bar, a spinner and a terminal-width-aware redraw by hand
-([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
+**The 68 KiB came back from the progress line.** v0.12.1 carried `indicatif` and `console` — 96 KiB, a tenth
+of the binary — and v0.13 draws the same line in `src/progress.rs` for nothing
+([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)). Five dependency lines left
+the tree with them.
+
+The other half of the release is a decoder that is **not** in this number: `jpeg-v1`, the independent JPEG
+verifier, measures **+118 784 bytes** (116 KiB) and therefore ships off ([dependencies
+§2.10](dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)). It was approved on the
+condition that the shipping binary does not grow past 1 049 440 bytes, and it does not fit even with the 96 KiB
+that was freed; the condition was kept and the feature is a flag.
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -51,6 +56,8 @@ crate, because no Rust JPEG library exposes DCT coefficients (see
 | v0.10.0 | progress line drawn by `indicatif`, not by hand; CI and benchmark honesty; no handler changed | 1 024 KiB (+96 KiB) |
 | v0.11.0 | distribution: ARM64 artifact, manual page, completions, a verifying installer; nothing added to the binary | 1 024 KiB (+0) |
 | v0.12.0 | the audit: one size predicate, honest interface text, verifier tests, a display-width table; nothing added to the binary | 1 024 KiB (+0) |
+| v0.12.1 | two defects fixed, one channel removed, three traceability rows closed; the binary is byte-for-byte the same | 1 024 KiB (+0) |
+| v0.13.0 | `indicatif` and `console` removed, the progress line drawn by hand again (86 lines of it are new arithmetic, 96 KiB of crates are gone); `jpeg-v1` available and off | 956 KiB (−68 KiB) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
@@ -92,40 +99,72 @@ order of magnitude while carrying an independent verification decoder.
 ### 3.1 The real-file corpus
 
 Four pinned upstream archives, assembled by `.github/scripts/corpus-fetch.sh` (URLs and checksums in
-[testing.md](testing.md#real-file-corpus)), 690 images — PNG, JPEG and, since v0.7.0, TIFF — plus 4
-containers built from them with `gzip -9` and `zip -9`. CI job `corpus`, one pass over the tree.
+[testing.md](testing.md#real-file-corpus)), 690 images — PNG, JPEG and TIFF — plus 4 containers built from
+them with `gzip -9` and `zip -9`. CI job `corpus`, one pass over the tree.
+
+Measured on v0.12.1, run
+[`40212911347`](https://github.com/Rudolf1517/tzim/actions/runs/40212911347), commit `c012ba5`:
 
 | Metric | Value |
 | --- | --- |
 | Files | 694 |
-| Optimized | 437 |
+| Optimized | 425 |
 | Already optimal | 156 |
 | Unsupported | 0 |
-| Refused by contract (progressive/arithmetic JPEG, multi-page, tiled, LZW/CCITT TIFF) | 81 |
-| Failed (corrupt upstream fixtures, see allowlist) | 20 |
+| Skipped (refused by contract: progressive/arithmetic/limit/unsupported layout) | 81 |
+| Failed (corrupt upstream fixtures, all allowlisted — see `.github/corpus-allowlist.txt`) | 32 |
 | Bytes before | 21 864 484 |
-| Bytes after | 19 733 541 |
-| **Saved** | **2 130 943 (9.75 %)** |
+| Bytes after | 19 734 464 |
+| **Saved** | **2 130 020 (9.74 %)** |
 | Files rewritten on a second pass | 0 |
 
-The table was produced again for v0.10.0 (`corpus` job on the same pull request) and is identical, digit for
-digit: no handler changed in this release, and that is the test of it.
+Optimized files by format: **jpeg 46, png 340, tiff 39**. By container: **images 690, gzip 3, zip 1**.
 
-**The table above is the v0.10.0 measurement, and no longer describes a run of the current code.** v0.12.1
-began refusing twelve of Pillow's negative APNG fixtures, which until then were rewritten and counted as
-`optimized` (#49, and the entries carry the reason in `.github/corpus-allowlist.txt`). A run of 0.12.1
-therefore has **32** failed files rather than 20, **425** optimized rather than 437, and **340** changed PNGs
-rather than 352; the byte totals are lower by whatever those twelve files contributed, and that is a number to
-measure, not to subtract. Until the `corpus` job of the release that changed the count is copied here, the
-percentages in this table — including the 9.75 % quoted again in §3.2 — are the last measurement rather than
-today's.
+Skipped files by reason: more than one IFD (12); compression 4 is not rewritten by this build (12); tiled
+layout is not supported (9); only baseline sequential (8); tag 34665 carries an offset to another structure
+(6); IFD entries are not in ascending tag order (5). The remaining 29 are long tails of the same kinds; the
+full list is written to `refusals.txt` by the run and attached to the job.
 
-Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files, TIFF 39 files. The TIFF
-bytes dominate the total because uncompressed scans are the one thing in this corpus that still has room;
-the PNG and JPEG rows are unchanged from v0.6.0, which is what "no handler changed" should look like.
+The 425/19 734 464 numbers are **lower than the v0.10.0 table this section used to show** (437 / 19 733 541),
+and the difference is a defect being removed rather than compression improving: twelve of Pillow's negative
+APNG fixtures used to be rewritten and reported `optimized`, and v0.12.1 refuses them (§`0.12.1` in the
+[changelog](../CHANGELOG.md)). Those twelve files also account for the twelve extra `failed` rows. Nothing
+else moved: the byte total changed by 923 bytes because those twelve files are no longer written, and the
+per-format counts for JPEG and TIFF are unchanged.
 
-The 156 "already optimal" files are the honest part of this number: these are files that upstream projects
-already compressed well, and leaving them alone is the contract working, not the tool failing.
+The 156 "already optimal" files are the honest part of this number: files that upstream projects already
+compressed well, and leaving them alone is the contract working, not the tool failing.
+
+**v0.13.0 — the same corpus, four zlib streams later.** Measured on commit `8e2f269`, run
+[`40221326503`](https://github.com/Rudolf1517/tzim/actions/runs/40221326503), the run whose `third-party` job
+was green with the TIFF refusal in place:
+
+| Metric | v0.12.1 | v0.13.0 | Why it moved |
+| --- | --- | --- | --- |
+| Files | 694 | 698 | four zlib streams, assembled by `corpus-fetch.sh` |
+| Optimized | 425 | 421 | −5 TIFFs refused for `FillOrder 2`, +1 zlib stream |
+| Already optimal | 156 | 159 | the three already-compressed zlib payloads |
+| Unsupported | 0 | 0 | — |
+| Skipped (refused by contract) | 81 | 86 | the same five `FillOrder 2` files |
+| Failed (allowlisted upstream corruption) | 32 | 32 | unchanged |
+| Bytes before | 21 864 484 | 22 008 529 | the added streams |
+| Bytes after | 19 734 464 | 19 881 896 | |
+| **Saved** | **2 130 020 (9.74 %)** | **2 126 633 (9.66 %)** | |
+| Files rewritten on a second pass | 0 | 0 | idempotent on the larger corpus too |
+
+Both directions in that table are worth naming. The five Pillow TIFFs are no longer optimized because the
+writer had been shrinking files by making libtiff unable to read them, so refusing them is the contract being
+repaired rather than compression getting worse ([guarantees §4.8](guarantees.md#48-tiff-classic-baseline-strips--v07)).
+The zlib stream that is now `optimized` adds a rewrite the corpus could not previously exercise: `text.zlib` is
+138 068 bytes at level 4 and 124 407 at level 9, where the blob it replaced was compressed to 119 bytes at
+every level and came back `already optimal` like the three image streams next to it.
+
+The percentage falls from 9.74 % to 9.66 % for arithmetic, not regression: `saved` fell by **3 387** bytes while
+`before` grew by 144 045, because four small streams on a 21.8 MB corpus cannot move a percentage much and
+three of them are already compressed and yield nothing. `after` grew by 147 432 — *more* than `before` — and
+that is the TIFF refusal visible in the totals: five files keep their original size instead of being rewritten.
+A table that moves because the fixtures changed says nothing about the tool, which is why the corpus change and
+the writer fix are named on their own rows instead of being folded into one new number.
 
 ### 3.2 Against the established tools
 
@@ -191,8 +230,9 @@ What the numbers say, without softening either half:
   finds 0.88 %; a stream from an old encoder, or one written at level 1, has far more room. This set is
   published at the level it is because a benchmark that only shows the flattering case is not a benchmark.
 - These files are heavily skewed towards `pngsuite`, which is deliberately poorly compressed in places. That
-  is why Tzim saves 7.63 % here and 9.75 % on the whole corpus: same code, different input. Both numbers are
-  published because either one alone would mislead.
+  is why Tzim saves 7.63 % here and 9.66 % on the whole corpus (§3.1, the v0.13.0 row): same code, different
+  input — and most of that corpus is JPEG and already-compressed PNG, where there is less to win. Both numbers
+  are published because either one alone would mislead.
 
 ### 3.3 Older spot measurements
 

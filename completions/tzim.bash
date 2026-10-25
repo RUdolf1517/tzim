@@ -13,7 +13,7 @@ _tzim() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     case "$prev" in
-        -j|--jobs|--min-size|--max-size|--max-pixels|--max-uncompressed|--max-ratio|--max-depth)
+        -j|--jobs|--min-size|--max-size|--max-pixels|--max-uncompressed|--max-ratio|--max-depth|--memory-budget)
             COMPREPLY=( $(compgen -W "0 1 2 4 8" -- "$cur") )
             return 0
             ;;
@@ -34,7 +34,7 @@ _tzim() {
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--recursive --dry-run --jobs --json --quiet --color --no-color \
             --no-progress --fail-fast --include --exclude --min-size --max-size --max-pixels \
-            --max-uncompressed --max-ratio --nested --max-depth --formats --zopfli \
+            --max-uncompressed --max-ratio --memory-budget --nested --max-depth --formats --zopfli \
             --follow-symlinks --allow-hardlinks --allow-root-ownership-change --no-fsync \
             --strip-metadata --info --list-formats --check-deps --help --version \
             -r -n -j -q -i -h -V" -- "$cur") )

@@ -6,14 +6,44 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 1 049 440 bytes (1 024 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`), unchanged from v0.10.0 through the whole v0.11.0 distribution
-> work: packaging adds no code to the binary. Per-feature measurements are in §3; the profile that got
-> here is in §2, and what it cost in speed is in §5.
-> **The progress line is 96 KiB of that** — a tenth of the binary, and the largest single addition since the
-> PNG decoder. It is the one dependency granted since v0.1, and the trade is recorded rather than smoothed
-> over: [dependencies §2.9](dependencies.md#29-indicatif--the-progress-line).
+> **Measured: 979 808 bytes (956 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`) — **69 632 bytes (68 KiB) smaller than v0.12.1**, on the run
+> that also measured the feature matrix below. Per-feature measurements are in §3; the profile that got here
+> is in §2, and what it cost in speed is in §5.
+> **The progress line gave that back.** `indicatif` and `console` were 96 KiB of the v0.12.1 binary; v0.13
+> draws the line in `src/progress.rs` and costs 0, which is what paid for everything else in this release.
+> **`jpeg-v1` is not in the shipped default**: the independent JPEG decoder measures **+118 784 bytes**
+> (116 KiB), and #39 approved it on the condition that the shipping binary does not grow past 1 049 440. It
+> exists, CI tests it on every run, and `cargo build --release --features jpeg-v1` turns it on. The gate in
+> `ci.yml` is now this release's own measurement, to the byte, rather than a ceiling with 150 KiB of room
+> underneath — see the errata below.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
+
+### Errata: the v0.12.1 "same size" claim
+
+v0.12.1 shipped with the CHANGELOG, the release notes and this document all saying 1 049 440 bytes, and the
+five release **tarballs** grew by 514–634 bytes each. The suspicion was that the binary had grown and nobody
+had measured it, because the `size` job only ever tested an upper bound (`bytes <= 1 207 296`) — [issue
+#62](https://github.com/Rudolf1517/tzim/issues/62). The number was right; the inference from the assets was
+wrong. The `size` job printed
+
+```
+static musl binary: 1049440 bytes (1024 KiB)
+```
+
+on **every** run of that pull request — the eight runs of PR #60, from the first commit to the merge commit
+(`8989774`, `95cb565`, `be16474`, `c012ba5`, `0ad7edc`, `0af29c9`, `ec423bc`, `cad83eb`) — so no commit
+changed the binary by a byte.
+
+What moved is the packing. A tarball holds `tzim`, `LICENSE`, `man/tzim.1` and three completion scripts, `tar`
+pads each member to 512 bytes, and gzip then compresses the whole padded stream. The man page's version
+string is the only member that changes between two patch releases: its byte length is identical, so every
+member keeps its offset, but its *compressed* length is not, and the difference shifts the DEFLATE stream
+that the binary's bytes sit inside. A ~500-byte swing on a 536 636-byte `.tar.gz` is packing, not code; the
+`.zip` for Windows stores the binary with its own deflate, which is why its delta is the largest of the five
+and still under a kilobyte. The lesson is kept rather than deleted: a released artifact's *compressed* size is
+not evidence about its contents, which is why from v0.13 the gate compares the binary with the previous
+release's measurement instead of a ceiling that leaves 150 KiB of room underneath.
 
 ---
 
@@ -22,24 +52,27 @@ measured, so this document defines the budget, the build profile, and the exact 
 These are **upper bounds** for the stripped release binary, one row per build CI actually performs. A row
 that CI does not build does not belong here: an unchecked budget is decoration.
 
-| Profile | Features | Measured | Budget (+15 %) |
+| Profile | Features | Measured | vs v0.12.1 |
 | --- | --- | --- | --- |
-| `png` | `png` | 804 KiB | 926 KiB |
-| `core` | `png,gzip` | 808 KiB | 931 KiB |
-| `+zip` | `png,gzip,zip` | 848 KiB | 977 KiB |
-| `images` | `png,gzip,zip,ico` | 860 KiB | 990 KiB |
-| `+jpeg` | `png,gzip,zip,ico,jpeg` | 912 KiB | 1 050 KiB |
-| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 940 KiB | 1 082 KiB |
-| `+zlib` | `png,gzip,zip,ico,jpeg,tiff,zlib` | 940 KiB | 1 082 KiB |
-| `full` | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | 1 024 KiB | 1 179 KiB |
+| `png` | `png` | 750 368 B (732 KiB) | −73 728 |
+| `core` | `png,gzip` | 762 656 B (744 KiB) | −69 632 |
+| `+zip` | `png,gzip,zip` | 799 520 B (780 KiB) | −69 632 |
+| `images` | `png,gzip,zip,ico` | 811 808 B (792 KiB) | −69 632 |
+| `+jpeg` | `png,gzip,zip,ico,jpeg` | 865 056 B (844 KiB) | −73 728 |
+| **`default`** | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | **979 808 B (956 KiB)** | **−69 632** |
+| `+jpeg-v1` | `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 B (960 KiB) | −55 168 |
+| `all but fuzz-api` | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 098 592 B (1 072 KiB) | +49 152 |
 
-Every row moved up by 92–96 KiB in v0.10.0 without a handler changing: the progress line is not behind a
-feature, so it is charged to all of them (§3).
+Every row fell by 68–73 KiB without a handler changing: the progress line left the tree (§3), and the largest
+file in it — the one dependency that was not behind a feature — went with it. `jpeg-v1` is measured by
+subtraction: 983 840 − 865 056 = **118 784 bytes** on the lean row, and 1 098 592 − 979 808 = the same on the
+full one.
 
-`full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
-rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
-*measured + 15 %*, computed in bytes and rounded up to whole KiB, so a change that costs more than a sixth of
-the current size has to be justified in the pull request.
+`default` is gated on every pull request: the job fails when the static binary exceeds the measured 979 808
+bytes. That is a *zero-tolerance* gate, and it is deliberate: v0.12.1's gate allowed 150 KiB of headroom, so
+a green `size` job proved nothing about growth, which is what [issue
+#62](https://github.com/Rudolf1517/tzim/issues/62) was about. A compiler bump is the one thing that can move
+this number without a code change; the pull request that needs it updates the number and says why here.
 
 Reference point only (not a target): the official oxipng 10.2.1 Linux release archive is ~493 KiB
 compressed, and Leanify advertises "under 1 MB" for a C++ tool covering many formats. We are in the same
@@ -92,22 +125,23 @@ Notes:
 One feature per handler family, exactly as `Cargo.toml` declares them. `default` is what the published
 binaries are built with; everything else is a way to build a smaller tool for a narrower job.
 
-`indicatif` and `console` are not in this list because they are not optional: the progress line is part of
-the interface rather than of a format handler, and a build that dropped it would be a build with a different
-interface. What that costs is the 92–96 KiB every row in §1 moved by.
+There is **no unconditional crate** any more. Until v0.13 `indicatif` was one, because the progress line is
+part of the interface rather than of a format handler; v0.13 draws that line in `src/progress.rs`, so every
+dependency in the tree is behind a feature and every row below can drop it.
 
 ```toml
-default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "zopfli"]
 png     = ["dep:png", "dep:flate2", "dep:crc32fast"]
 gzip    = ["dep:flate2", "dep:crc32fast"]
 zip     = ["dep:flate2", "dep:crc32fast"]
 ico     = ["png"]
 jpeg    = []
+jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]   # the independent JPEG verifier, off by default
 tiff    = ["dep:flate2"]
+zlib    = ["dep:flate2"]
 zopfli  = ["dep:zopfli"]
 fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```
-
 
 `ico` is a thin layer over `png` (an icon is a directory plus embedded PNGs), `jpeg` gates this
 repository's own codec, so it adds code without adding a crate, and `tiff` reuses `flate2`, which PNG, gzip
@@ -120,19 +154,24 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 
 | Features | Bytes | KiB |
 | --- | --- | --- |
-| `png` | 824 096 | 804 |
-| `png,gzip` | 828 192 | 808 |
-| `png,gzip,zip` | 869 152 | 848 |
-| `png,gzip,zip,ico` | 881 440 | 860 |
-| `png,gzip,zip,ico,jpeg` | 934 688 | 912 |
-| `png,gzip,zip,ico,jpeg,tiff` | 963 360 | 940 |
-| `png,gzip,zip,ico,jpeg,tiff,zlib` | 963 360 | 940 |
-| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | 1 049 440 | 1 024 |
+| `png` | 750 368 | 732 |
+| `png,gzip` | 762 656 | 744 |
+| `png,gzip,zip` | 799 520 | 780 |
+| `png,gzip,zip,ico` | 811 808 | 792 |
+| `png,gzip,zip,ico,jpeg` | 865 056 | 844 |
+| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` (default) | 979 808 | 956 |
+| `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 | 960 |
+| `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 098 592 | 1 072 |
 
-Each feature's cost is visible by subtracting the row above it: `gzip` +4 KiB, `zip` +40 KiB, `ico`
-+12 KiB, the JPEG codec +52 KiB, the TIFF handler +28 KiB, Zopfli +84 KiB. The zlib row is identical to the
-TIFF row in v0.10.0: the handler is 4 KiB and the linker absorbed it into the same page, which is a reminder
-that these are measured bytes and not an accounting identity.
+Each feature's cost is visible by subtracting the row above it: `gzip` +12 KiB, `zip` +36 KiB, `ico` +12 KiB,
+the JPEG codec +52 KiB, and the jump from `+jpeg` to the default row is TIFF, zlib and Zopfli together
++112 KiB — of which Zopfli is +84 KiB and appears nowhere else, which is why it is the one feature worth
+turning off for a container or an installer. `jpeg-v1` is +116 KiB, and it is the reason the feature ships
+off.
+
+The rows above `default` are the narrowing path a build takes when it wants a smaller binary; the two `jpeg-v1`
+rows are the widening path, taken only by `--all-features` in CI and by anyone who wants the second opinion
+inside the binary.
 
 The same deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile change made
 visible inside each handler, because the codecs are already compiled for speed.

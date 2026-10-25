@@ -22,6 +22,7 @@ _tzim() {
         '--max-pixels[skip larger images]:pixels:' \
         '--max-uncompressed[refuse archives expanding beyond this]:bytes:' \
         '--max-ratio[refuse archives above this ratio]:ratio:' \
+        '--memory-budget[skip files whose worst case exceeds this]:bytes:' \
         '--nested[also optimize files inside archives]' \
         '--max-depth[nesting depth limit]:depth:' \
         '--formats[only these formats]:formats:(png gzip zip ico jpeg tiff zlib)' \

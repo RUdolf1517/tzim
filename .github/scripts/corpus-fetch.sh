@@ -67,6 +67,61 @@ gzip -9 -n -c "$corpus/images/libjpeg-turbo-testorig.jpg" > "$corpus/gzip/testor
 (cd "$corpus/images" && zip -q -9 "$corpus/zip/pngsuite-subset.zip" \
     pngsuite-basn0g08.png pngsuite-basn2c08.png pngsuite-basn4a08.png pngsuite-basn6a08.png)
 
+# zlib streams, built the same way and for the same reason (#36): the handler
+# was measured by the benchmark but never regression-gated on real data. The
+# image payloads are level 6, the setting most tools use, and they are already
+# compressed — they prove the handler does not corrupt a stream. The text payload
+# is level 4, a speed-biased setting real tools do produce, so that a level-9
+# encoder has something to find: without it every stream in this directory is
+# `already optimal` and the rewrite path is never exercised.
+mkdir -p "$corpus/zlib"
+python3 - "$corpus" <<'PY'
+import random, sys, zlib
+
+corpus = sys.argv[1]
+# Two kinds of payload: image bytes (already compressed, so the gain is small
+# and a wrong byte is obvious) and a text blob (compressible, so the encoder is
+# actually exercised).
+sources = {
+    "pngsuite-basn2c08.png.zlib": "images/pngsuite-basn2c08.png",
+    "pngsuite-basn6a08.png.zlib": "images/pngsuite-basn6a08.png",
+    "libjpeg-turbo-testorig.jpg.zlib": "images/libjpeg-turbo-testorig.jpg",
+}
+streams = 0
+for out, source in sources.items():
+    with open(f"{corpus}/{source}", "rb") as fh:
+        data = fh.read()
+    with open(f"{corpus}/zlib/{out}", "wb") as fh:
+        # A zlib stream: two-byte header, DEFLATE payload, Adler-32 trailer.
+        fh.write(zlib.compress(data, 6))
+    streams += 1
+
+# The text blob is the one stream a level-9 encoder can beat by a wide margin — a
+# level-4 stream of it measures ~9.9 % above the level-9 size. Deterministic: a
+# fixed seed and a fixed word list, so the corpus is reproducible byte for byte.
+random.seed(1950)
+words = (
+    "the of and to in is that for it as with was on be by not this from or have an they which "
+    "one you were her all she there would their we him been has when who will more no if out so "
+    "said what up its about into than them can only other new some could time these two may then "
+    "do first any my now such like our over man me even most made after also did many before must "
+    "through back years where much your way well down should because each just those people how "
+    "too little state good very make world still own see men work long get here between both life "
+    "being under never day same another know while last might us great old year off come since "
+    "against go came right used take three"
+).split()
+pieces, size = [], 0
+while size < 400_000:
+    word = random.choice(words)
+    pieces.append(word)
+    size += len(word) + 1
+text = " ".join(pieces).encode()
+with open(f"{corpus}/zlib/text.zlib", "wb") as fh:
+    fh.write(zlib.compress(text, 4))
+streams += 1
+print(f"zlib streams: {streams} (text.zlib: {len(text)} bytes at level 4)")
+PY
+
 total="$(find "$corpus" -type f | wc -l | tr -d ' ')"
 images="$(find "$corpus/images" -type f | wc -l | tr -d ' ')"
 echo "corpus: $total files ($images images, $((total - images)) containers)"

@@ -86,7 +86,7 @@ would suggest more than any of these delivers.
 
 | Level | Meaning | Used for |
 | --- | --- | --- |
-| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip and ZIP payloads (`flate2`, `miniz_oxide`) |
+| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip and ZIP payloads (`flate2`, `miniz_oxide`), **JPEG pixels** (`jpeg-decoder`) when this build has the `jpeg-v1` feature, and the whole corpus through Pillow in the `third-party` job |
 | **V2 — separate reader** | Code in this repository, used only for reading, that the writer's output never passes through. | *Not used anywhere today.* |
 | **V3 — shared implementation** | The candidate is parsed by the same reader the handler used to build it. | ZIP structure, ICO directory, JPEG markers and JPEG coefficients |
 
@@ -98,15 +98,33 @@ would suggest more than any of these delivers.
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
 | TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; **shared `flate2`** for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none, so one `flate2` decode is compared with another `flate2` decode |
-| JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
+| JPEG | V3 | **V3 for coefficients; V1 for pixels with the `jpeg-v1` feature**, and V1 for the whole corpus in CI (Pillow) | A published build (no `jpeg-v1`) can still miss a defect symmetric in our encoder and decoder; the CI comparison is what covers it there, and it does not run inside `verify` |
 
-**The honest consequence for JPEG.** Its verification is the weakest of the seven, and it cannot be
-strengthened without an independent JPEG decoder, which would mean a new dependency and a much larger
-binary. What is in place instead: a strict parser that refuses anything it cannot fully validate, a
-coefficient-level comparison (stronger than comparing pixels, which a second decoder would give), the
-fixtures and the real-file corpus, and a fuzz target for the entropy reader. None of that is a proof. A
-symmetric codec defect would pass every check in this repository. This is the main reason JPEG is opt-in and
-why its gain is not oversold.
+**The honest consequence for JPEG, and what changed in v0.13.** Until v0.13 the JPEG comparison was the
+weakest of the seven: both sides of the coefficient comparison were this repository's codec, so a defect
+*symmetric* in the encoder and the decoder would have passed every check here. v0.13 adds two independent
+readers, and — this is the part that matters — **neither is in the published binary**, for the reason given
+below:
+
+- **`jpeg-decoder`**, inside `verify`, when this build has the `jpeg-v1` feature. Both files are decoded by a
+  library that shares nothing with this codebase and the decoded pixels must be identical; a disagreement is
+  `failed`, exit 1, and the original is untouched. Since identical coefficients imply identical pixels, this
+  adds a check the coefficient comparison cannot make: that our decoder reads the coefficients the way the
+  rest of the world reads them. If the independent decoder cannot read the *original*, the file is `skipped`
+  with that reason — an oracle that cannot read a file is not a verdict about it. The feature is off in the
+  published builds because it does not fit the size condition it was approved under
+  ([size budget §3](size-budget.md#3-feature-matrix)); `cargo build --features jpeg-v1` turns it on.
+- **Pillow**, outside the binary, in the `third-party` CI job — the same idea for the whole corpus and for
+  the other formats (PNG, TIFF, ICO pixels; `zlib` for gzip and zlib streams; `zipfile` for archives). It
+  compares at the strongest level each library offers and proves on every run that it can fail, by mutating
+  a candidate and requiring the comparison to reject it. Zero bytes of it reach the binary; see
+  [testing §3.3](testing.md#the-third-party-decoder-job).
+
+What remains true, and is stated here rather than implied: **a published build's JPEG verification is still
+V3 plus whatever CI can prove.** The in-`verify` oracle is a feature, the corpus comparison is a job, and a
+user's own file gets neither unless they build with `jpeg-v1`. None of this is a proof: a defect shared by
+several independently written decoders would survive. That is why JPEG stays opt-in and why its gain is not
+oversold.
 
 **For TIFF** the content comparison is independent only while the strips are uncompressed: `optimize` turns
 compression `1` into Deflate, and for that path the original is raw bytes read without a decoder. A TIFF whose
@@ -490,21 +508,31 @@ these is valid, so it is reported as skipped with a precise reason and left unto
 that is overfull or contains the forbidden all-ones code, an entropy stream that ends in the middle of a
 block, a restart marker where none belongs — all `failed`, exit code 1, original untouched.
 
-**Verification.** The candidate is re-parsed from bytes and decoded again. Two conditions must hold:
+**Verification.** The candidate is re-parsed from bytes and decoded again. Three conditions must hold:
 
 1. **Coefficient identity.** Every DCT coefficient of every component is compared with the input's. This
    is strictly stronger than comparing decoded pixels: identical coefficients imply identical pixels,
-   while identical pixels do not imply identical coefficients. No pixel comparison is performed, because
-   that would need a second decoder and the same result is already implied.
+   while identical pixels do not imply identical coefficients.
 2. **Structural identity.** The ordered sequence of non-`DHT` markers and their payload bytes must match
    exactly, the frame header must match field by field, every `DHT` table that the scan does not use must
    be carried over byte for byte, and the trailing bytes after `EOI` must be identical.
+3. **Pixel identity through an independent decoder** (`jpeg-v1`, **not** in the default build). The original
+   and the candidate are both decoded by `jpeg-decoder` — a library that shares no line with this
+   repository — and the decoded pixels must be identical. The two sides are decoded one at a time and
+   hashed with CRC-32, so verification never holds two extra images in memory (`7 × pixels` per side, as
+   [safety §7.1](safety.md#71-memory--an-enforced-budget) charges). A disagreement is `failed`, exit 1;
+   an original the library cannot read is `skipped` with that reason, because the oracle cannot be a
+   verdict on a file it cannot decode. The feature is off by default because it costs more than the size
+   condition of #39 allowed; `verify` says nothing less when it is absent, and `guarantees.md` §2.6 says
+   which level a published build reaches.
 
-If either condition fails the candidate is discarded and the original is not replaced. The residual risk
-is stated in [benchmarks](benchmarks.md): the decoder that proves the candidate readable is Tzim's own,
-so a decoder bug shared by the encoder and the checker would not be caught by this step; the structural
-comparison and the strict table validation narrow that to a genuinely malformed table, which the table
-validity checks reject before anything is written.
+If any condition fails the candidate is discarded and the original is not replaced. Condition 3 exists
+because conditions 1 and 2 share a codec with the writer, and a defect symmetric in both directions — a
+wrong symbol mapping used to encode and again to decode — round-trips "successfully" while the pixels
+change. With it, the residual risk is a defect shared by two independently written decoders, plus the
+`--no-default-features` builds that drop the feature on purpose. The corpus is also compared against
+Pillow in CI ([testing §3.3](testing.md#the-third-party-decoder-job)), which is the same check on files
+nobody on this project wrote.
 
 **Default:** disabled. JPEG is processed only when `--formats` names it, because the gain is small and
 the code path is the most intricate in the project.
@@ -532,6 +560,14 @@ otherwise:
 - `Compression` ∈ {`1`, `8`, `32946`}. LZW (`5`), JPEG (`6`, `7`), PackBits (`32773`), CCITT, and every
   other compression are refused: rewriting LZW needs an encoder this build does not have, and pretending
   otherwise would mean writing a file whose strips do not decode;
+- `FillOrder` absent or `1` (most significant bit first). `FillOrder = 2` — the bits of every sample
+  reversed, which is what the `R` in Pillow's `hopper2R.tif` means — is refused, because libtiff reverses
+  the bits of a *compressed* strip before it inflates it: a Deflate strip with `FillOrder 2` is a file the
+  reference decoder rejects with `incorrect header check`. Compressing such a file would shrink it by
+  breaking it. This one was found, not assumed: the third-party job of issue
+  [#54](https://github.com/RUdolf1517/tzim/issues/54) ran Pillow over the corpus and five files —
+  `pillow-tiff_gray_2_4_bpp_hopper{2,4,2I,4I}R.tif` and `pillow-16bit.r.tif` — came back unreadable
+  *after* tzim had rewritten them, every one of them `FillOrder 2` and uncompressed;
 - every out-of-line value belongs to a tag this build knows to be **plain data** (the list below). An
   unknown out-of-line tag is refused, because a value we cannot classify may be an absolute offset that
   the rewrite would invalidate. An unknown tag whose value fits in the entry's four value bytes is copied
@@ -645,8 +681,19 @@ Everything else is kept, in particular `Orientation` (274), `XResolution`/`YReso
 (34735) and the private tags. `42113` (`GDAL_METADATA`) is **kept** on purpose: it is not in the list.
 
 **Refused (skipped, exit 0):** BigTIFF, tiles, more than one IFD, planar `2`, predictor other than `1`/
-absent, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable non-zero bytes,
-`StripOffsets`/`StripByteCounts` with different counts. A file of this kind is valid and untouched.
+absent, `FillOrder 2`, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable
+non-zero bytes, `StripOffsets`/`StripByteCounts` with different counts. A file of this kind is valid and
+untouched.
+
+**Why `FillOrder 2` is refused rather than honoured.** The tag says the bits inside every byte are stored
+least significant first. Uncompressed, a decoder reverses them after reading and the file is fine.
+Compressed, libtiff reverses the bits of the *zlib stream itself* before inflating — the stream no longer
+starts with `78 9c`, and decoding stops at `incorrect header check`. That was checked by hand against
+Pillow 13/libtiff on `hopper2R.tif`: deflating it and keeping `FillOrder 2` reproduces `decoder error -2`,
+while the same file with `FillOrder 1`, or without the tag, reads back pixel-identical. Honouring the tag
+would mean reversing the sample bits and rewriting `FillOrder` to `1` — a legal, lossless transformation,
+but a change of representation this build has no test for. Refusing costs the compression of a handful of
+Pillow test images; guessing would cost the contract.
 
 **Corrupt (failed, exit 1):** bad byte order or magic, an IFD outside the file, an entry count that runs
 past the end, a strip outside the file, a zlib stream that does not decode, a decoded strip whose length
@@ -789,10 +836,12 @@ decodes both files, and the `Adler-32` is recomputed by code in this repository,
 **Refused (skipped, exit 0):** `CM ≠ 8`, `CINFO < 7`, `FDICT = 1`, trailing data after the stream. The
 file is valid and is left untouched.
 
-**Not a zlib stream (unsupported, exit 0):** the two header bytes pass the container's check and the data
-decodes to nothing at all. The header was a coincidence — see "A note on detection" below — so this is not
-corruption and the run keeps its exit code. The note says so and the file is untouched. This is the one case
-where a handler overrules the detector, and only a handler that can prove the difference is allowed to do it.
+**Nothing decodes behind the header (unsupported, exit 0):** the two header bytes pass the container's
+check and the data decodes to nothing at all. There are two possible explanations — the header was a
+coincidence (see "A note on detection" below), or the stream is a real zlib stream cut too short to produce
+a byte — and the decoder cannot tell them apart (#62). Neither is corruption, so the run keeps its exit code;
+the note names both possibilities and the file is untouched. This is the one case where a handler overrules
+the detector, and only a handler that can prove the difference is allowed to do it.
 
 **Corrupt (failed, exit 1):** a header that fails the check value, a truncated stream, an `Adler-32` that
 does not match, and a stream that decoded at least one byte before it broke. All leave the original

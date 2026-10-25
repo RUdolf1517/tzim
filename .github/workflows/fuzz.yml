@@ -56,8 +56,14 @@ jobs:
           curl -fsSL -o "$work/libjpeg-turbo.tar.gz" \
             https://codeload.github.com/libjpeg-turbo/libjpeg-turbo/tar.gz/refs/tags/3.1.0
           echo "35fec2e1ddfb05ecf6d93e50bc57c1e54bc81c16d611ddf6eff73fff266d8285  $work/libjpeg-turbo.tar.gz" | sha256sum -c --quiet -
+          # Pillow's fixtures are the corpus's source of TIFFs, and the same
+          # pinned archive seeds the tiff parser (#36).
+          curl -fsSL -o "$work/pillow.tar.gz" \
+            https://codeload.github.com/python-pillow/Pillow/tar.gz/refs/tags/11.3.0
+          echo "fa4aca745b1e1c733589ebf0ef19491b145dd4225c4aa06958963b4e7f0734cf  $work/pillow.tar.gz" | sha256sum -c --quiet -
           tar xzf "$work/libpng.tar.gz" -C "$work"
           tar xzf "$work/libjpeg-turbo.tar.gz" -C "$work"
+          tar xzf "$work/pillow.tar.gz" -C "$work"
           # `strip` gets the same images: it is the target that exercises the
           # `--strip-metadata` path, and it had no seeds at all (#36).
           mkdir -p fuzz/corpus/roundtrip fuzz/corpus/jpeg_decode fuzz/corpus/strip
@@ -66,6 +72,29 @@ jobs:
           cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/jpeg_decode/
           cp "$work"/libpng-1.6.44/contrib/pngsuite/*.png fuzz/corpus/strip/
           cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/strip/
+          # TIFF, from the same archive the corpus uses: without a seed the strip
+          # scanner and the IFD reader are never reached (#36).
+          mkdir -p fuzz/corpus/tiff
+          find "$work/Pillow-11.3.0/Tests/images" -maxdepth 1 \
+            \( -iname '*.tif' -o -iname '*.tiff' \) -size -2M \
+            -exec cp {} fuzz/corpus/roundtrip/ \;
+          find "$work/Pillow-11.3.0/Tests/images" -maxdepth 1 \
+            \( -iname '*.tif' -o -iname '*.tiff' \) -size -2M \
+            -exec cp {} fuzz/corpus/tiff/ \;
+          cp fuzz/corpus/tiff/* fuzz/corpus/strip/ 2>/dev/null || true
+          # zlib streams: four compression levels over a text payload and over a
+          # PNG, so the header reader and the recompressor both get input.
+          mkdir -p fuzz/corpus/zlib
+          python3 - <<'PY'
+          import zlib
+          text = (b"tzim shrinks the file, never the information. " * 200)
+          png = open("fuzz/corpus/roundtrip/basn2c08.png", "rb").read()
+          for level in (0, 1, 6, 9):
+              open(f"fuzz/corpus/zlib/text-{level}.zlib", "wb").write(zlib.compress(text, level))
+              open(f"fuzz/corpus/zlib/png-{level}.zlib", "wb").write(zlib.compress(png, level))
+          PY
+          cp fuzz/corpus/zlib/* fuzz/corpus/roundtrip/
+          cp fuzz/corpus/zlib/* fuzz/corpus/strip/
           echo "seeds: $(find fuzz/corpus -type f | wc -l)"
 
       - name: Run targets

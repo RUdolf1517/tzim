@@ -426,9 +426,15 @@ jobs:
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
           cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-full
-          # docs/size-budget.md 1: measured 1 024 KiB + 15 %, rounded up to
-          # whole KiB.
-          budget=1207296
+          # The gate is this release's own measurement, to the byte, and not a
+          # percentage above it: v0.12.1 left 150 KiB of headroom underneath a
+          # "green" check and the assets still grew, which is what #62 was
+          # about. v0.13 measures 979 808 bytes; `jpeg-v1` was measured at
+          # +118 784 and stays off for that reason (#39). A toolchain bump is
+          # the one thing that moves this number without a code change, and it
+          # is updated in the pull request that needs it, with the reason in
+          # docs/size-budget.md §1.
+          budget=979808
           echo "bytes: $bytes, budget: $budget"
           test "$bytes" -le "$budget" || {
             echo "the static binary is $((bytes / 1024)) KiB, over the $((budget / 1024)) KiB budget" >&2
@@ -446,15 +452,17 @@ jobs:
           out=/tmp/tzim-features.txt
           printf '%-38s %10s %8s\n' "features" "bytes" "KiB" > "$out"
           printf '%-38s %10s %8s\n' "--------------------------------------" "----------" "--------" >> "$out"
+          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the last
+          # two carry the independent decoder, which is off by default.
           for features in \
             "png" \
             "png,gzip" \
             "png,gzip,zip" \
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
-            "png,gzip,zip,ico,jpeg,tiff" \
-            "png,gzip,zip,ico,jpeg,tiff,zlib" \
-            "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli"
+            "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli"
           do
             cargo build --release --locked --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

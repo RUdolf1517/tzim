@@ -1,0 +1,126 @@
+name: third-party
+
+# The one check `verify` cannot make: decode the original and the candidate with
+# an implementation that shares no code with this repository.
+#
+# `verify` compares bytes, structure and pixels — but for PNG and JPEG one side
+# of the pixel comparison is our own decoder, and for ZIP the reader is ours on
+# both sides. A defect symmetric in our encoder and decoder would pass every
+# other job (docs/guarantees.md §2.6, issue #54).
+#
+# Pillow, the standard library's zlib and zipfile are used from a script, never
+# from the binary: zero bytes are added to the shipped artifact and there is no
+# new Rust dependency.
+#
+# The gate proves itself on every run: `--self-test` mutates one candidate and
+# requires the comparison to reject it, so a comparison that silently stops
+# comparing fails the job instead of passing it.
+
+on:
+  pull_request:
+    paths:
+      - "src/formats/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/corpus*.sh"
+      - ".github/scripts/third-party.py"
+      - ".github/workflows/third-party.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  # Pinned: the verdict is only meaningful if it can be reproduced.
+  PILLOW_VERSION: "11.3.0"
+
+jobs:
+  third-party:
+    name: independent decoders
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Pillow
+        shell: bash
+        run: |
+          python3 -m pip install --user "pillow==${PILLOW_VERSION}"
+          python3 - <<'PY'
+          from PIL import Image, features
+          print(f"Pillow {Image.__version__}, libjpeg-turbo {features.version('jpg')}")
+          PY
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Fetch the corpus
+        shell: bash
+        run: bash .github/scripts/corpus-fetch.sh "${RUNNER_TEMP}/tzim-corpus"
+
+      - name: Keep a copy of the originals
+        shell: bash
+        run: |
+          work="${RUNNER_TEMP}/tzim-corpus"
+          cp -a "$work/corpus" "$work/before"
+          echo "files: $(find "$work/corpus" -type f | wc -l)"
+
+      - name: Run tzim over the corpus
+        shell: bash
+        run: |
+          work="${RUNNER_TEMP}/tzim-corpus"
+          set +e
+          # Every format, so that a handler is compared if it produced anything.
+          target/release/tzim --formats png,gzip,zip,ico,jpeg,tiff,zlib \
+            --jobs 2 --json -r "$work/corpus" > "$work/run.json" 2> "$work/run.err"
+          code=$?
+          set -e
+          echo "exit code: $code"
+          # 1 means a corrupt fixture failed, which is the corpus's business, not
+          # this job's: here the verdict is about the files that were *accepted*.
+          if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+            echo "::error::tzim exited $code, so there is nothing reliable to compare"
+            tail -n 20 "$work/run.err" || true
+            exit 1
+          fi
+
+      - name: Compare with independent decoders
+        id: gate
+        shell: bash
+        run: |
+          work="${RUNNER_TEMP}/tzim-corpus"
+          python3 .github/scripts/third-party.py \
+            --before "$work/before" \
+            --after "$work/corpus" \
+            --run "$work/run.json" \
+            --self-test \
+            --report "$work/third-party.md" 2>&1 | tee /tmp/tzim-third-party.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          report="${RUNNER_TEMP}/tzim-corpus/third-party.md"
+          if [ -f "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The comparison did not run; see the log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Keep the evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: third-party-mismatch
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/tzim-corpus/third-party.md
+            ${{ runner.temp }}/tzim-corpus/run.json
+            ${{ runner.temp }}/tzim-corpus/run.err
+            /tmp/tzim-third-party.log

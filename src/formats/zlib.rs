@@ -127,8 +127,8 @@ fn inflate(body: &[u8]) -> Result<(u64, u32)> {
             }
             Err(_) if total == 0 => {
                 return Err(Error::unsupported(
-                    "zlib: the header passes the container's check but nothing decodes; this is \
-                     not a zlib stream (the file is untouched)",
+                    "zlib: nothing decodes behind the header; either the header was a \
+                     coincidence or the stream is too short to tell (the file is untouched)",
                 ));
             }
             Err(e) => return Err(Error::Io(e)),
@@ -447,6 +447,22 @@ mod tests {
         );
         let err = inspect(&data).unwrap_err();
         assert!(matches!(err, Error::Unsupported(_)), "{err}");
+
+        // The message was asserting more than the code knows (#62): for a real
+        // stream cut to a few dozen bytes, "this is not a zlib stream" was
+        // false. What is known is only that nothing decodes, and the reason is
+        // one of two. The prose is part of the interface here, so it is
+        // asserted: a message that states a conclusion the decoder cannot reach
+        // is a bug in the contract, not a wording preference.
+        let message = err.to_string();
+        assert!(
+            message.contains("either the header was a coincidence or the stream is too short"),
+            "the note must name both possibilities, not one: {message}"
+        );
+        assert!(
+            !message.contains("this is not a zlib stream"),
+            "the decoder cannot know that: {message}"
+        );
     }
 
     #[test]

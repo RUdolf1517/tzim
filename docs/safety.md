@@ -181,27 +181,50 @@ temporary file is removed and the original stays untouched.
 
 For very large files on nearly full volumes, free at least the size of the largest file before running.
 
-### 7.1 Memory — an upper bound, not a budget
+### 7.1 Memory — an enforced budget
 
-There is no memory limit in this build, and `--jobs` does not create one: it bounds the number of files in
-flight, not the bytes any of them needs. What a single file can cost:
+`--jobs` bounds the number of files in flight. It does **not** bound memory: four workers each holding a
+few-hundred-megabyte image is a legitimate `--jobs 4`. Bytes are bounded by `--memory-budget` instead
+(issue #51, decision O2-D).
 
-| Item | Worst case | Notes |
+What a single file can cost, and what the guard therefore charges for it:
+
+| Item | Worst case | Charged |
 | --- | --- | --- |
-| the original, held in memory | `--max-size`, 2 GiB by default | `fs::read` reads the whole file; handlers work on the slice |
-| the candidate, read back for verification | up to the same | written to disk, then read again to be compared |
-| a decoded PNG image, per side | up to 512 MiB per buffer in `verify` | `--max-pixels` 100 MPix is a ~400 MiB RGBA image at the default |
-| a decoded JPEG image, per side | proportional to the pixel count | same limit applies |
-| a decompressed ZIP entry | `--max-uncompressed`, 8 GiB by default | |
+| the original, held in memory | `--max-size`, 2 GiB by default (`fs::read`) | `len` |
+| the candidate, read back for verification | up to the same | `len` |
+| a decoded PNG image, both sides | `8 × pixels` | the `IHDR` count when the header carries it, `--max-pixels` otherwise |
+| a decoded JPEG image, both sides | `7 × pixels` | `--max-pixels` |
+| a decoded TIFF strip | `4 × len` | `len` |
+| a decompressed ZIP entry | `--max-uncompressed`, 8 GiB by default | `--max-uncompressed` |
 
-With the defaults, four workers can therefore reach several GiB on files that are a few megabytes on disk: a
-100 MPix PNG costs roughly 800 MiB of *decoded* buffers alone, both sides included. gzip and zlib are the
-exception — they are inflated in 64 KiB blocks and never materialise the payload.
+The PNG and JPEG numbers include the verification step, which decodes a second buffer: a budget that
+counted only the file on disk would be a third incorrect size predicate. gzip and zlib are absent because
+they are inflated in 64 KiB blocks and never materialise the payload.
 
-So: on a machine with limited memory, lower `--max-pixels` and `--jobs` before pointing tzim at a large tree.
-Enforcing a computed budget (`--jobs` × the decoded size a file can need, `skipped` above it) is issue #51 and
-the planned content of the next patch release; when it lands, this section stops describing a bound and starts
-describing a limit.
+The check happens **before the file is read**. A file whose charge exceeds the budget is `skipped`, with a
+reason naming the flag, and it is never opened by the pipeline — so an input that would have been killed by
+the OOM killer is now a line of output and exit code `0`. `skipped`, not `failed`: a configured bound is not
+an error, and the file is untouched.
+
+The default is derived from the other ceilings:
+
+```
+--memory-budget = 4 × --max-size + 8 × --max-pixels + --max-uncompressed
+```
+
+which is an upper bound on every row above, so the defaults never skip a file that `--max-size`,
+`--max-pixels` and `--max-uncompressed` already admit. That makes the default useless as protection against
+the 29d00c7 numbers — **set it to what the machine actually has**:
+
+```console
+$ tzim --jobs 4 --memory-budget 2147483648 ~/Photos
+```
+
+The budget is enforced **per file**, not for the run: with `--jobs N`, up to `N` files are charged at once, so
+`N × budget` is the ceiling to compare against RAM. Lower `--jobs` along with the budget when memory is
+tight, and lower `--max-pixels` for images and `--max-uncompressed` for containers if a single file is the
+problem. The arithmetic is a comparison of integers; it costs no dependency and no measurable binary size.
 
 ---
 
