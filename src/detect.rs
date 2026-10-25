@@ -389,7 +389,11 @@ mod tests {
 
         // A JPEG and a TIFF have no dimensions at a fixed offset.
         let jpeg = dir.join("a.jpg");
-        fs::write(&jpeg, [0xff, 0xd8, 0xff, 0xe0, 0, 0x10, b'J', b'F', b'I', b'F']).unwrap();
+        fs::write(
+            &jpeg,
+            [0xff, 0xd8, 0xff, 0xe0, 0, 0x10, b'J', b'F', b'I', b'F'],
+        )
+        .unwrap();
         let probe = probe_path(&jpeg).unwrap();
         assert_eq!(probe.format, Some(Format::Jpeg));
         assert_eq!(probe.pixels, None);

@@ -372,7 +372,13 @@ mod tests {
         // A PNG: the two RGBA buffers dominate a small file, and the declared
         // dimensions are used when the header carried them.
         assert_eq!(
-            worst_case_bytes(1000, Some(detect::Format::Png), Some(4_000_000), max_pixels, 0),
+            worst_case_bytes(
+                1000,
+                Some(detect::Format::Png),
+                Some(4_000_000),
+                max_pixels,
+                0
+            ),
             2000 + 8 * 4_000_000
         );
         // Without them, `--max-pixels` is the bound — the ceiling the program
@@ -383,13 +389,25 @@ mod tests {
         );
         // A header cannot raise the ceiling: a lying IHDR is still clamped.
         assert_eq!(
-            worst_case_bytes(1000, Some(detect::Format::Png), Some(u64::MAX), max_pixels, 0),
+            worst_case_bytes(
+                1000,
+                Some(detect::Format::Png),
+                Some(u64::MAX),
+                max_pixels,
+                0
+            ),
             2000 + 8 * max_pixels
         );
 
         // A JPEG decodes to the coefficient planes plus one frame.
         assert_eq!(
-            worst_case_bytes(10, Some(detect::Format::Jpeg), Some(1_000_000), max_pixels, 0),
+            worst_case_bytes(
+                10,
+                Some(detect::Format::Jpeg),
+                Some(1_000_000),
+                max_pixels,
+                0
+            ),
             20 + 7 * 1_000_000
         );
 
@@ -414,7 +432,13 @@ mod tests {
 
         // No term overflows: a huge file length stays a number.
         assert_eq!(
-            worst_case_bytes(u64::MAX, Some(detect::Format::Tiff), Some(u64::MAX), u64::MAX, u64::MAX),
+            worst_case_bytes(
+                u64::MAX,
+                Some(detect::Format::Tiff),
+                Some(u64::MAX),
+                u64::MAX,
+                u64::MAX
+            ),
             u64::MAX
         );
     }

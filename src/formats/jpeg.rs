@@ -1684,10 +1684,10 @@ mod tests {
         // One block: the DC difference, then end-of-block, then ones to pad.
         let mut bits = String::new();
         match dc {
-            0 => bits.push_str("0"),          // symbol 0, one bit
+            0 => bits.push_str("0"), // symbol 0, one bit
             v if v > 0 => {
-                bits.push_str("10");          // symbol 1
-                bits.push('1');               // the magnitude bit
+                bits.push_str("10"); // symbol 1
+                bits.push('1'); // the magnitude bit
             }
             _ => panic!("this fixture only builds non-negative DC differences"),
         }

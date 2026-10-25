@@ -411,7 +411,10 @@ mod tests {
             parse_ok(&["--memory-budget=1048576", "a.png"]).memory_budget,
             1_048_576
         );
-        assert!(HELP.contains("--memory-budget"), "the flag belongs in --help");
+        assert!(
+            HELP.contains("--memory-budget"),
+            "the flag belongs in --help"
+        );
         let bad: Vec<OsString> = ["--memory-budget", "lots", "a.png"]
             .iter()
             .map(OsString::from)

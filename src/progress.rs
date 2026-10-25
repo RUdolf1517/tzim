@@ -171,8 +171,11 @@ impl Frame {
         let mut line = String::with_capacity(width.min(160));
 
         if self.total <= 1 {
-            self.style
-                .paint_into(&mut line, Pen::Green, &FRAMES[self.tick % FRAMES.len()].to_string());
+            self.style.paint_into(
+                &mut line,
+                Pen::Green,
+                &FRAMES[self.tick % FRAMES.len()].to_string(),
+            );
             line.push_str(" converting…");
             return clip(line, width);
         }
@@ -454,7 +457,10 @@ mod tests {
     fn an_empty_run_is_an_empty_bar_and_a_finished_run_is_full() {
         assert_eq!(bar_position(0, 148), 0);
         assert_eq!(bar(0, 148, Style::plain()), EMPTY.to_string().repeat(CELLS));
-        assert_eq!(bar(148, 148, Style::plain()), FULL.to_string().repeat(CELLS));
+        assert_eq!(
+            bar(148, 148, Style::plain()),
+            FULL.to_string().repeat(CELLS)
+        );
         // A finished run is pinned to the end rather than left to rounding.
         assert_eq!(bar_position(148, 148), CELLS * 8);
         assert_eq!(bar_position(1000, 148), CELLS * 8);

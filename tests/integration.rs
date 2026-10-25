@@ -932,7 +932,10 @@ fn a_file_above_the_memory_budget_is_skipped_and_untouched() {
     let cost = png_worst_case(&original, &spec);
     let budget = (cost - 1).to_string();
 
-    let (code, stdout, stderr) = run(&["photo.png", "--memory-budget", &budget, "--json"], &ws.path);
+    let (code, stdout, stderr) = run(
+        &["photo.png", "--memory-budget", &budget, "--json"],
+        &ws.path,
+    );
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("\"status\":\"skipped\""),
@@ -1009,7 +1012,10 @@ fn a_file_that_fits_is_optimized_exactly_as_before() {
 
     let explicit_run = Workspace::new("budget-explicit");
     explicit_run.write("a.png", &original);
-    let (code, stdout, stderr) = run(&["a.png", "--memory-budget", "17179869184", "--json"], &explicit_run.path);
+    let (code, stdout, stderr) = run(
+        &["a.png", "--memory-budget", "17179869184", "--json"],
+        &explicit_run.path,
+    );
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
     let with_flag = std::fs::read(explicit_run.file("a.png")).unwrap();
@@ -1030,7 +1036,10 @@ fn a_container_is_charged_its_decompression_ceiling() {
     let path = ws.write("small.zip", &original);
 
     // 8 GiB of allowance against a 100 KiB budget: skipped before it is read.
-    let (code, stdout, stderr) = run(&["small.zip", "--memory-budget", "102400", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(
+        &["small.zip", "--memory-budget", "102400", "--json"],
+        &ws.path,
+    );
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("\"status\":\"skipped\""),
