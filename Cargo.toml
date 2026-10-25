@@ -37,7 +37,7 @@ jpeg-decoder = { version = "0.3", optional = true, default-features = false, fea
 [features]
 # One feature per handler family, so a build can drop what it will never see.
 # `default` is what the published binaries are built with.
-default = ["png", "gzip", "zip", "ico", "jpeg", "jpeg-v1", "tiff", "zlib", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "zopfli"]
 gzip = ["dep:flate2", "dep:crc32fast"]
 png = ["dep:png", "dep:flate2", "dep:crc32fast"]
 zip = ["dep:flate2", "dep:crc32fast"]
@@ -47,11 +47,20 @@ ico = ["png"]
 # The JPEG codec is part of this repository, so the handler costs nothing but the
 # code it gates.
 jpeg = []
-# Verification of a JPEG candidate by an independent decoder. On by default: a
-# shared codec on both sides of a comparison cannot catch a defect symmetric in
-# itself, and `guarantees.md` §2.6 does not claim more than the build does. The
-# feature is separate so the comparison can be audited and reverted on its own,
-# and so a `--no-default-features --features jpeg` build still exists without it.
+# Verification of a JPEG candidate by an independent decoder, which closes the
+# hole `guarantees.md` §2.6 names: a codec shared by the writer and the checker
+# cannot catch a defect symmetric in itself.
+#
+# **Off by default, and the measurement is why.** #39 approved this on one
+# condition — the shipping binary must not grow past 1 049 440 bytes, the v0.12.1
+# measurement — and it does not fit, even with `indicatif`'s 96 KiB returned:
+# `jpeg-decoder` costs more than that. Rather than grow the binary or break the
+# condition, the feature exists, is tested in CI on every run, and is what
+# `--all-features` and the `third-party` job exercise:
+#
+#     cargo build --release --features jpeg-v1
+#
+# `docs/dependencies.md` §2.10 and `docs/size-budget.md` §3 carry the numbers.
 jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]
 # TIFF only needs the DEFLATE codec that PNG and gzip already bring in.
 tiff = ["dep:flate2"]

@@ -96,12 +96,13 @@ Additional requirements:
 | `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
-| `jpeg-decoder` | yes | feature `jpeg-v1` (in `default`) | second opinion on a JPEG candidate | with `jpeg-v1` |
+| `jpeg-decoder` | yes | feature `jpeg-v1` (**not** in `default`) | second opinion on a JPEG candidate | only with `jpeg-v1` |
 
 Five direct dependencies, and every one of them is behind a feature: a build with
 `--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
 unconditional crate any more — the progress line, which used to be one (§2.9), is drawn by
-`src/progress.rs` again.
+`src/progress.rs` again. `jpeg-v1` is the first dependency since v0.1 that a *published* build does not carry:
+it is available, tested on every CI run, and off by default (§2.10).
 
 The JPEG, ICO, TIFF and zlib handlers add code, not crates. **v0.4, v0.6, v0.7 and v0.9 added none**:
 §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a codec that
@@ -226,10 +227,15 @@ sample and a frame that could be wider than the terminal.
   the lossy transformation the invariant forbids (§2.6). It is a *verifier*, called once per accepted
   candidate, on the two byte buffers that verification already has in memory.
 - **Cost:** the pixels of one side at a time are hashed with CRC-32 and dropped, so verification is not
-  charged two extra decoded images; the memory accounting in [safety §7.1](safety.md#71-memory--an-enforced-budget)
-  says `7 × pixels` per side with that in mind. The binary cost is measured, not estimated, and it is the
-  reason the feature is opt-out rather than opt-in: the release gate is the *previous* release's size
-  (1 049 440 bytes), and this crate has to fit inside what `indicatif` gave back.
+  charged two extra decoded images; the memory accounting in
+  [safety §7.1](safety.md#71-memory--an-enforced-budget) says `7 × pixels` per side with that in mind.
+- **Why the published builds do not have it.** #39 was approved on one condition: the shipping binary must not
+  grow past 1 049 440 bytes, the v0.12.1 measurement. It does not fit — [size budget §3](size-budget.md#3-feature-matrix)
+  has the two numbers — so the feature ships off rather than the condition being renegotiated. What the user
+  gets instead is the same check in CI, on real files, with a decoder that is even further from this
+  repository: the `third-party` job decodes the corpus with Pillow before and after
+  ([testing](testing.md#the-third-party-decoder-job)). A build that wants the check inside the binary has one
+  command for it: `cargo build --release --features jpeg-v1`.
 - **What it changes for a user:** a file whose candidate disagrees with an independent decoder is `failed`,
   exit 1, original untouched — a class of defect that previously would have been reported as `optimized`. If
   the independent decoder refuses the *original*, the file is `skipped` with that reason: the oracle cannot

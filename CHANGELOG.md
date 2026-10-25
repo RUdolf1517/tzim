@@ -40,7 +40,8 @@ bytes.
   by default — which also means the default is not protection against a machine with less memory than those
   ceilings promise. Say how much you have:
   `tzim --jobs 4 --memory-budget 2147483648 ~/Photos` ([safety §7.1](docs/safety.md#71-memory--an-enforced-budget)).
-- **`jpeg-v1`**, an independent decoder in the default build, for verification only (issue #39). `verify`
+- **`jpeg-v1`**, an independent decoder for verification only (issue #39), **available but off in the
+  published builds** — see the size note at the end of this section. `verify`
   compares coefficients, structure and bytes through code that lives in this repository; a defect symmetric
   in the encoder and the decoder was invisible. `jpeg-decoder` now decodes both sides of an accepted
   candidate, one buffer at a time, and the pixels must be identical: a disagreement is `failed`, exit `1`,
@@ -66,7 +67,8 @@ bytes.
 ### Changed
 
 - **The progress line is hand-drawn again** (issue #53): `indicatif` and `console` are gone, 96 KiB with
-  them, and `src/progress.rs` draws the same information — spinner, clock, bar, counter, rate, ETA — with one
+  them — and that saving is why the published binary does not grow while a whole defensive codec was added
+  and removed from the default set, and `src/progress.rs` draws the same information — spinner, clock, bar, counter, rate, ETA — with one
   write per frame from a single ticker thread. The conditions [issue
   #53](https://github.com/Rudolf1517/tzim/issues/53) set on the removal are met: the line is prettier than
   the crate's, not plainer, and it fixes the two things the crate's version got wrong — an ETA that appeared
@@ -77,8 +79,10 @@ bytes.
 - **A file that used to be processed may now be skipped**: that is `--memory-budget` working as configured.
   Nothing changes with the default budget, and a run that sets it should expect the skips and read the note.
 - **The `size` job's gate is the previous release's binary**, not a percentage above it: 1 049 440 bytes,
-  the v0.12.1 measurement. `jpeg-v1` was approved on the condition that the shipping binary does not grow, so
-  the gate now fails on any growth instead of allowing 150 KiB of it.
+  the v0.12.1 measurement. `jpeg-v1` was approved on the condition that the shipping binary does not grow, and
+  **it does not fit** — the first run measured `bytes: 1098592, budget: 1049440`, so the feature ships off
+  rather than the condition being renegotiated. The gate stays where it is: it caught the one thing in this
+  release that a reviewer could not have measured by reading the diff.
 
 ### Fixed
 
