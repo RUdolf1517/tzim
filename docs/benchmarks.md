@@ -135,10 +135,36 @@ per-format counts for JPEG and TIFF are unchanged.
 The 156 "already optimal" files are the honest part of this number: files that upstream projects already
 compressed well, and leaving them alone is the contract working, not the tool failing.
 
-v0.13 adds four zlib streams to the corpus (`corpus-fetch.sh`) and stops leaving the zlib handler outside the
-regression gate, so the next run's `Files` count is 698 and the byte totals move with it. That is a corpus
-change, not a compression change, and the two are kept apart on purpose: a table that moves because the
-fixtures changed says nothing about the tool.
+**v0.13.0 — the same corpus, four zlib streams later.** Measured on commit `8e2f269`, run
+[`40221326503`](https://github.com/Rudolf1517/tzim/actions/runs/40221326503), the run whose `third-party` job
+was green with the TIFF refusal in place:
+
+| Metric | v0.12.1 | v0.13.0 | Why it moved |
+| --- | --- | --- | --- |
+| Files | 694 | 698 | four zlib streams, assembled by `corpus-fetch.sh` |
+| Optimized | 425 | 421 | −5 TIFFs refused for `FillOrder 2`, +1 zlib stream |
+| Already optimal | 156 | 159 | the three already-compressed zlib payloads |
+| Unsupported | 0 | 0 | — |
+| Skipped (refused by contract) | 81 | 86 | the same five `FillOrder 2` files |
+| Failed (allowlisted upstream corruption) | 32 | 32 | unchanged |
+| Bytes before | 21 864 484 | 22 008 529 | the added streams |
+| Bytes after | 19 734 464 | 19 881 896 | |
+| **Saved** | **2 130 020 (9.74 %)** | **2 126 633 (9.66 %)** | |
+| Files rewritten on a second pass | 0 | 0 | idempotent on the larger corpus too |
+
+Both directions in that table are worth naming. The five Pillow TIFFs are no longer optimized because the
+writer had been shrinking files by making libtiff unable to read them, so refusing them is the contract being
+repaired rather than compression getting worse ([guarantees §4.8](guarantees.md#48-tiff-classic-baseline-strips--v07)).
+The zlib stream that is now `optimized` adds a rewrite the corpus could not previously exercise: `text.zlib` is
+138 068 bytes at level 4 and 124 407 at level 9, where the blob it replaced was compressed to 119 bytes at
+every level and came back `already optimal` like the three image streams next to it.
+
+The percentage falls from 9.74 % to 9.66 % for arithmetic, not regression: `saved` fell by **3 387** bytes while
+`before` grew by 144 045, because four small streams on a 21.8 MB corpus cannot move a percentage much and
+three of them are already compressed and yield nothing. `after` grew by 147 432 — *more* than `before` — and
+that is the TIFF refusal visible in the totals: five files keep their original size instead of being rewritten.
+A table that moves because the fixtures changed says nothing about the tool, which is why the corpus change and
+the writer fix are named on their own rows instead of being folded into one new number.
 
 ### 3.2 Against the established tools
 
@@ -204,8 +230,9 @@ What the numbers say, without softening either half:
   finds 0.88 %; a stream from an old encoder, or one written at level 1, has far more room. This set is
   published at the level it is because a benchmark that only shows the flattering case is not a benchmark.
 - These files are heavily skewed towards `pngsuite`, which is deliberately poorly compressed in places. That
-  is why Tzim saves 7.63 % here and 9.74 % on the whole corpus: same code, different input. Both numbers are
-  published because either one alone would mislead.
+  is why Tzim saves 7.63 % here and 9.66 % on the whole corpus (§3.1, the v0.13.0 row): same code, different
+  input — and most of that corpus is JPEG and already-compressed PNG, where there is less to win. Both numbers
+  are published because either one alone would mislead.
 
 ### 3.3 Older spot measurements
 
