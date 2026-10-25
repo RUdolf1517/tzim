@@ -23,9 +23,8 @@
 //!   pass for the wrong reason. What is pinned instead is the rule that the bytes
 //!   after `EOI` survive, which nothing else compares.
 
-// The fixture writers are shared with `tests/integration.rs`; each test binary
-// compiles them again and uses a different subset, so the unused ones are expected.
-#[allow(dead_code)]
+// The fixture writers are shared with `tests/integration.rs` and already carry
+// their own `#![allow(dead_code)]`; a second attribute here is a clippy error.
 mod common;
 
 use common::*;

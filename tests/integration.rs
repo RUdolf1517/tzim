@@ -595,6 +595,8 @@ fn a_path_that_is_not_valid_utf8_is_optimized() {
 #[cfg(unix)]
 #[test]
 fn a_socket_is_skipped_and_never_opened_for_writing() {
+    use std::os::unix::fs::FileTypeExt;
+
     // A Unix socket is the one non-regular file type the standard library can
     // create without libc, and it is enough: the walk must not try to read it.
     //
