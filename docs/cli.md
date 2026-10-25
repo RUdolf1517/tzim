@@ -112,7 +112,7 @@ reproducible and diffable.
 | `--allow-root-ownership-change` | off | when running as root, allow replacing files owned by another user (ownership becomes root; see [safety](safety.md#8-privileges)) |
 | `--no-fsync` | off | skip `fsync` of the candidate and its directory (faster, less durable) |
 | `--` | — | end of options; required for paths beginning with `-` |
-| `-i, --info` | — | print what the program is: version, promise, formats, links, licence, contact; exits `0` without touching any path |
+| `-i, --info` | — | print what the program is: version, promise, formats, the JPEG verification level of this build, links, licence, contact; exits `0` without touching any path |
 | `--list-formats` | — | print the handlers compiled into this build and what each one preserves; exits `0` |
 | `--check-deps` | — | print the external programs needed at run time, which is none, and exit `0` |
 | `-h, --help` | — | the full text of §2; exits `0` |

@@ -11,6 +11,17 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Added
+
+- **`--info` states the JPEG verification level of the build it is in** (#66). The shipped binary verifies a
+  JPEG candidate with the codec that wrote it, and [guarantees §2.6](docs/guarantees.md#26-verification-independence)
+  has said so since v0.4 — but the tool did not, so a user could only learn it from the documentation. The line
+  is read from the build's own features: with `jpeg-v1` it names the independent decoder *and* the local codec,
+  because the oracle is added to the comparison rather than replacing it; without it, it says the codec in this
+  build only and spells out the flag that gets the other one; in a build with no JPEG handler there is no line
+  at all, since there is no verification to describe. The cost is a string, and
+  `info_names_the_jpeg_verification_level_of_this_build` reads the same flags the binary was compiled with.
+
 ### Fixed
 
 - **A `FillOrder 2` file that is already Deflate is told the truth about itself, and it is not good news.**
@@ -21,7 +32,10 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   needs to know that instead of being sent round the same loop: the note now says the compressed data's bits
   are reversed, that re-compressing cannot undo it, and that the way out is a backup or the original source.
   Behaviour is unchanged — `skipped`, exit `0`, byte-identical file — and
-  `tiff_fill_order_two_with_deflate_says_the_file_cannot_be_repaired` pins it. `docs/guarantees.md` §4.8 now
+  `tiff_fill_order_two_with_deflate_says_the_file_cannot_be_repaired` pins it. The note also stops claiming to
+  know where the file came from: reversed bits with Deflate is the combination 0.7 through 0.12.1 produced, but
+  any tool that reversed the bits of a stream would leave the same bytes, so the sentence now names the
+  combination rather than the culprit. `docs/guarantees.md` §4.8 now
   states plainly that **files damaged by 0.7 through 0.12.1 are not recoverable** and why nothing can tell them
   apart from a legitimately written reversed-bit file.
 - **The `jpeg-v1` refusal note lost a line continuation** and shipped as one sentence with twenty-two spaces
