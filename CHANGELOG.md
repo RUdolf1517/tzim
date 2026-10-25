@@ -29,6 +29,11 @@ work. The corpus still writes 379 177 bytes.
 - [cli §10](docs/cli.md#10-colour-and-progress) and [cli §11](docs/cli.md#11-conformance-with-cli-conventions):
   the colour rules, and an audit against the CLI guidelines that found four defects — all fixed below.
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.8.0/` are pinned to the published v0.8.0 artifacts and their
+  SHA-256, copied from the release notes after the build.
+
 ### Size
 
 - The binary grows by **20 480 bytes** (900 → 920 KiB) in every build: colour, the progress thread, buffered

@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: RUdolf1517.tzim
+PackageVersion: 0.8.0
+InstallerLocale: en-US
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: tzim.exe
+    PortableCommandAlias: tzim
+ReleaseDate: 2026-10-25
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/RUdolf1517/tzim/releases/download/v0.8.0/tzim-x86_64-pc-windows-msvc.zip
+    InstallerSha256: AE48D0C55F1469C33696D1E2A48D897C7E11E8A1D322EB96E34E4D76EB362896
+ManifestType: installer
+ManifestVersion: 1.10.0
