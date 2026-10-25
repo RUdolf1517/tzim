@@ -161,13 +161,18 @@ fn run_optimize(args: &cli::Args) -> i32 {
 
     // The animation is decided before any work starts and lives only as long as
     // it: `drop(progress)` erases the line before the first result is printed.
-    let progress = Progress::new(scan.files.len(), progress_wanted(args, scan.files.len()));
+    // Colour is the same decision the report uses, taken from stderr's own probe.
+    let progress = Progress::new(
+        scan.files.len(),
+        progress_wanted(args, scan.files.len()),
+        stderr_style(args.color),
+    );
     let mut outcomes = pool::run(
         &scan.files,
         jobs,
         args.fail_fast,
         |path| pipeline::process(path, config),
-        |outcome| progress.advance(outcome.saved()),
+        |_| progress.advance(),
     );
     drop(progress);
 
