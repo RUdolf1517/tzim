@@ -330,9 +330,9 @@ with a reason, so the next release does not start with "add another format":
 | --- | --- | --- |
 | FLAC | refused, measured | 0.4 % for a quarter of the binary |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
-| FITS | under measurement, not supported | never refused, never examined; the tile-compression convention is specified in [guarantees §4.12](guarantees.md#412-fits--contract-written-not-implemented) and [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
+| FITS | admitted, not implemented | measured: an uncompressed image HDU rewritten as a tile-compressed table saves a median 21.9 % on 84.8 % of the corpus ([guarantees §4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented), [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)); opt-in `--fits-tile`, no code yet |
 | DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| PDF | refused, under measurement | no object-level comparison proves a rendering; the narrow `FlateDecode` slice is specified in [guarantees §4.11](guarantees.md#411-pdf--contract-written-not-implemented) and [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) fixes the decision rule in advance |
+| PDF | refused after measurement | the permitted slice covers 45.7 % of a 2 208-file corpus and saves a median 0.08 %; repacking would save 20.1 % and is forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
 | raw DEFLATE | refused | no signature: recognition would be a guess |
 
