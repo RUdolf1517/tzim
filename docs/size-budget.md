@@ -68,6 +68,15 @@ file in it — the one dependency that was not behind a feature — went with it
 subtraction: 983 840 − 865 056 = **118 784 bytes** on the lean row, and 1 098 592 − 979 808 = the same on the
 full one.
 
+**The one attempt to make `jpeg-v1` cheaper is measured and on record.** Building that dependency at
+`opt-level = "s"` — the profile `indicatif` and `console` used before they left — moved the lean row
+983 840 → **967 456** and the full row 1 098 592 → **1 082 208**, so the feature's cost fell from 118 784 to
+**102 400 bytes** (run [40223835591](https://github.com/Rudolf1517/tzim/actions/runs/40223835591)). That is
+16 384 bytes bought, and **32 768 still over** the 1 049 440-byte condition of issue #39, so the override is
+not in the tree. Anything that puts the second opinion inside the shipped binary has to find another 32 KiB,
+or the condition has to be renegotiated with the number in hand — there is no third option, and this paragraph
+is where the next attempt starts.
+
 `default` is gated on every pull request: the job fails when the static binary exceeds the measured 979 808
 bytes. That is a *zero-tolerance* gate, and it is deliberate: v0.12.1's gate allowed 150 KiB of headroom, so
 a green `size` job proved nothing about growth, which is what [issue

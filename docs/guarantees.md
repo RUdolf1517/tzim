@@ -695,6 +695,22 @@ would mean reversing the sample bits and rewriting `FillOrder` to `1` — a lega
 but a change of representation this build has no test for. Refusing costs the compression of a handful of
 Pillow test images; guessing would cost the contract.
 
+**A file that is already damaged gets a different sentence, and the difference matters.** `FillOrder 2` with
+`Compression` 8 or 32946 is a combination libtiff cannot read at all, and **tzim 0.7 through 0.12.1 wrote
+exactly that** when it compressed an uncompressed reversed-bit strip: the bits of the stream it produced were
+reversed along with the samples, so the result is not a zlib stream and never was. Those files are not
+repairable, by this program or by any other — the compressed bytes are not recoverable as data, and
+re-compressing a stream that is not a stream cannot recover the pixels. When a run meets one, it is refused
+with a note that says so and points at the only way out, a backup or the original source; the alternative,
+telling its owner that Deflate "would make the file unreadable", describes a future that has already happened
+and sends them round the same loop again. Nothing is written either way, and the file is left byte-identical.
+
+The honest summary of the incident: from 0.7 to 0.12.1 a rewrite could turn a readable TIFF into an unreadable
+one, nothing inside the repository noticed, and what found it was the third-party job of v0.13 on its first
+run — an implementation that shares no code with this one. A file already damaged by those versions cannot be
+detected as damaged from its own bytes: it looks like a legitimate `FillOrder 2` Deflate file, which is why the
+note describes the cause instead of promising a repair.
+
 **Corrupt (failed, exit 1):** bad byte order or magic, an IFD outside the file, an entry count that runs
 past the end, a strip outside the file, a zlib stream that does not decode, a decoded strip whose length
 does not match `RowsPerStrip` × row bytes for the last strip — all leave the original untouched.

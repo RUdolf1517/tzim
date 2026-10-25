@@ -9,6 +9,33 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [Unreleased]
+
+### Fixed
+
+- **A `FillOrder 2` file that is already Deflate is told the truth about itself, and it is not good news.**
+  v0.13.0 refuses that combination with "Deflate would make the file one libtiff rejects", which is the right
+  sentence for an uncompressed file and the wrong one for a file that **is** already compressed — and files of
+  that kind are what tzim 0.7 through 0.12.1 produced, by reversing the bits of the samples and of the stream
+  together. Such a file cannot be read by libtiff, cannot be repaired by re-running anything, and its owner
+  needs to know that instead of being sent round the same loop: the note now says the compressed data's bits
+  are reversed, that re-compressing cannot undo it, and that the way out is a backup or the original source.
+  Behaviour is unchanged — `skipped`, exit `0`, byte-identical file — and
+  `tiff_fill_order_two_with_deflate_says_the_file_cannot_be_repaired` pins it. `docs/guarantees.md` §4.8 now
+  states plainly that **files damaged by 0.7 through 0.12.1 are not recoverable** and why nothing can tell them
+  apart from a legitimately written reversed-bit file.
+- **The `jpeg-v1` refusal note lost a line continuation** and shipped as one sentence with twenty-two spaces
+  in the middle of it. It reads as a sentence again, and `the_refusal_note_is_one_spaced_sentence` fails on any
+  run of two spaces in it.
+
+### Documentation
+
+- **`jpeg-decoder` at `opt-level = "s"` is measured, and it is not enough** ([size budget
+  §3](docs/size-budget.md#3-feature-matrix)): the feature's cost falls from 118 784 to **102 400 bytes**, which
+  still leaves the `jpeg-v1` build 32 768 bytes above the 1 049 440-byte condition issue #39 was approved
+  under. The override is not in the tree, and the number is recorded so the next attempt starts from it rather
+  than from a guess.
+
 ### Errata for 0.12.1
 
 The release notes said the binary was the same size and the five release **tarballs** each grew by 514–634
