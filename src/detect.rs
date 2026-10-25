@@ -57,7 +57,11 @@ pub fn detect(head: &[u8]) -> Option<Format> {
     }
     // ICO (type 1) and CUR (type 2) share a 6-byte header. The signature is
     // weak on its own, so the image count is checked as well.
-    if head.len() >= 6 && head[0] == 0 && head[1] == 0 && (head[2] == 1 || head[2] == 2) && head[3] == 0
+    if head.len() >= 6
+        && head[0] == 0
+        && head[1] == 0
+        && (head[2] == 1 || head[2] == 2)
+        && head[3] == 0
     {
         let count = u16::from_le_bytes([head[4], head[5]]);
         if (1..=256).contains(&count) {
@@ -230,7 +234,11 @@ fn expand_dir(
         }
     }
     // Deterministic order: sort by raw path bytes so runs are reproducible.
-    children.sort_by(|a, b| a.as_os_str().as_encoded_bytes().cmp(b.as_os_str().as_encoded_bytes()));
+    children.sort_by(|a, b| {
+        a.as_os_str()
+            .as_encoded_bytes()
+            .cmp(b.as_os_str().as_encoded_bytes())
+    });
 
     for child in children {
         let md = match fs::symlink_metadata(&child) {

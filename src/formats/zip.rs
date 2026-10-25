@@ -218,17 +218,14 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
             .get(at..end)
             .ok_or_else(|| Error::parse("zip: truncated central directory record"))?;
         let name = &record[CENTRAL_LEN..CENTRAL_LEN + name_len];
-        let central_extra =
-            &record[CENTRAL_LEN + name_len..CENTRAL_LEN + name_len + extra_len];
+        let central_extra = &record[CENTRAL_LEN + name_len..CENTRAL_LEN + name_len + extra_len];
         let entry_comment = &record[CENTRAL_LEN + name_len + extra_len..];
 
         if name.is_empty() {
             return Err(Error::parse("zip: an entry has an empty name"));
         }
         if flags & (FLAG_ENCRYPTED | FLAG_STRONG_ENCRYPTION | FLAG_MASKED_HEADERS) != 0 {
-            return Err(Error::refused(
-                "zip: encrypted archives are not supported",
-            ));
+            return Err(Error::refused("zip: encrypted archives are not supported"));
         }
         if method != METHOD_STORE && method != METHOD_DEFLATE {
             return Err(Error::refused(format!(
@@ -306,7 +303,9 @@ fn parse_archive(d: &[u8]) -> Result<Archive<'_>> {
     }
 
     if entries.iter().any(|e| e.gap_after > 0) {
-        if cd_offset as usize >= 16 && &d[cd_offset as usize - 16..cd_offset as usize] == b"APK Sig Block 42" {
+        if cd_offset as usize >= 16
+            && &d[cd_offset as usize - 16..cd_offset as usize] == b"APK Sig Block 42"
+        {
             return Err(Error::refused(
                 "zip: signed APK (APK signing block present) — recompression would invalidate the signature",
             ));
@@ -379,9 +378,7 @@ fn fill_local<'a>(d: &'a [u8], e: &mut Entry<'a>, next: usize) -> Result<()> {
         .checked_add(e.comp_size as usize)
         .ok_or_else(|| Error::parse("zip: entry size overflows"))?;
     if data_end > next || header_end > next {
-        return Err(Error::parse(
-            "zip: entry data overlaps the next structure",
-        ));
+        return Err(Error::parse("zip: entry data overlaps the next structure"));
     }
 
     let descriptor = if e.has_descriptor() {
@@ -464,7 +461,9 @@ fn ends_with_ignore_case(name: &[u8], suffix: &str) -> bool {
 
 /// Archive-level reasons to refuse, before any byte is written.
 fn deny_reason(archive: &Archive<'_>, d: &[u8]) -> Option<String> {
-    if archive.cd_offset >= 16 && &d[archive.cd_offset - 16..archive.cd_offset] == b"APK Sig Block 42" {
+    if archive.cd_offset >= 16
+        && &d[archive.cd_offset - 16..archive.cd_offset] == b"APK Sig Block 42"
+    {
         return Some(
             "zip: signed APK (APK signing block present) — recompression would invalidate the signature"
                 .to_string(),
@@ -590,8 +589,7 @@ fn recompress(compressed: &[u8], zopfli: bool) -> Result<(Vec<u8>, u64, u32)> {
     }
 
     let mut source = CrcCounter::new(decoder);
-    let mut encoder =
-        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(9));
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(9));
     io::copy(&mut source, &mut encoder)?;
     let out = encoder.finish()?;
     let (len, crc) = source.finish();
@@ -654,10 +652,7 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
             changed = true;
         }
         for e in &a.entries {
-            if !e.comment.is_empty()
-                || read_u16(e.local, 10)? != 0
-                || read_u16(e.local, 12)? != 0
-            {
+            if !e.comment.is_empty() || read_u16(e.local, 10)? != 0 || read_u16(e.local, 12)? != 0 {
                 changed = true;
                 break;
             }
@@ -689,10 +684,8 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
 
             let compressed = match &nested {
                 Some((child, child_crc, child_len)) => {
-                    let mut encoder = flate2::write::DeflateEncoder::new(
-                        Vec::new(),
-                        flate2::Compression::new(9),
-                    );
+                    let mut encoder =
+                        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(9));
                     encoder.write_all(child)?;
                     let bytes = encoder.finish()?;
                     crc = *child_crc;
@@ -775,7 +768,11 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
     let cd_size = u32::try_from(out.len() - cd_offset as usize)
         .map_err(|_| Error::limit("zip: central directory would exceed 4 GiB"))?;
 
-    let mut eocd = if strip { a.eocd[..EOCD_LEN].to_vec() } else { a.eocd.to_vec() };
+    let mut eocd = if strip {
+        a.eocd[..EOCD_LEN].to_vec()
+    } else {
+        a.eocd.to_vec()
+    };
     if strip {
         eocd[20..22].copy_from_slice(&0u16.to_le_bytes());
     }
@@ -899,9 +896,7 @@ pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
     }
     if strip {
         if !pb.comment.is_empty() {
-            return Err(Error::verify(
-                "archive comment survived --strip-metadata",
-            ));
+            return Err(Error::verify("archive comment survived --strip-metadata"));
         }
     } else if pa.comment != pb.comment {
         return Err(Error::verify("archive comment was not preserved"));
@@ -928,10 +923,14 @@ pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
             verify_nested_change(data_a, data_b, ea.method, &label, opts)?;
         }
         if ea.version_made_by != eb.version_made_by || ea.version_needed != eb.version_needed {
-            return Err(Error::verify(format!("entry `{label}`: version fields changed")));
+            return Err(Error::verify(format!(
+                "entry `{label}`: version fields changed"
+            )));
         }
         if ea.central_extra != eb.central_extra || ea.local_extra != eb.local_extra {
-            return Err(Error::verify(format!("entry `{label}`: extra fields changed")));
+            return Err(Error::verify(format!(
+                "entry `{label}`: extra fields changed"
+            )));
         }
         if strip {
             if !eb.comment.is_empty() {
@@ -952,7 +951,8 @@ pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
             return Err(Error::verify(format!("entry `{label}`: comment changed")));
         }
         let checksum_changed = ea.crc != eb.crc || ea.uncomp_size != eb.uncomp_size;
-        if mask_local(ea.local, checksum_changed, strip) != mask_local(eb.local, checksum_changed, strip)
+        if mask_local(ea.local, checksum_changed, strip)
+            != mask_local(eb.local, checksum_changed, strip)
         {
             return Err(Error::verify(format!(
                 "entry `{label}`: local header changed outside the allowed fields"
@@ -996,10 +996,14 @@ fn verify_nested_change(
         )));
     }
     let child_a = inflate_raw(data_a).map_err(|e| {
-        Error::verify(format!("entry `{label}`: original content does not inflate: {e}"))
+        Error::verify(format!(
+            "entry `{label}`: original content does not inflate: {e}"
+        ))
     })?;
     let child_b = inflate_raw(data_b).map_err(|e| {
-        Error::verify(format!("entry `{label}`: candidate content does not inflate: {e}"))
+        Error::verify(format!(
+            "entry `{label}`: candidate content does not inflate: {e}"
+        ))
     })?;
     if child_b.len() >= child_a.len() {
         return Err(Error::verify(format!(

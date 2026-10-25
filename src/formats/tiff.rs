@@ -75,8 +75,8 @@ const COMPRESSION_ADOBE_DEFLATE: u16 = 32946;
 /// including `SubIFDs`, `ExifIFD`, `GPSIFD`, the tile tags and the JPEG-offset
 /// tags, which carry absolute offsets by definition.
 const DATA_TAGS: &[u16] = &[
-    254,   // NewSubfileType
-    255,   // SubfileType
+    254, // NewSubfileType
+    255, // SubfileType
     256, 257, 258, 259, // geometry and encoding
     262, 263, 266, 269, 270, 271, 272, // photometric and textual
     273, 274, 277, 278, 279, // layout and orientation
@@ -84,7 +84,7 @@ const DATA_TAGS: &[u16] = &[
     292, 293, 296, 297, // shape and page number
     305, 306, 315, 316, 317, 318, 319, 320, // software, artist, predictor, colour
     338, 339, 340, 341, 342, 343, 344, 347, // extra samples, sample format, transfer
-    530, 531, 532, // subsampling
+    530, 531, 532,   // subsampling
     700,   // XMP packet
     33432, // Copyright
     33550, 33922, 34735, 34736, 34737, // GeoTIFF data
@@ -98,8 +98,25 @@ const DATA_TAGS: &[u16] = &[
 pub fn is_stripped(tag: u16) -> bool {
     matches!(
         tag,
-        269 | 270 | 271 | 272 | 305 | 306 | 315 | 316 | 333 | 33432 | 33723 | 34377 | 37510 | 37724
-            | 40091 | 40092 | 40093 | 40094 | 40095 | 42112
+        269 | 270
+            | 271
+            | 272
+            | 305
+            | 306
+            | 315
+            | 316
+            | 333
+            | 33432
+            | 33723
+            | 34377
+            | 37510
+            | 37724
+            | 40091
+            | 40092
+            | 40093
+            | 40094
+            | 40095
+            | 42112
     )
 }
 
@@ -170,8 +187,9 @@ impl<'a> Tiff<'a> {
 
     /// Reads a SHORT or LONG array, which is what every numeric tag we use is.
     fn numbers(&self, entry: &Entry<'a>) -> Result<Vec<u32>> {
-        let size = type_size(entry.typ)
-            .ok_or_else(|| Error::refused(format!("tiff: tag {} uses type {}", entry.tag, entry.typ)))?;
+        let size = type_size(entry.typ).ok_or_else(|| {
+            Error::refused(format!("tiff: tag {} uses type {}", entry.tag, entry.typ))
+        })?;
         let count = entry.count as usize;
         let mut out = Vec::with_capacity(count);
         for index in 0..count {
@@ -298,9 +316,8 @@ fn parse(data: &[u8]) -> Result<Tiff<'_>> {
             &raw[8..8 + len]
         } else {
             let offset = tiff.u32_at(at + 8)? as usize;
-            data.get(offset..offset + len).ok_or_else(|| {
-                Error::parse(format!("tiff: tag {tag} points outside the file"))
-            })?
+            data.get(offset..offset + len)
+                .ok_or_else(|| Error::parse(format!("tiff: tag {tag} points outside the file")))?
         };
         tiff.entries.push(Entry {
             tag,
@@ -339,7 +356,13 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
             ));
         }
     }
-    for tag in [TAG_SUB_IFDS, TAG_EXIF_IFD, TAG_GPS_IFD, TAG_INTEROP_IFD, TAG_JPEG_OFFSET] {
+    for tag in [
+        TAG_SUB_IFDS,
+        TAG_EXIF_IFD,
+        TAG_GPS_IFD,
+        TAG_INTEROP_IFD,
+        TAG_JPEG_OFFSET,
+    ] {
         if tiff.entry(tag).is_some() {
             return Err(Error::refused(format!(
                 "tiff: tag {tag} carries an offset to another structure, which a rebuild would invalidate"
@@ -560,8 +583,8 @@ fn write_u32(out: &mut [u8], at: usize, value: u32, big: bool) {
 }
 
 fn encode_numbers(values: &[u32], typ: u16, big: bool) -> Result<Vec<u8>> {
-    let size = type_size(typ)
-        .ok_or_else(|| Error::internal(format!("tiff: cannot encode type {typ}")))?;
+    let size =
+        type_size(typ).ok_or_else(|| Error::internal(format!("tiff: cannot encode type {typ}")))?;
     let mut out = Vec::with_capacity(size * values.len());
     for value in values {
         match typ {
@@ -611,7 +634,9 @@ fn build(plan: &Plan<'_>, strips: &[Vec<u8>], opts: &Options) -> Result<Vec<u8>>
         .filter(|e| survives(e.tag, opts.strip_metadata))
         .collect();
     if kept.len() > u16::MAX as usize {
-        return Err(Error::refused("tiff: the IFD has too many entries to rewrite"));
+        return Err(Error::refused(
+            "tiff: the IFD has too many entries to rewrite",
+        ));
     }
 
     let ifd_len = 2 + kept.len() * 12 + 4;
@@ -636,8 +661,9 @@ fn build(plan: &Plan<'_>, strips: &[Vec<u8>], opts: &Options) -> Result<Vec<u8>>
             let sizes: Vec<u32> = strips
                 .iter()
                 .map(|s| {
-                    u32::try_from(s.len())
-                        .map_err(|_| Error::limit("tiff: a rewritten strip exceeds the format limit"))
+                    u32::try_from(s.len()).map_err(|_| {
+                        Error::limit("tiff: a rewritten strip exceeds the format limit")
+                    })
                 })
                 .collect::<Result<Vec<u32>>>()?;
             count = strips.len() as u32;
@@ -864,7 +890,8 @@ pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
                     .ok_or_else(|| Error::verify("tiff: unreadable Compression value"))?;
                 let allowed = was == now
                     || (was == COMPRESSION_NONE as u32 && now == COMPRESSION_DEFLATE as u32)
-                    || (was == COMPRESSION_ADOBE_DEFLATE as u32 && now == COMPRESSION_DEFLATE as u32);
+                    || (was == COMPRESSION_ADOBE_DEFLATE as u32
+                        && now == COMPRESSION_DEFLATE as u32);
                 if !allowed {
                     return Err(Error::verify(format!(
                         "tiff: compression changed from {was} to {now}"

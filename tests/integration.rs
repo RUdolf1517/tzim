@@ -44,7 +44,10 @@ fn png_ancillary_and_private_chunks_are_preserved() {
         extra_chunks: vec![
             ("tEXt".to_string(), b"Comment\0kept as is".to_vec()),
             ("prVt".to_string(), vec![1, 2, 3, 4, 5]),
-            ("pHYs".to_string(), vec![0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1]),
+            (
+                "pHYs".to_string(),
+                vec![0, 0, 0x0b, 0x13, 0, 0, 0x0b, 0x13, 1],
+            ),
         ],
         ..Default::default()
     };
@@ -59,7 +62,10 @@ fn png_ancillary_and_private_chunks_are_preserved() {
 
     let kept_before: Vec<_> = before.iter().filter(|(t, _)| t != "IDAT").collect();
     let kept_after: Vec<_> = after.iter().filter(|(t, _)| t != "IDAT").collect();
-    assert_eq!(kept_before, kept_after, "non-IDAT chunks must be preserved verbatim");
+    assert_eq!(
+        kept_before, kept_after,
+        "non-IDAT chunks must be preserved verbatim"
+    );
 }
 
 #[test]
@@ -77,7 +83,11 @@ fn dry_run_does_not_modify_anything() {
     let (code, stdout, stderr) = run(&["photo.png", "--dry-run"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("dry run"), "{stdout}");
-    assert_eq!(std::fs::read(&path).unwrap(), original, "file must be untouched");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "file must be untouched"
+    );
 
     // No temporary file may survive a dry run.
     let leftovers: Vec<_> = std::fs::read_dir(&ws.path)
@@ -110,7 +120,11 @@ fn second_run_is_a_no_op() {
         stdout.contains("already optimal") || stdout.contains("optimized"),
         "{stdout}"
     );
-    assert_eq!(std::fs::read(&path).unwrap(), once, "second run must not change the file");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        once,
+        "second run must not change the file"
+    );
 }
 
 #[test]
@@ -130,7 +144,11 @@ fn corrupt_png_is_refused_and_left_untouched() {
 
     let (code, stdout, _stderr) = run(&["broken.png"], &ws.path);
     assert_eq!(code, 1, "{stdout}");
-    assert_eq!(std::fs::read(&path).unwrap(), original, "corrupt input must be untouched");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "corrupt input must be untouched"
+    );
 }
 
 #[test]
@@ -148,8 +166,16 @@ fn gzip_header_is_preserved_byte_for_byte() {
 
     // Everything up to and including FEXTRA + FNAME must be identical.
     let header_len = 10 + 2 + 4 + "original-name.txt".len() + 1;
-    assert_eq!(&optimized[..header_len], &original[..header_len], "header changed");
-    assert_eq!(&optimized[optimized.len() - 8..], &original[original.len() - 8..], "trailer changed");
+    assert_eq!(
+        &optimized[..header_len],
+        &original[..header_len],
+        "header changed"
+    );
+    assert_eq!(
+        &optimized[optimized.len() - 8..],
+        &original[original.len() - 8..],
+        "trailer changed"
+    );
 }
 
 #[test]
@@ -219,7 +245,11 @@ fn duplicates_are_processed_once() {
 
     let (code, stdout, stderr) = run(&["a.png", "./a.png", ".", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(json_file_records(&stdout), 1, "duplicate paths must collapse: {stdout}");
+    assert_eq!(
+        json_file_records(&stdout),
+        1,
+        "duplicate paths must collapse: {stdout}"
+    );
 }
 
 #[test]
@@ -284,8 +314,7 @@ fn missing_path_fails_but_others_continue() {
     };
     ws.write("good.png", &build_png(&spec));
 
-    let (code, stdout, stderr) =
-        run(&["does-not-exist.png", "good.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["does-not-exist.png", "good.png"], &ws.path);
     assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("failed"), "{stdout}");
     assert!(stdout.contains("optimized"), "{stdout}");
@@ -412,8 +441,16 @@ fn include_and_exclude_filters() {
 
     let (code, _, stderr) = run(&[".", "--include", "gz"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(std::fs::read(&png).unwrap(), png_before, "png must be filtered out");
-    assert_ne!(std::fs::read(&gz).unwrap(), gz_before, "gz must be processed");
+    assert_eq!(
+        std::fs::read(&png).unwrap(),
+        png_before,
+        "png must be filtered out"
+    );
+    assert_ne!(
+        std::fs::read(&gz).unwrap(),
+        gz_before,
+        "gz must be processed"
+    );
 }
 
 #[cfg(unix)]
@@ -441,7 +478,10 @@ fn read_only_file_is_skipped() {
     std::fs::set_permissions(&path, perms).unwrap();
 
     assert_eq!(std::fs::read(&path).unwrap(), original);
-    assert!(stdout.contains("read-only") || stdout.contains("skipped"), "{stdout}");
+    assert!(
+        stdout.contains("read-only") || stdout.contains("skipped"),
+        "{stdout}"
+    );
 }
 
 #[cfg(unix)]
@@ -466,7 +506,10 @@ fn permissions_and_mtime_survive_the_replacement() {
     assert_eq!(code, 0, "{stderr}");
 
     let after = std::fs::metadata(&path).unwrap();
-    assert_eq!(before.permissions().mode() & 0o777, after.permissions().mode() & 0o777);
+    assert_eq!(
+        before.permissions().mode() & 0o777,
+        after.permissions().mode() & 0o777
+    );
     assert_eq!(
         before.modified().unwrap(),
         after.modified().unwrap(),
@@ -492,7 +535,11 @@ fn symlinks_are_not_followed_by_default() {
         let before = std::fs::read(&target).unwrap();
         let (code, stdout, stderr) = run(&["link.png"], &ws.path);
         assert_eq!(code, 0, "{stderr}");
-        assert_eq!(std::fs::read(&target).unwrap(), before, "target must be untouched");
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            before,
+            "target must be untouched"
+        );
         assert!(
             stdout.contains("symbolic link") || stdout.contains("skipped"),
             "{stdout}"
@@ -563,7 +610,10 @@ fn zip_deflate_entries_are_recompressed_and_everything_else_is_preserved() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
-    assert!(optimized.len() < original.len(), "expected a smaller archive");
+    assert!(
+        optimized.len() < original.len(),
+        "expected a smaller archive"
+    );
 
     let before = parse_zip(&original);
     let after = parse_zip(&optimized);
@@ -574,9 +624,18 @@ fn zip_deflate_entries_are_recompressed_and_everything_else_is_preserved() {
         assert_eq!(a.method, b.method, "methods must not change");
         assert_eq!(a.flags, b.flags, "flags must be preserved");
         assert_eq!(a.crc, b.crc, "CRC must be preserved");
-        assert_eq!(a.uncomp_size, b.uncomp_size, "uncompressed size must be preserved");
-        assert_eq!(a.local_extra, b.local_extra, "local extra fields must be preserved");
-        assert_eq!(a.central_extra, b.central_extra, "central extra fields must be preserved");
+        assert_eq!(
+            a.uncomp_size, b.uncomp_size,
+            "uncompressed size must be preserved"
+        );
+        assert_eq!(
+            a.local_extra, b.local_extra,
+            "local extra fields must be preserved"
+        );
+        assert_eq!(
+            a.central_extra, b.central_extra,
+            "central extra fields must be preserved"
+        );
         assert_eq!(a.comment, b.comment, "entry comments must be preserved");
         assert_eq!(
             a.decompressed(&original),
@@ -584,7 +643,10 @@ fn zip_deflate_entries_are_recompressed_and_everything_else_is_preserved() {
             "entry payload must be identical"
         );
     }
-    assert_eq!(zip_archive_comment(&original), zip_archive_comment(&optimized));
+    assert_eq!(
+        zip_archive_comment(&original),
+        zip_archive_comment(&optimized)
+    );
 }
 
 #[test]
@@ -668,7 +730,10 @@ fn zip_non_utf8_names_are_preserved() {
 
     let optimized = std::fs::read(&path).unwrap();
     let after = parse_zip(&optimized);
-    assert_eq!(after[0].name, vec![b'c', b'a', b'f', 0xe9, b'/', b'a', b'.', b't', b'x', b't']);
+    assert_eq!(
+        after[0].name,
+        vec![b'c', b'a', b'f', 0xe9, b'/', b'a', b'.', b't', b'x', b't']
+    );
     assert_eq!(after[0].comment, vec![0xff, 0xfe, 0x00]);
 }
 
@@ -690,7 +755,11 @@ fn signed_jar_is_refused_and_left_untouched() {
         stdout.contains("signature") || stdout.contains("signed"),
         "the reason must be reported: {stdout}"
     );
-    assert_eq!(std::fs::read(&path).unwrap(), original, "a signed archive must not change");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a signed archive must not change"
+    );
 }
 
 #[test]
@@ -713,7 +782,11 @@ fn signed_odf_document_is_refused() {
 fn apk_signing_block_is_refused() {
     let ws = Workspace::new("zip-apk");
     let archive = build_zip(
-        &[ZipEntrySpec::deflated("classes.dex", &compressible(30_000), 1)],
+        &[ZipEntrySpec::deflated(
+            "classes.dex",
+            &compressible(30_000),
+            1,
+        )],
         b"",
     );
 
@@ -722,8 +795,12 @@ fn apk_signing_block_is_refused() {
     let eocd_at = (0..=archive.len() - 22)
         .rev()
         .find(|&at| {
-            u32::from_le_bytes([archive[at], archive[at + 1], archive[at + 2], archive[at + 3]])
-                == ZIP_EOCD_SIG
+            u32::from_le_bytes([
+                archive[at],
+                archive[at + 1],
+                archive[at + 2],
+                archive[at + 3],
+            ]) == ZIP_EOCD_SIG
         })
         .unwrap();
     let cd_offset = u32::from_le_bytes([
@@ -779,7 +856,11 @@ fn zip64_is_refused() {
 fn encrypted_zip_is_refused() {
     let ws = Workspace::new("zip-crypt");
     let archive = build_zip_with_flags(
-        &[ZipEntrySpec::deflated("secret.txt", &compressible(5_000), 1)],
+        &[ZipEntrySpec::deflated(
+            "secret.txt",
+            &compressible(5_000),
+            1,
+        )],
         b"",
         0x0001,
     );
@@ -847,7 +928,14 @@ fn already_optimal_zip_is_left_alone() {
 #[test]
 fn zip_bomb_ratio_is_refused() {
     let ws = Workspace::new("zip-bomb");
-    let archive = build_zip(&[ZipEntrySpec::deflated("zeros.bin", &vec![0u8; 2_000_000], 6)], b"");
+    let archive = build_zip(
+        &[ZipEntrySpec::deflated(
+            "zeros.bin",
+            &vec![0u8; 2_000_000],
+            6,
+        )],
+        b"",
+    );
     let path = ws.write("bomb.zip", &archive);
 
     let (code, stdout, stderr) = run(&["bomb.zip", "--max-ratio", "10"], &ws.path);
@@ -893,16 +981,29 @@ fn apng_frames_are_recompressed_and_control_chunks_kept() {
     let after = png_chunks(&optimized).unwrap();
 
     // Every control chunk (acTL, fcTL) must be byte-identical and in order.
-    let controls_before: Vec<_> = before.iter().filter(|(t, _)| t != "IDAT" && t != "fdAT").collect();
-    let controls_after: Vec<_> = after.iter().filter(|(t, _)| t != "IDAT" && t != "fdAT").collect();
-    assert_eq!(controls_before, controls_after, "control chunks must be preserved");
+    let controls_before: Vec<_> = before
+        .iter()
+        .filter(|(t, _)| t != "IDAT" && t != "fdAT")
+        .collect();
+    let controls_after: Vec<_> = after
+        .iter()
+        .filter(|(t, _)| t != "IDAT" && t != "fdAT")
+        .collect();
+    assert_eq!(
+        controls_before, controls_after,
+        "control chunks must be preserved"
+    );
 
     // The number of frame chunks and their sequence numbers must not change.
     let fdat_before: Vec<_> = before.iter().filter(|(t, _)| t == "fdAT").collect();
     let fdat_after: Vec<_> = after.iter().filter(|(t, _)| t == "fdAT").collect();
     assert_eq!(fdat_before.len(), fdat_after.len());
     for (a, b) in fdat_before.iter().zip(fdat_after.iter()) {
-        assert_eq!(a.1[..4], b.1[..4], "fdAT sequence numbers must be preserved");
+        assert_eq!(
+            a.1[..4],
+            b.1[..4],
+            "fdAT sequence numbers must be preserved"
+        );
     }
 
     // Every frame must still decode to the same pixels.
@@ -969,7 +1070,10 @@ fn ico_embedded_pngs_are_optimized_and_bitmaps_preserved() {
     assert_eq!(before[1].0[..8], after[1].0[..8]);
 
     // The bitmap entry is untouched; the PNG entry still decodes identically.
-    assert_eq!(after[1].1, bitmap, "bitmap image must be preserved byte for byte");
+    assert_eq!(
+        after[1].1, bitmap,
+        "bitmap image must be preserved byte for byte"
+    );
     let (_, _, p1) = decode_pixels(&before[0].1).unwrap();
     let (_, _, p2) = decode_pixels(&after[0].1).unwrap();
     assert_eq!(p1, p2);
@@ -1079,8 +1183,15 @@ fn nested_optimization_reaches_the_file_inside_the_archive() {
 
     let entry = parse_zip(&nested_out).remove(0);
     let content = entry.decompressed(&nested_out);
-    assert!(content.len() < inner_png.len(), "the embedded PNG must shrink");
-    assert_eq!(entry.crc, crc32fast::hash(&content), "CRC must match the new content");
+    assert!(
+        content.len() < inner_png.len(),
+        "the embedded PNG must shrink"
+    );
+    assert_eq!(
+        entry.crc,
+        crc32fast::hash(&content),
+        "CRC must match the new content"
+    );
     let (_, _, p1) = decode_pixels(&inner_png).unwrap();
     let (_, _, p2) = decode_pixels(&content).unwrap();
     assert_eq!(p1, p2, "the embedded image must keep its pixels");
@@ -1115,7 +1226,10 @@ fn nested_depth_limit_is_respected() {
     let (code, _, stderr) = run(&["deep.zip", "--nested", "--max-depth", "3"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     let deep_out = std::fs::read(&deep).unwrap();
-    assert!(deep_out.len() < shallow_out.len(), "deeper nesting should save more");
+    assert!(
+        deep_out.len() < shallow_out.len(),
+        "deeper nesting should save more"
+    );
     let inner_after = parse_zip(&deep_out).remove(0).decompressed(&deep_out);
     let png_after = parse_zip(&inner_after).remove(0).decompressed(&inner_after);
     assert!(png_after.len() < inner_png.len());
@@ -1208,7 +1322,10 @@ fn jpeg_arithmetic_is_skipped() {
 
     let (code, stdout, stderr) = run(&["--formats", "jpeg", "arithmetic.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("SOF9") || stdout.contains("arithmetic"), "{stdout}");
+    assert!(
+        stdout.contains("SOF9") || stdout.contains("arithmetic"),
+        "{stdout}"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
@@ -1262,7 +1379,10 @@ fn jpeg_trailing_bytes_after_eoi_are_preserved() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let after = std::fs::read(&path).unwrap();
     assert!(after.len() < original.len());
-    assert!(after.ends_with(trailing), "trailing bytes were not preserved");
+    assert!(
+        after.ends_with(trailing),
+        "trailing bytes were not preserved"
+    );
 }
 
 #[test]
@@ -1295,7 +1415,10 @@ fn jpeg_restart_intervals_are_preserved() {
     assert!(after.len() < original.len());
 
     // DRI (interval 3) must survive verbatim, and the scan must still use RSTn.
-    assert!(has(&after, &[0xff, 0xdd, 0x00, 0x04, 0x00, 0x03]), "DRI lost");
+    assert!(
+        has(&after, &[0xff, 0xdd, 0x00, 0x04, 0x00, 0x03]),
+        "DRI lost"
+    );
     assert!(
         after.windows(2).any(|w| w == [0xff, 0xd0]),
         "restart markers lost"
@@ -1305,7 +1428,6 @@ fn jpeg_restart_intervals_are_preserved() {
     assert_eq!(code, 0);
     assert!(stdout.contains("already optimal"), "{stdout}");
 }
-
 
 // ---------------------------------------------------------------------------
 // --strip-metadata
@@ -1351,8 +1473,15 @@ fn strip_metadata_removes_png_text_and_exif_but_keeps_the_content() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let stripped = std::fs::read(&path).unwrap();
-    assert!(stripped.len() < original.len(), "stripping must shrink the file");
-    let chunks: Vec<String> = png_chunks(&stripped).unwrap().into_iter().map(|(t, _)| t).collect();
+    assert!(
+        stripped.len() < original.len(),
+        "stripping must shrink the file"
+    );
+    let chunks: Vec<String> = png_chunks(&stripped)
+        .unwrap()
+        .into_iter()
+        .map(|(t, _)| t)
+        .collect();
     assert!(!chunks.contains(&"tEXt".to_string()), "{chunks:?}");
     assert!(!chunks.contains(&"tIME".to_string()), "{chunks:?}");
     // A chunk this build does not understand stays: deleting what we cannot
@@ -1377,7 +1506,11 @@ fn strip_metadata_clears_the_gzip_header_and_keeps_the_payload() {
 
     let stripped = std::fs::read(&path).unwrap();
     assert!(stripped.len() < original.len());
-    assert_eq!(&stripped[..4], &[0x1f, 0x8b, 0x08, 0x00], "flags must be zero");
+    assert_eq!(
+        &stripped[..4],
+        &[0x1f, 0x8b, 0x08, 0x00],
+        "flags must be zero"
+    );
     assert_eq!(&stripped[4..8], &[0, 0, 0, 0], "MTIME must be zero");
     assert!(
         !stripped.windows(16).any(|w| w == b"secret-name.txt\0"),
@@ -1436,7 +1569,10 @@ fn strip_metadata_drops_jpeg_exif_and_comment() {
 
     let stripped = std::fs::read(&path).unwrap();
     let markers = jpeg_header_markers(&stripped);
-    assert!(!markers.contains(&0xe1), "APP1 must be gone: {markers:02x?}");
+    assert!(
+        !markers.contains(&0xe1),
+        "APP1 must be gone: {markers:02x?}"
+    );
     assert!(!markers.contains(&0xfe), "COM must be gone: {markers:02x?}");
     // JFIF stays: it declares the pixel density and the colour space.
     assert!(markers.contains(&0xe0), "{markers:02x?}");
@@ -1464,12 +1600,18 @@ fn strip_metadata_drops_zip_comments_and_keeps_extra_fields() {
     let before = parse_zip(&original);
     let after = parse_zip(&stripped);
     assert_eq!(after.len(), before.len());
-    assert!(after[0].comment.is_empty(), "the entry comment must be gone");
+    assert!(
+        after[0].comment.is_empty(),
+        "the entry comment must be gone"
+    );
     assert_eq!(
         after[0].central_extra, before[0].central_extra,
         "extra fields are structure, not decoration"
     );
-    assert_eq!(after[0].decompressed(&stripped), before[0].decompressed(&original));
+    assert_eq!(
+        after[0].decompressed(&stripped),
+        before[0].decompressed(&original)
+    );
 }
 
 #[test]
@@ -1486,11 +1628,17 @@ fn strip_metadata_is_reported_and_dry_run_writes_nothing() {
     let (code, stdout, stderr) = run(&["tagged.png", "--strip-metadata", "--dry-run"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("metadata stripped"), "{stdout}");
-    assert_eq!(std::fs::read(&path).unwrap(), original, "dry run must not write");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "dry run must not write"
+    );
 
     // The JSON schema says so too, for scripts that audit what happened.
-    let (code, stdout, stderr) =
-        run(&["tagged.png", "--strip-metadata", "--dry-run", "--json"], &ws.path);
+    let (code, stdout, stderr) = run(
+        &["tagged.png", "--strip-metadata", "--dry-run", "--json"],
+        &ws.path,
+    );
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("\"metadata_stripped\":true"), "{stdout}");
     assert!(stdout.contains("\"strip_metadata\":true"), "{stdout}");
@@ -1530,7 +1678,10 @@ fn tiff_uncompressed_strips_are_compressed_and_decode_identically() {
         samples_per_pixel: 3,
         photometric: 2,
         rows_per_strip: 16,
-        extra_ascii: vec![(270, "a description".to_string()), (305, "some editor".to_string())],
+        extra_ascii: vec![
+            (270, "a description".to_string()),
+            (305, "some editor".to_string()),
+        ],
         ..Default::default()
     };
     let original = build_tiff(&spec);
@@ -1541,8 +1692,16 @@ fn tiff_uncompressed_strips_are_compressed_and_decode_identically() {
 
     let optimized = std::fs::read(&path).unwrap();
     assert!(optimized.len() < original.len(), "expected a smaller file");
-    assert_eq!(tiff_compression(&optimized), 8, "strips must be Deflate now");
-    assert_eq!(tiff_strips(&optimized), tiff_strips(&original), "pixels must be identical");
+    assert_eq!(
+        tiff_compression(&optimized),
+        8,
+        "strips must be Deflate now"
+    );
+    assert_eq!(
+        tiff_strips(&optimized),
+        tiff_strips(&original),
+        "pixels must be identical"
+    );
 
     // Everything but the three entries the rewrite is allowed to touch.
     let before = parse_tiff_tags(&original);
@@ -1578,10 +1737,17 @@ fn tiff_both_byte_orders_round_trip() {
         let original = build_tiff(&spec);
         let path = ws.write("scan.tif", &original);
         let (code, stdout, stderr) = run(&["scan.tif"], &ws.path);
-        assert_eq!(code, 0, "big_endian={big_endian} stdout={stdout} stderr={stderr}");
+        assert_eq!(
+            code, 0,
+            "big_endian={big_endian} stdout={stdout} stderr={stderr}"
+        );
 
         let optimized = std::fs::read(&path).unwrap();
-        assert_eq!(&optimized[..2], &original[..2], "byte order must be preserved");
+        assert_eq!(
+            &optimized[..2],
+            &original[..2],
+            "byte order must be preserved"
+        );
         assert_eq!(tiff_strips(&optimized), tiff_strips(&original));
     }
 }
@@ -1602,7 +1768,11 @@ fn tiff_already_deflated_small_file_is_left_alone() {
     let (code, stdout, stderr) = run(&["tiny.tif"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("already"), "{stdout}");
-    assert_eq!(std::fs::read(&path).unwrap(), original, "nothing to gain, nothing to write");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "nothing to gain, nothing to write"
+    );
 }
 
 #[test]
@@ -1649,7 +1819,10 @@ fn tiff_lzw_is_skipped_because_there_is_no_encoder() {
 
     let (code, stdout, stderr) = run(&["lzw.tif"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("compression 5") || stdout.contains("LZW"), "{stdout}");
+    assert!(
+        stdout.contains("compression 5") || stdout.contains("LZW"),
+        "{stdout}"
+    );
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
@@ -1719,9 +1892,15 @@ fn tiff_strip_metadata_removes_only_textual_tags() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let optimized = std::fs::read(&path).unwrap();
-    let tags: Vec<u16> = parse_tiff_tags(&optimized).into_iter().map(|(t, _, _, _)| t).collect();
+    let tags: Vec<u16> = parse_tiff_tags(&optimized)
+        .into_iter()
+        .map(|(t, _, _, _)| t)
+        .collect();
     for removed in [270u16, 305, 315, 33432] {
-        assert!(!tags.contains(&removed), "tag {removed} should be gone: {tags:?}");
+        assert!(
+            !tags.contains(&removed),
+            "tag {removed} should be gone: {tags:?}"
+        );
     }
     assert!(tags.contains(&274), "Orientation is geometry, not metadata");
     assert!(tags.contains(&256) && tags.contains(&259), "{tags:?}");
@@ -1760,15 +1939,24 @@ fn colour_is_absent_in_a_pipe_and_present_when_forced() {
     // though the same bytes would be coloured in a real terminal.
     let (code, plain, _) = run(&["a.png"], &ws.path);
     assert_eq!(code, 0);
-    assert!(!plain.contains('\u{1b}'), "a pipe must stay clean: {plain:?}");
+    assert!(
+        !plain.contains('\u{1b}'),
+        "a pipe must stay clean: {plain:?}"
+    );
 
     let (code, forced, _) = run(&["--color=always", "--dry-run", "a.png"], &ws.path);
     assert_eq!(code, 0);
-    assert!(forced.contains("\u{1b}["), "--color=always must colour: {forced:?}");
+    assert!(
+        forced.contains("\u{1b}["),
+        "--color=always must colour: {forced:?}"
+    );
 
     let (code, never, _) = run(&["--color=never", "--dry-run", "a.png"], &ws.path);
     assert_eq!(code, 0);
-    assert!(!never.contains('\u{1b}'), "--color=never must not colour: {never:?}");
+    assert!(
+        !never.contains('\u{1b}'),
+        "--color=never must not colour: {never:?}"
+    );
 
     // The escape sequences must not change the text: stripping them gives back
     // exactly what --color=never printed. Only the first line is compared,
@@ -1792,8 +1980,15 @@ fn json_is_never_coloured() {
 
     let (code, stdout, stderr) = run(&["--json", "--color=always", "a.png"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
-    assert!(!stdout.contains('\u{1b}'), "JSON carried an escape: {stdout:?}");
-    assert!(stdout.lines().last().unwrap().contains("\"type\":\"summary\""));
+    assert!(
+        !stdout.contains('\u{1b}'),
+        "JSON carried an escape: {stdout:?}"
+    );
+    assert!(stdout
+        .lines()
+        .last()
+        .unwrap()
+        .contains("\"type\":\"summary\""));
 }
 
 #[test]
@@ -1831,8 +2026,14 @@ fn usage_errors_show_the_usage_line() {
     let ws = Workspace::new("usage-line");
     let (code, stdout, stderr) = run(&["--nope"], &ws.path);
     assert_eq!(code, 2);
-    assert!(stdout.is_empty(), "usage errors belong on stderr: {stdout:?}");
-    assert!(stderr.contains("usage: tzim [OPTIONS] <PATH>..."), "{stderr}");
+    assert!(
+        stdout.is_empty(),
+        "usage errors belong on stderr: {stdout:?}"
+    );
+    assert!(
+        stderr.contains("usage: tzim [OPTIONS] <PATH>..."),
+        "{stderr}"
+    );
     assert!(stderr.contains("--nope"), "{stderr}");
     assert!(stderr.contains("--help"), "{stderr}");
 }
@@ -1914,7 +2115,11 @@ fn zlib_is_recompressed_and_the_payload_is_identical() {
 
     let optimized = std::fs::read(&path).unwrap();
     assert!(optimized.len() < original.len(), "expected a smaller file");
-    assert_eq!(optimized[..2], original[..2], "the header is copied verbatim");
+    assert_eq!(
+        optimized[..2],
+        original[..2],
+        "the header is copied verbatim"
+    );
     assert_eq!(
         optimized[optimized.len() - 4..],
         original[original.len() - 4..],
@@ -2014,7 +2219,10 @@ fn a_false_positive_is_reported_and_never_written() {
     let path = ws.write("fake.zlib", &data);
 
     let (code, stdout, stderr) = run(&["fake.zlib"], &ws.path);
-    assert!(code == 0 || code == 1, "code={code} stdout={stdout} stderr={stderr}");
+    assert!(
+        code == 0 || code == 1,
+        "code={code} stdout={stdout} stderr={stderr}"
+    );
     assert!(
         stdout.contains("failed") || stdout.contains("skipped"),
         "{stdout}"

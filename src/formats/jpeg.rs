@@ -55,7 +55,9 @@ struct Image {
 
 fn parse(data: &[u8]) -> Result<Image> {
     if data.len() < 4 || data[0] != 0xff || data[1] != SOI {
-        return Err(Error::parse("jpeg: the file does not start with an SOI marker"));
+        return Err(Error::parse(
+            "jpeg: the file does not start with an SOI marker",
+        ));
     }
     let mut segments = Vec::new();
     let mut pos = 2usize;
@@ -227,7 +229,9 @@ fn parse_sof(payload: &[u8]) -> Result<Frame> {
             ));
         }
         if comps.iter().any(|c| c.id == id) {
-            return Err(Error::parse("jpeg: duplicate component id in the frame header"));
+            return Err(Error::parse(
+                "jpeg: duplicate component id in the frame header",
+            ));
         }
         hmax = hmax.max(h);
         vmax = vmax.max(v);
@@ -325,14 +329,18 @@ fn parse_dht(payload: &[u8]) -> Result<Vec<(TableKey, Huff)>> {
         let class = payload[p] >> 4;
         let id = payload[p] & 0x0f;
         if class > 1 || id > 3 {
-            return Err(Error::parse("jpeg: a Huffman table selector is out of range"));
+            return Err(Error::parse(
+                "jpeg: a Huffman table selector is out of range",
+            ));
         }
         let mut counts = [0u8; 17];
         counts[1..17].copy_from_slice(&payload[p + 1..p + 17]);
         p += 17;
         let total: usize = counts[1..].iter().map(|&c| c as usize).sum();
         if total > 256 || p + total > payload.len() {
-            return Err(Error::parse("jpeg: a DHT segment has an invalid symbol count"));
+            return Err(Error::parse(
+                "jpeg: a DHT segment has an invalid symbol count",
+            ));
         }
         let vals = payload[p..p + total].to_vec();
         p += total;
@@ -465,7 +473,9 @@ impl HuffDec {
 #[allow(clippy::needless_range_loop)]
 fn table_from_lengths(vals: &[u8], lengths: &[u8]) -> Result<Huff> {
     if vals.is_empty() || vals.len() != lengths.len() {
-        return Err(Error::internal("jpeg: table lengths do not match the symbol list"));
+        return Err(Error::internal(
+            "jpeg: table lengths do not match the symbol list",
+        ));
     }
     let mut order: Vec<usize> = (0..vals.len()).collect();
     order.sort_by(|&a, &b| lengths[a].cmp(&lengths[b]).then(vals[a].cmp(&vals[b])));
@@ -473,7 +483,9 @@ fn table_from_lengths(vals: &[u8], lengths: &[u8]) -> Result<Huff> {
     for &i in &order {
         let len = lengths[i] as usize;
         if len == 0 || len > 16 {
-            return Err(Error::internal("jpeg: a generated code length is out of range"));
+            return Err(Error::internal(
+                "jpeg: a generated code length is out of range",
+            ));
         }
         counts[len] += 1;
     }
@@ -514,10 +526,7 @@ fn flat_table(counts: &[u64; 256]) -> Huff {
         remaining -= take;
         level += 1;
     }
-    Huff {
-        counts: out,
-        vals,
-    }
+    Huff { counts: out, vals }
 }
 
 /// Optimal Huffman table for the observed symbol frequencies (Annex K.2),
@@ -1255,13 +1264,7 @@ fn encode_scan(
                     let block = decoded.planes[index]
                         .get(offset..offset + 64)
                         .ok_or_else(|| Error::internal("jpeg: block offset outside the plane"))?;
-                    encode_block(
-                        &mut writer,
-                        dc_table,
-                        ac_table,
-                        &mut predicts[index],
-                        block,
-                    );
+                    encode_block(&mut writer, dc_table, ac_table, &mut predicts[index], block);
                 }
             }
         }
@@ -1484,7 +1487,10 @@ mod tests {
 
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 33
         }
     }
@@ -1519,7 +1525,10 @@ mod tests {
             // Every symbol that occurred must be encodable.
             let enc = Enc::build(&table).expect("encoder table");
             for (symbol, length) in enc.lens.iter().take(alphabet).enumerate() {
-                assert!(*length > 0, "round {round}: symbol {symbol} is not encodable");
+                assert!(
+                    *length > 0,
+                    "round {round}: symbol {symbol} is not encodable"
+                );
             }
         }
     }
@@ -1566,7 +1575,10 @@ mod tests {
             writer.pad_with_ones();
             let mut reader = Reader::new(&writer.out);
             let decoded = receive(&mut reader, size).expect("receive");
-            assert_eq!(decoded, value, "value {value} did not survive the round trip");
+            assert_eq!(
+                decoded, value,
+                "value {value} did not survive the round trip"
+            );
         }
     }
 

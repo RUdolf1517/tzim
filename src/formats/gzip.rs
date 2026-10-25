@@ -165,10 +165,7 @@ fn recompress(body: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     }
 
     let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(9));
-    io::copy(
-        &mut flate2::read::DeflateDecoder::new(body),
-        &mut encoder,
-    )?;
+    io::copy(&mut flate2::read::DeflateDecoder::new(body), &mut encoder)?;
     Ok(encoder.finish()?)
 }
 
@@ -201,8 +198,10 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
     let total = header.len() as u64 + best.len() as u64 + TRAILER as u64;
     // Stripping can leave the length unchanged — zeroing MTIME costs nothing —
     // so the flag, not the size, decides whether such a rewrite is worth writing.
-    let worth_writing =
-        total < data.len() as u64 || (opts.strip_metadata && total == data.len() as u64 && header.as_slice() != original_header);
+    let worth_writing = total < data.len() as u64
+        || (opts.strip_metadata
+            && total == data.len() as u64
+            && header.as_slice() != original_header);
     if !worth_writing {
         return Ok(Cand::NoGain);
     }

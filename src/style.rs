@@ -210,7 +210,10 @@ mod tests {
             no_color: true,
             ..probe()
         };
-        assert!(enabled(Choice::Always, &off), "an explicit yes beats NO_COLOR");
+        assert!(
+            enabled(Choice::Always, &off),
+            "an explicit yes beats NO_COLOR"
+        );
 
         let on = Probe {
             clicolor_force: Some("1".to_string()),

@@ -253,7 +253,11 @@ fn push_summary<W: Write + ?Sized>(
     dry_run: bool,
     style: Style,
 ) -> io::Result<()> {
-    let action = if dry_run { "would optimize" } else { "optimized" };
+    let action = if dry_run {
+        "would optimize"
+    } else {
+        "optimized"
+    };
     let saved = summary.before.saturating_sub(summary.after);
     let hundredths = (summary.elapsed.as_micros() + 5_000) / 10_000;
 

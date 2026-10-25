@@ -180,10 +180,7 @@ fn recompress(body: &[u8], zopfli: bool) -> Result<Vec<u8>> {
     }
 
     let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(9));
-    io::copy(
-        &mut flate2::read::DeflateDecoder::new(body),
-        &mut encoder,
-    )?;
+    io::copy(&mut flate2::read::DeflateDecoder::new(body), &mut encoder)?;
     Ok(encoder.finish()?)
 }
 
@@ -326,8 +323,14 @@ mod tests {
         let payload = compressible(50_000);
         let original = build(&payload, 9);
         let mut out = Vec::new();
-        assert!(matches!(optimize(&original, &mut out, &opts()).unwrap(), Cand::NoGain));
-        assert!(out.is_empty(), "nothing may be written when there is no gain");
+        assert!(matches!(
+            optimize(&original, &mut out, &opts()).unwrap(),
+            Cand::NoGain
+        ));
+        assert!(
+            out.is_empty(),
+            "nothing may be written when there is no gain"
+        );
     }
 
     #[test]

@@ -261,9 +261,9 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "--nested" => out.nested = true,
             "--max-depth" => {
                 let v = take_value(inline)?;
-                let depth = v
-                    .parse::<u32>()
-                    .map_err(|_| Error::usage(format!("`--max-depth` expects a number, got `{v}`")))?;
+                let depth = v.parse::<u32>().map_err(|_| {
+                    Error::usage(format!("`--max-depth` expects a number, got `{v}`"))
+                })?;
                 if depth == 0 {
                     return Err(Error::usage("`--max-depth` must be at least 1"));
                 }
@@ -473,12 +473,23 @@ mod tests {
     #[test]
     fn colour_is_a_three_word_choice() {
         assert_eq!(parse_ok(&["x"]).color, ColorChoice::Auto);
-        assert_eq!(parse_ok(&["--color=always", "x"]).color, ColorChoice::Always);
-        assert_eq!(parse_ok(&["--color", "never", "x"]).color, ColorChoice::Never);
+        assert_eq!(
+            parse_ok(&["--color=always", "x"]).color,
+            ColorChoice::Always
+        );
+        assert_eq!(
+            parse_ok(&["--color", "never", "x"]).color,
+            ColorChoice::Never
+        );
         assert_eq!(parse_ok(&["--no-color", "x"]).color, ColorChoice::Never);
-        let args: Vec<OsString> = ["--color=sometimes", "x"].iter().map(OsString::from).collect();
+        let args: Vec<OsString> = ["--color=sometimes", "x"]
+            .iter()
+            .map(OsString::from)
+            .collect();
         match parse(args.into_iter()) {
-            Err(Error::Usage(message)) => assert!(message.contains("auto, always or never"), "{message}"),
+            Err(Error::Usage(message)) => {
+                assert!(message.contains("auto, always or never"), "{message}")
+            }
             other => panic!("expected a usage error, got {other:?}"),
         }
     }
