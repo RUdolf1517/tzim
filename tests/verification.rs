@@ -101,13 +101,13 @@ fn verification_rejects_changed_pixels() {
         raw[1] = raw[1].wrapping_add(1);
     });
     assert_ne!(candidate, original);
-    assert!(png_chunks(&candidate).is_ok(), "the candidate must be a valid PNG");
+    assert!(
+        png_chunks(&candidate).is_ok(),
+        "the candidate must be a valid PNG"
+    );
 
     let err = formats::png::verify(&original, &candidate, &options(false)).unwrap_err();
-    assert!(
-        err.to_string().contains("decoded pixels differ"),
-        "{err}"
-    );
+    assert!(err.to_string().contains("decoded pixels differ"), "{err}");
 }
 
 #[test]
@@ -161,7 +161,8 @@ fn verification_rejects_a_changed_stored_entry() {
     // thing that changed.
     let mut candidate = original.clone();
     let parsed = parse_zip(&original);
-    let offset = parsed[0].local_offset as usize + 30 + parsed[0].name.len() + parsed[0].local_extra.len();
+    let offset =
+        parsed[0].local_offset as usize + 30 + parsed[0].name.len() + parsed[0].local_extra.len();
     candidate[offset] ^= 0x01;
 
     let err = formats::zip::verify(&original, &candidate, &options(false)).unwrap_err();
@@ -180,7 +181,10 @@ fn verification_rejects_a_surviving_comment() {
     );
 
     let err = formats::zip::verify(&original, &candidate, &options(true)).unwrap_err();
-    assert!(err.to_string().contains("archive comment survived"), "{err}");
+    assert!(
+        err.to_string().contains("archive comment survived"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -269,8 +273,8 @@ fn verification_accepts_an_equal_size_candidate_only_when_stripping() {
     let equal_a = b"0123456789";
     let equal_b = b"9876543210";
 
-    let plain = formats::verify(tzim::detect::Format::Png, equal_a, equal_b, &options(false))
-        .unwrap_err();
+    let plain =
+        formats::verify(tzim::detect::Format::Png, equal_a, equal_b, &options(false)).unwrap_err();
     assert!(
         plain.to_string().contains("candidate is"),
         "an equal-size candidate must be refused without the flag: {plain}"

@@ -1736,8 +1736,12 @@ fn zip_central_stamps(archive: &[u8]) -> Vec<(u16, u16)> {
         archive[eocd + 19],
     ]) as usize;
     let mut out = Vec::new();
-    while u32::from_le_bytes([archive[pos], archive[pos + 1], archive[pos + 2], archive[pos + 3]])
-        == ZIP_CENTRAL_SIG
+    while u32::from_le_bytes([
+        archive[pos],
+        archive[pos + 1],
+        archive[pos + 2],
+        archive[pos + 3],
+    ]) == ZIP_CENTRAL_SIG
     {
         out.push((
             u16::from_le_bytes([archive[pos + 12], archive[pos + 13]]),
@@ -2200,15 +2204,15 @@ fn nested_children_inherit_the_formats_allowlist() {
         ..Default::default()
     };
     let inner_png = build_png(&png_spec);
-    let original = build_zip(&[ZipEntrySpec::deflated("images/logo.png", &inner_png, 1)], b"");
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("images/logo.png", &inner_png, 1)],
+        b"",
+    );
     let path = ws.write("archive.zip", &original);
 
     // `zip` is enabled, `png` is not: the archive is still recompressed, but its
     // child is left byte for byte alone even though `--nested` is on.
-    let (code, stdout, stderr) = run(
-        &["archive.zip", "--nested", "--formats", "zip"],
-        &ws.path,
-    );
+    let (code, stdout, stderr) = run(&["archive.zip", "--nested", "--formats", "zip"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
 
     let out = std::fs::read(&path).unwrap();

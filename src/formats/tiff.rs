@@ -995,7 +995,10 @@ mod tests {
         // a description of the data set rather than of the person who made it,
         // and adding it would be a behaviour change, not a documentation fix.
         assert!(!is_stripped(42113));
-        assert!(!is_stripped(274), "Orientation decides how the image is shown");
+        assert!(
+            !is_stripped(274),
+            "Orientation decides how the image is shown"
+        );
         assert!(!is_stripped(282) && !is_stripped(283), "resolution is kept");
     }
 

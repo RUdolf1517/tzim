@@ -548,7 +548,11 @@ mod tests {
             8,
             "Cyrillic is one cell per letter"
         );
-        assert_eq!(display_width("写真.png"), 8, "two wide characters, four cells");
+        assert_eq!(
+            display_width("写真.png"),
+            8,
+            "two wide characters, four cells"
+        );
         assert_eq!(display_width("📷.png"), 6, "an emoji is two cells");
         assert_eq!(
             display_width("e\u{301}"),

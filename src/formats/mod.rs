@@ -361,8 +361,14 @@ mod tests {
     #[test]
     fn equal_size_is_accepted_only_when_stripping() {
         assert!(size_ok(100, 99, false), "smaller is the normal case");
-        assert!(!size_ok(100, 100, false), "without --strip-metadata, equal is not a gain");
-        assert!(size_ok(100, 99, true), "smaller is still accepted with the flag");
+        assert!(
+            !size_ok(100, 100, false),
+            "without --strip-metadata, equal is not a gain"
+        );
+        assert!(
+            size_ok(100, 99, true),
+            "smaller is still accepted with the flag"
+        );
         assert!(
             size_ok(100, 100, true),
             "zeroing a timestamp removes metadata without removing bytes"
