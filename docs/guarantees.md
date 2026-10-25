@@ -797,6 +797,11 @@ does not match, and a stream that decoded at least one byte before it broke. All
 untouched. The distinction from the row above is the whole rule: **nothing decoded — unsupported; something
 decoded and then failed — corrupt.** A truncated `.zlib` that produced bytes must not hide behind exit 0.
 
+The rule has one cost, and it is the price of making it decidable: a stream cut so short that **nothing at all**
+decodes — a large file truncated to a few dozen bytes — is reported `unsupported` rather than corrupt, because
+at that length it is byte-for-byte indistinguishable from a coincidental header. Nothing is lost but the
+label and the exit code: the file is untouched either way.
+
 **`--strip-metadata`** does nothing here, and says nothing: a zlib header carries no name, no comment and no
 timestamp, and `FLEVEL` describes the encoder rather than the file. The flag is accepted and the output is
 the same as without it.

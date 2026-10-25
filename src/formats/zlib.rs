@@ -407,15 +407,13 @@ mod tests {
         assert!(matches!(err, Error::Refused(_)), "{err}");
     }
 
-    #[test]
-    fn a_truncated_stream_is_a_failure() {
-        let data = build(&compressible(5000), 6);
-        let err = inspect(&data[..data.len() / 2]).unwrap_err();
-        assert!(matches!(err, Error::Parse(_) | Error::Io(_)), "{err}");
-    }
-
     /// The half of #52 that must not move: a stream that really was DEFLATE and
     /// then ends early stays a failure, even though it is truncated.
+    ///
+    /// The cost of the rule is stated in `guarantees.md` §4.10 and not hidden
+    /// here: a stream cut so short that *nothing* decodes is indistinguishable
+    /// from the coincidental header above, and is reported `unsupported`. The
+    /// distinction is how far the decoder got, so it cannot be made finer.
     #[test]
     fn a_truncated_stream_that_decoded_bytes_is_still_a_failure() {
         let data = build(&compressible(50_000), 6);

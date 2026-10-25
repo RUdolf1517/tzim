@@ -21,7 +21,10 @@ The binary is the same size.
   containing one, and until now that file was reported as corrupt: `failed`, exit 1, whole run red. The rule is
   now by how far the stream got: **nothing decoded → `unsupported`, exit 0**, with a note saying the header was
   a coincidence and the file is untouched; **something decoded and then failed → `failed`, exit 1**, unchanged.
-  A truncated `.zlib` still fails, and the two cases are never merged. The classifier is the error the handler
+  A truncated `.zlib` that produced bytes still fails, and the two cases are never merged; the cost of making
+  the rule decidable is that a stream cut so short that nothing decodes is `unsupported` too, because at that
+  length it is byte-for-byte indistinguishable from a coincidental header. Nothing is lost but the label: the
+  file is untouched either way. The classifier is the error the handler
   raises, not a second rule in the pipeline: `Error::Unsupported` is the one variant a handler may use to
   overrule the detector, and detection itself is untouched — `BTYPE = 3` would divide the probability by 1.33
   and a trial decode at detection time would cost a pass over every unrecognised file.
