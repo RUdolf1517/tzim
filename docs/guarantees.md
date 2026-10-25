@@ -901,6 +901,102 @@ median < 1 % refuses it with the numbers on record.
 
 ---
 
+### 4.12. FITS — contract written, not implemented
+
+**Status: not implemented, and not yet justified.** No FITS code exists and `--list-formats` does not name the
+format. FITS was never refused; it was absent, and it is now specified so that the question becomes measurable
+([fits-audit](fits-audit.md)). Nothing in this section is a claim of support.
+
+Two preconditions, from [fits-audit §0](fits-audit.md#0-what-is-a-fact-here-and-what-has-to-be-re-read-from-the-source),
+must be confirmed against the convention before any code is written, because both change the design rather than
+its details: that a `GZIP_1`/`GZIP_2` tile payload is an RFC 1950 stream, and the exact byte permutation the
+`GZIP_2` shuffle applies.
+
+**Transformation.** Two tiers, admitting different amounts of change.
+
+- **Tier 1 (recompress).** In a tile-compressed image HDU (`ZIMAGE = T`) whose `ZCMPTYPE` is `GZIP_1` or
+  `GZIP_2`: inflate every tile, deflate it again at a higher level, rebuild the table's heap and the `P`/`Q`
+  descriptors that address it. The file remains a `BINTABLE`; no card other than the derived ones changes.
+- **Tier 2 (compress).** In an uncompressed image HDU: write the same array as a tile-compressed `BINTABLE`
+  under the registered tile-compression convention. The numbers are identical; the representation is different.
+  This is the same class of change as TIFF `Compression 1 → 8` in §4.8.
+
+**Accepted subset** — a file is rewritten only when all of these hold, and is skipped with a reason otherwise:
+
+- `SIMPLE = T` starts the file at offset 0; every HDU is a whole number of 2880-byte records;
+- every header ends with an `END` card inside its records, and no card is truncated;
+- for each image HDU, `|BITPIX|/8 × Π NAXISn` equals the data length the file actually holds;
+- `BITPIX` is one of 8, 16, 32, 64, −32, −64;
+- `GROUPS = T` is absent;
+- `BSCALE` is not zero;
+- Tier 1: `ZCMPTYPE` is `GZIP_1` or `GZIP_2`; every `ZTILEn` divides the corresponding `ZNAXISn`; every heap
+  descriptor points inside the heap; every tile payload is a well-formed RFC 1950 stream whose Adler-32 matches
+  its inflated bytes;
+- Tier 2: the HDU is an image HDU of a supported `BITPIX`; the run asked for it (`--fits-tile`);
+- `CHECKSUM`/`DATASUM`, when present, are recomputed correctly or the file is refused — a stale checksum is a
+  corrupted file by the format's own definition.
+
+**Preserved, byte-identically:**
+
+- every HDU that was not rewritten, including its header, its data and its padding;
+- in a Tier 1 rewrite: every card except `NAXIS1`, `NAXIS2`, `PCOUNT`, `CHECKSUM` and `DATASUM` of that HDU —
+  including `ZSIMPLE`, `ZBITPIX`, `ZNAXIS`, `ZNAXISn`, `ZTILEn`, `ZCMPTYPE`, `ZNAME`, `ZBLANK`, `BSCALE`,
+  `BZERO`, `ZHECKSUM` and `ZDATASUM`;
+- in a Tier 2 rewrite: every card of the original header survives, either as itself or as the `Z`-prefixed card
+  the convention defines for it; no keyword is dropped ([I3](#3-global-invariants));
+- the array of numbers, in every tier: the inflated bytes, compared element by element as bytes. `BSCALE` and
+  `BZERO` are never applied, never normalised and never written back in a different form.
+
+**Allowed to change:**
+
+- the compressed tile bytes and their lengths;
+- the `P`/`Q` heap descriptors, `NAXIS1`, `NAXIS2` and `PCOUNT` of the HDU that was rewritten;
+- the padding at the end of header records and after the heap;
+- `CHECKSUM` and `DATASUM`, recomputed from the new bytes;
+- in Tier 2 only: `XTENSION`, `TFIELDS`, `TTYPEn`, `TFORMn`, the `Z*` cards and the `BITPIX`/`NAXIS` pair that
+  become `ZBITPIX`/`ZNAXISn`;
+- the total length of the file.
+
+No byte offset elsewhere in the file has to be updated: FITS has no pointer table. That is the single largest
+simplification this format offers over TIFF and PDF, and it is why the correctness argument here is short.
+
+**Verification** — structure **V3** (this repository's own card and table reader), content **V1** (`flate2`
+inflates the candidate's tiles and the bytes are compared with the original array):
+
+1. both files parse, every HDU begins and ends on a 2880-byte boundary, and the HDU count is unchanged;
+2. every HDU that was not rewritten is byte-identical;
+3. in Tier 1, every card other than the five named above is byte-identical, and the number of rows and tiles is
+   unchanged;
+4. in Tier 2, every original keyword is present in the candidate either verbatim or in its `Z` form, and no
+   external keyword was invented;
+5. **the round trip**: decompressing the candidate's tiles and concatenating them in the order the convention
+   defines yields bytes identical to the original array. This is the clause that carries the trust, and it is
+   stronger than anything TIFF or PDF can offer — there is no decoder, no pixel model and no renderer in the
+   path;
+6. `CHECKSUM`/`DATASUM`, when written, verify against an independent computation;
+7. `candidate.len() < input.len()`, and under `--strip-metadata` the rule of [§2.7](#27-g4--metadata-removed-on-request).
+
+**Refused (skipped, exit 0):** `ZCMPTYPE` other than `GZIP_1`/`GZIP_2`; a tile payload that is not a valid zlib
+stream; `SIMPLE = F`; `GROUPS = T`; an ASCII `TABLE` or a `BINTABLE` without `ZIMAGE` as a rewrite target (it is
+copied verbatim); an inconsistent `Z*` set; a heap descriptor outside the heap; `BSCALE = 0`; a header without
+`END`.
+
+**Corrupt (failed, exit 1):** a data length that disagrees with `NAXIS`/`BITPIX`; a header record that runs past
+the end of the file; a `CHECKSUM` that does not match the bytes it covers. All leave the original untouched.
+
+**`--strip-metadata`** removes nothing here. Every FITS card is either structure or observation metadata —
+`OBJECT`, `OBSERVER`, `DATE-OBS`, `HISTORY`, `COMMENT` are the record of an observation, not decoration — and
+the compression convention has no field that exists only for human convenience. The flag is accepted and the
+output is the same as without it, as for zlib in §4.10.
+
+**Expected gain:** unmeasured, estimates in [fits-audit §3](fits-audit.md#3-where-the-bytes-are--honest-estimates-not-measurements).
+The measurement and its pre-registered thresholds are in
+[fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance): Tier 2 needs a median of 8 % or
+more on at least 15 % of the corpus and ships behind a flag; Tier 1 needs 2 % and ships on by default; if
+neither clears its bar, the format is refused with the numbers on record.
+
+---
+
 ## 5. What is not preserved
 
 Tzim replaces the file on the filesystem, not only its bytes. The following are **not** preserved and are

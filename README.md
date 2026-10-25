@@ -117,6 +117,7 @@ Full flag reference: [docs/cli.md](docs/cli.md).
 | TIFF (classic, strips) | v0.7 | Recompress strips; every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
 | zlib (`.zlib`, `.zz`) | v0.9 | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | G3 |
 | FLAC | — | **Refused after measurement**: a stronger encoder buys 0.4 % on music for ~150–300 KiB of binary ([audit](docs/flac-audit.md)) | — |
+| FITS | — | **Under measurement, not supported**: tiles of a compressed image HDU are zlib streams (small gain), and an uncompressed image HDU could be rewritten as a tile-compressed table (large gain, changes the HDU type) ([contract](docs/guarantees.md#412-fits--contract-written-not-implemented) · [audit](docs/fits-audit.md)) | — |
 | PDF | — | **Refused, under measurement**: only the `FlateDecode` payloads could be touched without repacking the document, and no comparison proves a rendering ([contract](docs/guarantees.md#411-pdf--contract-written-not-implemented) · [audit](docs/pdf-audit.md)) | — |
 | WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **Not planned** ([why](docs/formats.md#5-refused-formats)) | — |
 
@@ -177,7 +178,7 @@ they are everywhere else ([docs/cli.md §10](docs/cli.md#10-colour-and-progress)
 | [testing](docs/testing.md) | Test strategy, real-file corpus, fuzzing, CI |
 | [benchmarks](docs/benchmarks.md) | Measured ratios, timings and memory against the alternatives |
 | [releases](docs/releases.md) · [roadmap](docs/roadmap.md) | Artifacts and channels · versions and gates |
-| [audits](docs/audits/) · [flac](docs/flac-audit.md) · [pdf](docs/pdf-audit.md) | Frozen independent audits, and the two format audits behind the refusals |
+| [audits](docs/audits/) · [flac](docs/flac-audit.md) · [pdf](docs/pdf-audit.md) · [fits](docs/fits-audit.md) | Frozen independent audits, and the format audits behind the refusals and the open questions |
 | [CONTRIBUTING](CONTRIBUTING.md) | How to build, test and submit a change |
 
 ## The name

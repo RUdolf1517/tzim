@@ -99,6 +99,22 @@ same 1 049 440 bytes.
   refuses it with the measurement on record. No figure in it is measured, and every one is labelled as an
   estimate.
 
+- **`docs/fits-audit.md`, and FITS's contract in `docs/guarantees.md` §4.12.** FITS was never refused — it was
+  absent from `docs/formats.md` §5, which is worse, because a format nobody looked at reads like one nobody
+  considered. The audit separates the two operations that matter: recompressing the zlib tiles of an already
+  compressed image HDU (small gain, no structural change), and writing an uncompressed image HDU as a
+  tile-compressed table (20–50 % on float data, and the same class of change as TIFF `Compression 1 → 8`). It
+  also states, in a table, **which claims were not re-read from the standard** — the tile payload being RFC 1950
+  and the exact `GZIP_2` byte shuffle — because both change the design rather than a detail, and guessing either
+  would produce files that decompress to garbage. Tier 2 is recommended behind a flag, on social grounds:
+  pipelines index `NAXIS1` on an `IMAGE` HDU and would break.
+- **`docs/formats.md` §5 corrected in two places.** FITS and DICOM now have rows — FITS as under measurement,
+  DICOM as never evaluated — and the `xz / bzip2 / zstd / 7z` row no longer blames "binary cost and unpredictable
+  gains". For zstd that was the wrong reason: the format passes our own criteria (four-byte magic, XXH64
+  checksum in the frame, flat frames instead of an object graph, 10–30 % between level 3 and 19) and is blocked
+  by exactly one thing, `dependencies.md` §1 forbidding a C toolchain. The row now says so, and says what would
+  change the answer.
+
 ### Changed
 
 - **`docs/safety.md` §7.1 no longer implies that `--jobs` bounds memory.** It bounds how many files are in
