@@ -49,8 +49,9 @@ fn man_text() -> String {
 #[test]
 fn help_lists_the_metadata_flag() {
     // It was accepted by the parser and missing from --help from v0.6 to v0.10.
+    let flags = help_options();
     assert!(
-        help_options().iter().any(|o| o == "--strip-metadata"),
+        flags.iter().any(|o| o == "--strip-metadata"),
         "the flag exists in the parser and must exist in --help"
     );
 }
@@ -58,7 +59,8 @@ fn help_lists_the_metadata_flag() {
 #[test]
 fn the_manual_page_documents_every_option() {
     let man = man_text();
-    let missing: Vec<&String> = help_options()
+    let flags = help_options();
+    let missing: Vec<&String> = flags
         .iter()
         .filter(|flag| !man.contains(flag.as_str()))
         .collect();
@@ -88,9 +90,10 @@ fn the_manual_page_is_for_this_version() {
 
 #[test]
 fn every_completion_knows_every_option() {
+    let flags = help_options();
     for file in ["completions/tzim.bash", "completions/_tzim"] {
         let body = read(file);
-        let missing: Vec<&String> = help_options()
+        let missing: Vec<&String> = flags
             .iter()
             .filter(|flag| !body.contains(flag.as_str()))
             .collect();
@@ -99,7 +102,7 @@ fn every_completion_knows_every_option() {
 
     // fish spells a long option without the leading dashes: `-l recursive`.
     let fish = read("completions/tzim.fish");
-    let missing: Vec<&String> = help_options()
+    let missing: Vec<&String> = flags
         .iter()
         .filter(|flag| !fish.contains(&format!("-l {}", &flag[2..])))
         .collect();
