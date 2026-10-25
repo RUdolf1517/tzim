@@ -9,6 +9,59 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.10.0] - 2026-10-25 — the claims around the code
+
+No handler changed and no file is treated differently: the corpus writes the same total, and every contract
+and refusal is as it was. This release is about the sentences around the code that had stopped being true —
+in CI, in the benchmarks, in the README, and on the progress line.
+
+### Added
+
+- **`indicatif` 0.18 draws the progress line**, at the user's request and for the first time since v0.1 with a
+  new dependency. One file gets `⠋ converting…`; a batch gets `⠋ 00:01 [████░░░░] 3/12` — the clock, an
+  eight-cell bar and the position. Still stderr only, still nothing in a pipe, still absent with `--quiet`,
+  `--json` and `--no-progress`, and still erased before the report prints. The templates, the `mm:ss` clock
+  and the 150 ms delay stay in `src/progress.rs`; the animation thread and the terminal handling do not.
+  [cli §10](docs/cli.md#10-colour-and-progress) has the shapes,
+  [dependencies §2.9](docs/dependencies.md#29-indicatif--the-progress-line) argues the crate, its eight new
+  lock entries and the `unsafe` surface that arrives with them.
+- **`msrv`, `fmt`, `deny` and `audit` jobs.** `docs/testing.md` §4 has listed eleven CI jobs since v0.1 and
+  the workflow contained three. The missing gates exist now: 1.88.0 compilation, `cargo fmt`, `cargo deny`
+  against a new `deny.toml` that carries the licence allow-list, and `cargo audit` against RustSec.
+  [`THIRD-PARTY.md`](THIRD-PARTY.md) is the notice file §5 of the dependency policy already referred to.
+- **TIFF and zlib rows in the comparative benchmarks**, with a note in the table itself that neither has a
+  reference tool that recompresses like this one does.
+
+### Changed
+
+- **Every CI build runs with `--locked`**, which [dependencies §6](docs/dependencies.md#6-supply-chain) has
+  been promising since the first release. `Cargo.lock` is written by the `lockfile` job, whose `git push`
+  could never have worked — `actions/checkout` leaves a detached HEAD. It now checks out the branch, pushes
+  with an explicit refspec, runs on every branch, and shares a concurrency group with `fmt`.
+- **`rustfmt` runs over this tree for the first time.** The environment the project is written in cannot run
+  it, so the `fmt` job formats and commits, and fails on the run that had to change something. Two jobs now
+  write to the branch; [testing §4.1](docs/testing.md#41-the-two-jobs-that-write-to-the-branch) says why and
+  what happens on a fork.
+- **The comparative benchmarks are this release's.** §3.2 of [benchmarks](docs/benchmarks.md) carried v0.4.0
+  numbers taken before the `-Os`/`-O3` profile split, with a paragraph explaining why they were not re-taken.
+  They are re-taken, and the run id is recorded next to them.
+- **The README fits on one screen**: badges, the promise, the before/after, the format table, and the pitch —
+  contract and refusal — where a stranger reads it first. The depth stays in `docs/`.
+
+### Size
+
+- **+96 KiB** (928 → 1 024 KiB), and none of it is a handler. `indicatif` and `console` cost 112 KiB at the
+  wildcard `opt-level = 3` and 96 KiB at `"s"`, which is what §2 of the size budget now says; the zlib handler
+  meanwhile shrank into a page boundary and now measures 0 KiB. The budget follows the documented rule
+  (measured + 15 %): 1 069 → 1 179 KiB. Numbers in
+  [benchmarks §1](docs/benchmarks.md#1-binary-size--measured), per-feature table in
+  [size-budget §3](docs/size-budget.md#3-feature-matrix).
+
+### Fixed
+
+- **The `musl` check accepted only the older `file` wording.** The musl target now links position-independent
+  and `file` reports `static-pie linked`; the gate called a perfectly static binary dynamic.
+
 ## [0.9.0] - 2026-10-25 — zlib, and a format queue that closes
 
 ### Added

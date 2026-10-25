@@ -127,13 +127,21 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
             outcome.note = Some(format!(
                 "this build has no {} handler (compiled: {})",
                 format.id(),
-                if built.is_empty() { "none".to_string() } else { built.join(", ") }
+                if built.is_empty() {
+                    "none".to_string()
+                } else {
+                    built.join(", ")
+                }
             ));
         } else {
             outcome.note = Some(format!(
                 "{} is not enabled for this run (use --formats; enabled: {})",
                 format.name(),
-                if enabled.is_empty() { "none".to_string() } else { enabled.join(", ") }
+                if enabled.is_empty() {
+                    "none".to_string()
+                } else {
+                    enabled.join(", ")
+                }
             ));
         }
         return Ok(());

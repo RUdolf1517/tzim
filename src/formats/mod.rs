@@ -122,7 +122,11 @@ impl Allow {
                 return Err(Error::usage(format!(
                     "this build has no {} handler (compiled: {})",
                     format.id(),
-                    if built.is_empty() { "none".to_string() } else { built.join(", ") }
+                    if built.is_empty() {
+                        "none".to_string()
+                    } else {
+                        built.join(", ")
+                    }
                 )));
             }
             *slot = true;
@@ -209,12 +213,7 @@ pub enum Cand {
 ///
 /// The handler never touches `src`. It must refuse anything it cannot fully
 /// validate rather than produce a best-effort output.
-pub fn optimize(
-    format: Format,
-    input: &[u8],
-    dst: &mut dyn Write,
-    opts: &Options,
-) -> Result<Cand> {
+pub fn optimize(format: Format, input: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand> {
     let cand = match format {
         #[cfg(feature = "png")]
         Format::Png => png::optimize(input, dst, opts)?,

@@ -151,8 +151,9 @@ input that exercises the overflow bound.
 - Colour detection (`src/style.rs`): a pure function of a probe struct, so `NO_COLOR`, `CLICOLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`, a pipe and a non-ANSI console are all covered without a terminal, and the
   three-way `--color` flag is tested against each of them.
-- Progress line text (`src/progress.rs`): frame rotation, wrapping, the saved total appearing only when
-  there is one, and a hard limit on the length of the line so it cannot wrap in a narrow terminal.
+- Progress line (`src/progress.rs`): both templates parse, the coloured and plain variants carry the same
+  keys, the `mm:ss` clock (including the 59 -> 60 minute step), and the rule that a disabled or empty run
+  creates no line at all. The drawing itself belongs to `indicatif`; what is ours is what is tested.
 
 ### Integration tests
 
@@ -296,17 +297,37 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 
 | Job | Platforms | Contents |
 | --- | --- | --- |
-| `test` | ubuntu-latest, macos-latest, windows-latest | `cargo test --all-features`, unit + integration |
-| `msrv` | ubuntu-latest | build with Rust 1.88 |
-| `clippy` | ubuntu-latest | `cargo clippy --all-targets -- -D warnings` |
-| `fmt` | ubuntu-latest | `cargo fmt --check` |
-| `deny` | ubuntu-latest | `cargo deny check` (licences, advisories, duplicates) |
-| `audit` | ubuntu-latest | `cargo audit` |
-| `musl` | ubuntu-latest | static `x86_64-unknown-linux-musl` build; `file` must report "statically linked" |
-| `size` | ubuntu-latest | binary-size gate (see [size budget](size-budget.md#6-ci-gate)) |
+| `test` | ubuntu-latest, macos-latest, windows-latest | `cargo test --all-features --locked`, unit + integration |
+| `msrv` | ubuntu-latest | `cargo build --all-features --locked` on Rust 1.88.0, the floor in `Cargo.toml` |
+| `clippy` | ubuntu-latest | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
+| `fmt` | ubuntu-latest | `cargo fmt --all`; formats the tree and commits the result (§4.1) |
+| `deny` | ubuntu-latest | `cargo deny check` — licences, advisories, duplicate versions, sources |
+| `audit` | ubuntu-latest | `cargo audit` against the RustSec database |
+| `size` | ubuntu-latest | `x86_64-unknown-linux-musl` build that `file` reports as `static-pie linked` (no interpreter, no libc), size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
 | `corpus` | ubuntu-latest | downloads the pinned corpus, runs the binary over it twice, gates on §3 |
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
+| `lockfile` | ubuntu-latest | regenerates `Cargo.lock` and commits it to the branch (§4.1) |
+
+`audit` overlaps the advisory half of `deny`, and both stay: `deny` is the one that also knows about licences
+and duplicate versions, `audit` is the RustSec-native check that speaks the advisory database directly. Two
+tools reading the same database with different rules is the point, not duplication.
+
+### 4.1 The two jobs that write to the branch
+
+This project is developed in an environment without a Rust toolchain: nothing local can run `cargo fmt` or
+resolve a new dependency, and a pull request that added a crate would otherwise arrive with a `Cargo.lock`
+that `--locked` rejects. Two jobs therefore write back instead of only reading:
+
+- **`lockfile`** runs `cargo generate-lockfile` and commits `Cargo.lock` when it changed;
+- **`fmt`** runs `cargo fmt --all` and commits the reformatted tree when it changed. That job fails on the run
+  that had to change something, and the failure is the instructions: the fix is already pushed, re-run the
+  job.
+
+Both push with the workflow token, so neither retriggers CI, and both share the `branch-write-<ref>`
+concurrency group so they cannot race for the ref. On a pull request from a fork there is no write access:
+there `fmt` and `lockfile` fail with the diff in the log, which is the honest outcome — the branch is
+unformatted or the lock is stale, and it has to be fixed by the author.
 
 Release jobs build Linux (gnu and musl), macOS (x86_64 and aarch64) and Windows (x86_64) artifacts, and
 publish them with checksums.

@@ -11,21 +11,28 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.9.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
-| Target | `x86_64-unknown-linux-musl` (static, no libc dependency) |
-| Profile | `--release`, `opt-level = "s"` for this crate and `3` for its dependencies, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
+| Commit | v0.10.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Target | `x86_64-unknown-linux-musl` (static-pie, no libc dependency, no interpreter) |
+| Profile | `--release`, `opt-level = "s"` for this crate and for `indicatif`/`console`, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
 | Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **951 136 bytes (928 KiB)** |
-| Normal dependency lines (`cargo tree`, de-duplicated) | 14 |
-| Budget for this profile | 1 069 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 141 KiB |
+| **Size** | **1 049 440 bytes (1 024 KiB)** |
+| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 19 |
+| Budget for this profile | 1 179 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
+| Headroom | 155 KiB |
+
+Of those 1 024 KiB, **96 KiB is the progress line**: `indicatif` and `console`, added in v0.10.0 at the user's
+request. Sixteen of those were recovered by compiling the two crates at `opt-level = "s"` instead of the
+wildcard `3` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)), and the rest is the
+price of not writing a bar, a spinner and a terminal-width-aware redraw by hand
+([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
 binary would measure code that never ships.
 
-Growth by version, with **no new dependency lines at any step** — four direct crates since v0.1. The JPEG
-handler in v0.4 adds code rather than a crate, because no Rust JPEG library exposes DCT coefficients (see
+Growth by version. **No new dependency lines at any step until v0.10.0**, which adds the progress line's
+five on Linux — the first dependency granted since v0.1. The JPEG handler in v0.4 adds code rather than a
+crate, because no Rust JPEG library exposes DCT coefficients (see
 [dependencies](dependencies.md#26-jpeg-why-there-is-no-jpeg-dependency)):
 
 | Version | Contents added | Binary |
@@ -41,6 +48,7 @@ handler in v0.4 adds code rather than a crate, because no Rust JPEG library expo
 | v0.7.1 | release profile: `-Os` for this crate, `-O3` for the codecs; no behaviour change | 900 KiB (−124 KiB) |
 | v0.8.0 | colour, progress line, buffered report, `IsTerminal` — interface, not handlers | 920 KiB (+20 KiB) |
 | v0.9.0 | zlib handler: DEFLATE recompression, header and Adler-32 preserved; no new crate | 928 KiB (+8 KiB) |
+| v0.10.0 | progress line drawn by `indicatif`, not by hand; CI and benchmark honesty; no handler changed | 1 024 KiB (+96 KiB) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.
@@ -68,10 +76,11 @@ order of magnitude while carrying an independent verification decoder.
 
 | Metric | Value |
 | --- | --- |
-| Unit tests | 56 |
-| Integration tests (real binary, real files) | 54 (52 on Windows, where two tests are Unix-only) |
-| Platforms | Linux, macOS, Windows — all green at `52a33cb` |
+| Unit tests | 101 |
+| Integration tests (real binary, real files) | 89 (87 on Windows, where two tests are Unix-only) |
+| Platforms | Linux, macOS, Windows — all green on the v0.10.0 pull request |
 | Clippy | `-D warnings`, clean |
+| Rustfmt | clean, from v0.10.0 (the tree had never been formatted as a whole) |
 | Exit codes covered by tests | 0, 1, 2 (4 is covered by a unit test on an injected verification error) |
 
 ---
@@ -97,6 +106,9 @@ containers built from them with `gzip -9` and `zip -9`. CI job `corpus`, one pas
 | **Saved** | **2 130 943 (9.75 %)** |
 | Files rewritten on a second pass | 0 |
 
+The table was produced again for v0.10.0 (`corpus` job on the same pull request) and is identical, digit for
+digit: no handler changed in this release, and that is the test of it.
+
 Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files, TIFF 39 files. The TIFF
 bytes dominate the total because uncompressed scans are the one thing in this corpus that still has room;
 the PNG and JPEG rows are unchanged from v0.6.0, which is what "no handler changed" should look like.
@@ -107,50 +119,68 @@ already compressed well, and leaving them alone is the contract working, not the
 ### 3.2 Against the established tools
 
 The same corpus through Tzim and the reference tools, one machine (4 cores), copies of the same files, CI
-job `bench`, commit `0a454f0`. The binary measured is 0.4.0. No handler has changed since: 0.4.1 split the
-crate, 0.4.2 changed packaging, 0.4.3 changed where the checksums are written, and 0.5.0 changed the command
-line. The rows below therefore describe the bytes that 0.5.0 writes, and the measurements are left as they
-were taken rather than re-taken to look fresh. Reference
-tools: oxipng 10.2.1, OptiPNG 0.7.8, jpegtran from libjpeg-turbo 2.1.5. The timed comparison is capped at
-files of 200 KiB or less, because `oxipng -o max` needs minutes per megabyte; the ratio for the whole corpus
-is the table in §3.1.
+job `bench`, run [`40190288721`](https://github.com/RUdolf1517/tzim/actions/runs/40190288721) on commit
+`f714339`, binary `tzim 0.10.0`. Reference tools: oxipng 10.2.1, OptiPNG 0.7.8, jpegtran from libjpeg-turbo
+2.1.5. The timed comparison is capped at files of 200 KiB or less, because `oxipng -o max` needs minutes per
+megabyte; the ratio for the whole corpus is the table in §3.1.
 
-The timings below were taken from a binary built at `opt-level = 3`. The current profile compiles this
-crate at `"s"` and its dependencies at `3`, which the corpus measured at +3.6 % on PNG and +2.3 % on JPEG
-([size-budget §5.1](size-budget.md#51-the-measurements-behind-the-current-profile)) — inside the variation
-between runs at this scale, and left unadjusted rather than re-taken.
+Wall clock on a shared runner is the least repeatable column here. The run before this one measured 12:06 for
+`--zopfli` and 26.02 s for `oxipng`; this one measured 21:45 and 44.54 s. **Every byte column was identical
+between the two runs**, which is what these tables exist to compare — treat the times as an order of
+magnitude, not as a measurement of your machine.
 
 **PNG** — 3 603 182 bytes in files of 200 KiB or less:
 
 | Tool | Wall clock | Peak RSS | Bytes after | Saved |
 | --- | --- | --- | --- | --- |
-| tzim (`--jobs 1`) | 3.4 s | 4 MiB | 3 328 364 | 274 818 (7.63 %) |
-| tzim (default jobs) | 1.2 s | 7 MiB | 3 328 364 | 274 818 (7.63 %) |
-| tzim `--zopfli` (`--jobs 1`) | 11 min 21 s | 43 MiB | 3 059 467 | 543 715 (15.09 %) |
-| oxipng `-o max --strip none` | 32.9 s | 80 MiB | 2 637 461 | 965 721 (26.80 %) |
-| optipng `-o7 -preserve` | 2 min 1 s | 16 MiB | 2 817 142 | 786 040 (21.82 %) |
+| tzim (`--jobs 1`) | 4.77 s | 4 MiB | 3 328 364 | 274 818 (7.63 %) |
+| tzim (default jobs) | 1.81 s | 7 MiB | 3 328 364 | 274 818 (7.63 %) |
+| tzim `--zopfli` (`--jobs 1`) | 21 min 45 s | 43 MiB | 3 059 467 | 543 715 (15.09 %) |
+| oxipng `-o max --strip none` | 44.54 s | 76 MiB | 2 637 461 | 965 721 (26.80 %) |
+| optipng `-o7 -preserve` | 2 min 48 s | 16 MiB | 2 817 142 | 786 040 (21.82 %) |
 
 **JPEG** — 1 399 119 bytes:
 
 | Tool | Wall clock | Peak RSS | Bytes after | Saved |
 | --- | --- | --- | --- | --- |
-| tzim (`--jobs 1`) | 0.11 s | 5 MiB | 1 369 032 | 30 087 (2.15 %) |
-| jpegtran `-copy all -optimize` | 0.22 s | 13 MiB | 1 308 075 | 91 044 (6.51 %) |
+| tzim (`--jobs 1`) | 0.14 s | 5 MiB | 1 369 032 | 30 087 (2.15 %) |
+| jpegtran `-copy all -optimize` | 0.34 s | 13 MiB | 1 308 075 | 91 044 (6.51 %) |
+
+**TIFF** — 2 444 088 bytes, no reference tool in the table: `tiffcp -c deflate` rewrites the tag layout and
+the strip geometry, which Tzim does not, so the two would not be doing the same job.
+
+| Tool | Wall clock | Peak RSS | Bytes after | Saved |
+| --- | --- | --- | --- | --- |
+| tzim (`--jobs 1`) | 0.09 s | 4 MiB | 1 996 362 | 447 726 (18.32 %) |
+
+**zlib** — 56 374 bytes: twelve real source files, each compressed with `zlib.compress(data, 6)` — the level
+every library and HTTP client uses by accident. No reference tool: `advdef` handles gzip and ZIP, not a bare
+zlib stream.
+
+| Tool | Wall clock | Peak RSS | Bytes after | Saved |
+| --- | --- | --- | --- | --- |
+| tzim (`--jobs 1`) | 0.02 s | 3 MiB | 55 877 | 497 (0.88 %) |
 
 What the numbers say, without softening either half:
 
 - **On PNG, `oxipng -o max` wins and this project does not pretend otherwise.** It tries many filter
-  strategies and deflate settings per image; Tzim tries a smaller set. In exchange Tzim is roughly ten times
-  faster single-threaded, uses a twentieth of the memory, and handles four formats instead of one.
-- **`--zopfli` closes a little over half of that gap — 15.09 % against oxipng's 26.80 % — and costs 200×
-  the time of Tzim's own default** on the same files. That is why it is opt-in: it is a different tool with
-  the same contract, not the default.
+  strategies and deflate settings per image; Tzim tries a smaller set. In exchange Tzim is roughly nine times
+  faster single-threaded, uses a nineteenth of the memory, and handles five formats instead of one.
+- **`--zopfli` closes a little over half of that gap — 15.09 % against 26.80 % — and costs 273× Tzim's own
+  single-job wall clock, or 721× its default parallel run,** on the same files. That is why it is opt-in: it
+  is a different tool with the same contract, not the default.
 - **The JPEG row is not like-for-like.** `jpegtran` re-optimizes progressive files, which Tzim refuses by
-  contract, and it re-serialises markers, which Tzim copies byte for byte. Part of the 4.4-point difference
-  is that difference in scope, not a weaker encoder; this run does not separate the two. Splitting it is
-  listed as an open measurement in §4 rather than explained away here.
+  contract, and it re-serialises markers, which Tzim copies byte for byte. Part of the 4.4-point difference is
+  that difference in scope, not a weaker encoder; this run does not separate the two. Splitting it is listed
+  as an open measurement in §4 rather than explained away here.
+- **The TIFF number is the one place Tzim's ratio beats every reference tool**, and the reason is boring:
+  uncompressed strips. There is no tool in the comparison that recompresses them without rewriting the file,
+  and 39 of the corpus TIFFs are exactly that.
+- **The zlib number is small on purpose.** Recompressing text that a modern zlib already wrote at level 6
+  finds 0.88 %; a stream from an old encoder, or one written at level 1, has far more room. This set is
+  published at the level it is because a benchmark that only shows the flattering case is not a benchmark.
 - These files are heavily skewed towards `pngsuite`, which is deliberately poorly compressed in places. That
-  is why Tzim saves 7.63 % here and 4.19 % on the whole corpus: same code, different input. Both numbers are
+  is why Tzim saves 7.63 % here and 9.75 % on the whole corpus: same code, different input. Both numbers are
   published because either one alone would mislead.
 
 ### 3.3 Older spot measurements

@@ -34,11 +34,40 @@ rm -rf "$work"
 bash "$repo_root/.github/scripts/corpus-fetch.sh" "$work"
 
 # One set per format, so every tool is measured against files it can handle.
-mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/run"
+mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/sets/tiff" "$work/sets/zlib" "$work/run"
 find "$work/corpus/images" -type f -iname '*.png' -size "-${max_bytes}c" -exec cp {} "$work/sets/png/" \;
 find "$work/corpus/images" -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/jpeg/" \;
+find "$work/corpus/images" -type f \( -iname '*.tif' -o -iname '*.tiff' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/tiff/" \;
+# No corpus ships raw zlib streams, and a zlib stream is DEFLATE with a header.
+# The payloads are the pinned sources themselves — real text, compressed at the
+# default level, which is what a .zz file in the wild looks like. Compressing a
+# PNG into zlib would measure the one case where nothing can be won: the input
+# is already DEFLATE output.
+python3 - "$work/src" "$work/sets/zlib" <<'ZT'
+import os
+import sys
+import zlib
+
+src, dst = sys.argv[1], sys.argv[2]
+picked = []
+for root, _dirs, names in os.walk(src):
+    for name in sorted(names):
+        if not name.endswith((".c", ".h", ".py", ".md", ".txt")):
+            continue
+        path = os.path.join(root, name)
+        if 8_000 <= os.path.getsize(path) <= 200_000:
+            picked.append(path)
+for index, path in enumerate(sorted(picked)[:12]):
+    with open(path, "rb") as fh:
+        data = fh.read()
+    with open(os.path.join(dst, f"{index:02d}-{os.path.basename(path)}.zlib"), "wb") as fh:
+        fh.write(zlib.compress(data, 6))
+print(f"  zlib payloads: {min(len(picked), 12)} source files at level 6")
+ZT
 echo "png set:  $(find "$work/sets/png" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 echo "jpeg set: $(find "$work/sets/jpeg" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
+echo "tiff set: $(find "$work/sets/tiff" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
+echo "zlib set: $(find "$work/sets/zlib" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 
 results="$work/results.tsv"
 : > "$results"
@@ -84,6 +113,12 @@ tzim_png_zopfli() {
 }
 tzim_jpeg() {
     "$bin" -r --formats jpeg --jobs 1 --json "$1" > /dev/null || true
+}
+tzim_tiff() {
+    "$bin" -r --formats tiff --jobs 1 --json "$1" > /dev/null || true
+}
+tzim_zlib() {
+    "$bin" -r --formats zlib --jobs 1 --json "$1" > /dev/null || true
 }
 
 # --- oxipng -----------------------------------------------------------------
@@ -135,6 +170,17 @@ echo "== jpeg =="
 measure tzim jpeg tzim_jpeg
 measure jpegtran jpeg jpegtran_optimize
 
+# TIFF and zlib have no packaged reference recompressor with the same contract:
+# `tiffcp -c deflate` rewrites the tag layout and the strip geometry, which Tzim
+# does not, and `advdef` handles gzip and ZIP but not a bare zlib stream. The
+# rows are therefore Tzim alone, and the report says so rather than pairing it
+# with a tool that would be measuring a different job.
+echo "== tiff =="
+measure tzim tiff tzim_tiff
+
+echo "== zlib =="
+measure tzim zlib tzim_zlib
+
 echo "== report =="
 python3 - "$results" "$work" <<'PY'
 import sys
@@ -163,10 +209,14 @@ labels = {
 }
 order = ["tzim", "tzim-jobs", "tzim-zopfli", "oxipng", "optipng", "jpegtran"]
 
-def table(title, set_name):
+def table(title, set_name, note=None):
     lines = [
         f"### {title}",
         "",
+    ]
+    if note:
+        lines += [note, ""]
+    lines += [
         "| Tool | Wall clock | Peak RSS | Bytes before | Bytes after | Saved |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
@@ -192,6 +242,16 @@ out.append("`oxipng -o max` needs minutes per megabyte. Copies of the same files
 out.append("")
 out += table("PNG", "png")
 out += table("JPEG", "jpeg")
+out += table(
+    "TIFF",
+    "tiff",
+    "No like-for-like reference tool: `tiffcp -c deflate` rewrites the tag layout and the strip geometry.",
+)
+out += table(
+    "zlib",
+    "zlib",
+    "No like-for-like reference tool: `advdef` covers gzip and ZIP, not a bare zlib stream.",
+)
 text = "\n".join(out)
 print(text)
 with open(f"{work}/summary.md", "w", encoding="utf-8") as fh:

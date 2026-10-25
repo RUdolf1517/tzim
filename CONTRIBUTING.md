@@ -34,6 +34,10 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
+If your environment cannot run `cargo` (this project is partly written in one that cannot), the `fmt` and
+`lockfile` jobs in CI will run `cargo fmt` and resolve `Cargo.lock` for you and commit the result to your
+branch — see [docs/testing.md §4.1](docs/testing.md#41-the-two-jobs-that-write-to-the-branch).
+
 Optional tooling:
 
 ```sh
@@ -76,7 +80,7 @@ Additionally:
 
 ## 4. Code style
 
-- Idiomatic Rust, `rustfmt` defaults, edition 2024.
+- Idiomatic Rust, `rustfmt` defaults, edition 2021.
 - Prefer plain functions and small enums over trait objects, generics and abstraction layers. If a new module
   needs a diagram to explain, it is probably too complex for this project.
 - Errors are one `enum Error` with a `Display` implementation; no error-chain crates.

@@ -105,7 +105,8 @@ pub fn build_png(spec: &PngSpec) -> Vec<u8> {
         }
     }
 
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(spec.level));
+    let mut encoder =
+        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(spec.level));
     encoder.write_all(&raw).unwrap();
     let idat = encoder.finish().unwrap();
 
@@ -170,7 +171,8 @@ pub fn png_chunks(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
         if data.len() - pos < 12 {
             return Err("truncated".into());
         }
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         let end = pos + 12 + len;
         if end > data.len() {
             return Err("truncated".into());
@@ -180,7 +182,8 @@ pub fn png_chunks(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(&data[pos + 4..pos + 8]);
         hasher.update(&payload);
-        let stored = u32::from_be_bytes([data[end - 4], data[end - 3], data[end - 2], data[end - 1]]);
+        let stored =
+            u32::from_be_bytes([data[end - 4], data[end - 3], data[end - 2], data[end - 1]]);
         if hasher.finalize() != stored {
             return Err(format!("bad CRC in {typ}"));
         }
@@ -451,7 +454,8 @@ pub fn parse_zip(d: &[u8]) -> Vec<ParsedZipEntry> {
         let comment_len = le16(d, at + 32) as usize;
         let name = d[at + 46..at + 46 + name_len].to_vec();
         let central_extra = d[at + 46 + name_len..at + 46 + name_len + extra_len].to_vec();
-        let comment = d[at + 46 + name_len + extra_len..at + 46 + name_len + extra_len + comment_len]
+        let comment = d
+            [at + 46 + name_len + extra_len..at + 46 + name_len + extra_len + comment_len]
             .to_vec();
         let local_offset = le32(d, at + 42);
         let lh = local_offset as usize;
@@ -575,8 +579,7 @@ fn frame_stream(width: u32, height: u32, seed: u8, level: u32) -> Vec<u8> {
             raw.extend_from_slice(&[base, base.wrapping_mul(2), seed, 0xff]);
         }
     }
-    let mut encoder =
-        flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::new(level));
     encoder.write_all(&raw).unwrap();
     encoder.finish().unwrap()
 }
@@ -625,7 +628,8 @@ pub fn png_chunks_lossy(data: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     let mut pos = 8;
     while pos + 12 <= data.len() {
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         if pos + 12 + len > data.len() {
             break;
         }
@@ -1019,12 +1023,20 @@ impl Default for TiffSpec {
 }
 
 fn tiff_w16(out: &mut [u8], at: usize, value: u16, big: bool) {
-    let bytes = if big { value.to_be_bytes() } else { value.to_le_bytes() };
+    let bytes = if big {
+        value.to_be_bytes()
+    } else {
+        value.to_le_bytes()
+    };
     out[at..at + 2].copy_from_slice(&bytes);
 }
 
 fn tiff_w32(out: &mut [u8], at: usize, value: u32, big: bool) {
-    let bytes = if big { value.to_be_bytes() } else { value.to_le_bytes() };
+    let bytes = if big {
+        value.to_be_bytes()
+    } else {
+        value.to_le_bytes()
+    };
     out[at..at + 4].copy_from_slice(&bytes);
 }
 
@@ -1040,9 +1052,17 @@ fn tiff_numbers(values: &[u32], typ: u16, big: bool) -> Vec<u8> {
     for value in values {
         if typ == 3 {
             let small = *value as u16;
-            out.extend_from_slice(&if big { small.to_be_bytes() } else { small.to_le_bytes() });
+            out.extend_from_slice(&if big {
+                small.to_be_bytes()
+            } else {
+                small.to_le_bytes()
+            });
         } else {
-            out.extend_from_slice(&if big { value.to_be_bytes() } else { value.to_le_bytes() });
+            out.extend_from_slice(&if big {
+                value.to_be_bytes()
+            } else {
+                value.to_le_bytes()
+            });
         }
     }
     out
@@ -1056,7 +1076,8 @@ struct TiffEntry {
 }
 
 fn tiff_row_bytes(spec: &TiffSpec) -> usize {
-    let bits = spec.width as usize * spec.samples_per_pixel as usize * spec.bits_per_sample as usize;
+    let bits =
+        spec.width as usize * spec.samples_per_pixel as usize * spec.bits_per_sample as usize;
     bits.div_ceil(8)
 }
 
@@ -1076,7 +1097,10 @@ fn tiff_strip_bytes(spec: &TiffSpec, rows: u32, first_row: u32) -> Vec<u8> {
 /// Builds a classic TIFF: header, IFD, out-of-line values, strips, 2-byte aligned.
 pub fn build_tiff(spec: &TiffSpec) -> Vec<u8> {
     let big = spec.big_endian;
-    assert!(matches!(spec.bits_per_sample, 8 | 16), "fixtures use 8 or 16 bits");
+    assert!(
+        matches!(spec.bits_per_sample, 8 | 16),
+        "fixtures use 8 or 16 bits"
+    );
 
     let mut strips: Vec<Vec<u8>> = Vec::new();
     if spec.strips.is_empty() {

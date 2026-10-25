@@ -29,7 +29,10 @@ fn main() -> ExitCode {
             complain(&style, &e.to_string());
             if e.is_usage() {
                 eprintln!("usage: tzim [OPTIONS] <PATH>...");
-                eprintln!("{}", style.paint(Pen::Dim, "try `tzim --help` for the full list"));
+                eprintln!(
+                    "{}",
+                    style.paint(Pen::Dim, "try `tzim --help` for the full list")
+                );
             }
             ExitCode::from(2)
         }
@@ -94,9 +97,18 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
         env!("CARGO_PKG_VERSION")
     )?;
     writeln!(out)?;
-    writeln!(out, "A lossless file optimizer. It makes a file smaller only when it can")?;
-    writeln!(out, "verify that nothing else changed, and leaves every file it cannot")?;
-    writeln!(out, "improve byte for byte alone: no metadata removal, no re-encoding by")?;
+    writeln!(
+        out,
+        "A lossless file optimizer. It makes a file smaller only when it can"
+    )?;
+    writeln!(
+        out,
+        "verify that nothing else changed, and leaves every file it cannot"
+    )?;
+    writeln!(
+        out,
+        "improve byte for byte alone: no metadata removal, no re-encoding by"
+    )?;
     writeln!(out, "loss, no format conversion.")?;
     writeln!(out)?;
     writeln!(out, "Formats in this build: {}", format_names())?;
@@ -104,18 +116,33 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
     writeln!(out)?;
     writeln!(out, "Guarantees:")?;
     writeln!(out, "  G1  byte-identical, wherever nothing was written")?;
-    writeln!(out, "  G3  format-equivalent, with a per-format contract checked before")?;
+    writeln!(
+        out,
+        "  G3  format-equivalent, with a per-format contract checked before"
+    )?;
     writeln!(out, "      the original is replaced")?;
-    writeln!(out, "  G4  metadata removed on request, and only with --strip-metadata")?;
+    writeln!(
+        out,
+        "  G4  metadata removed on request, and only with --strip-metadata"
+    )?;
     writeln!(out)?;
-    writeln!(out, "No external programs, no configuration file, no network, no telemetry.")?;
+    writeln!(
+        out,
+        "No external programs, no configuration file, no network, no telemetry."
+    )?;
     writeln!(out)?;
     writeln!(out, "Homepage  https://github.com/RUdolf1517/tzim")?;
-    writeln!(out, "Docs      https://github.com/RUdolf1517/tzim/blob/main/docs/cli.md")?;
+    writeln!(
+        out,
+        "Docs      https://github.com/RUdolf1517/tzim/blob/main/docs/cli.md"
+    )?;
     writeln!(out, "License   MIT")?;
     writeln!(out, "Author    RUdolf1517 <rudolfzinovev@protonmail.com>")?;
     writeln!(out)?;
-    writeln!(out, "Try `tzim photo.png`, `tzim --list-formats` or `tzim --check-deps`.")
+    writeln!(
+        out,
+        "Try `tzim photo.png`, `tzim --list-formats` or `tzim --check-deps`."
+    )
 }
 
 /// `--check-deps`: the flag exists for parity with tools that need ffmpeg and
@@ -124,11 +151,20 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
 fn print_check_deps(out: &mut dyn Write) -> io::Result<()> {
     writeln!(out, "tzim needs no external programs at run time.")?;
     writeln!(out)?;
-    writeln!(out, "  binary     static, no C library, no shell-outs, no network")?;
+    writeln!(
+        out,
+        "  binary     static, no C library, no shell-outs, no network"
+    )?;
     writeln!(out, "  formats    {}", format_names())?;
-    writeln!(out, "  optional   --zopfli is compiled in, not an external encoder")?;
+    writeln!(
+        out,
+        "  optional   --zopfli is compiled in, not an external encoder"
+    )?;
     writeln!(out)?;
-    writeln!(out, "Nothing to install. `tzim --list-formats` lists the handlers in this build.")
+    writeln!(
+        out,
+        "Nothing to install. `tzim --list-formats` lists the handlers in this build."
+    )
 }
 
 fn print_formats(out: &mut dyn Write) -> io::Result<()> {
@@ -143,8 +179,14 @@ fn print_formats(out: &mut dyn Write) -> io::Result<()> {
         writeln!(out, "{name:<6} {transformation:<46} {preserved}")?;
     }
     writeln!(out)?;
-    writeln!(out, "Tzim removes no metadata and never converts a file to another format.")?;
-    writeln!(out, "A result that is not strictly smaller is discarded and the original kept.")
+    writeln!(
+        out,
+        "Tzim removes no metadata and never converts a file to another format."
+    )?;
+    writeln!(
+        out,
+        "A result that is not strictly smaller is discarded and the original kept."
+    )
 }
 
 fn run_optimize(args: &cli::Args) -> i32 {
@@ -161,13 +203,18 @@ fn run_optimize(args: &cli::Args) -> i32 {
 
     // The animation is decided before any work starts and lives only as long as
     // it: `drop(progress)` erases the line before the first result is printed.
-    let progress = Progress::new(scan.files.len(), progress_wanted(args, scan.files.len()));
+    // Colour is the same decision the report uses, taken from stderr's own probe.
+    let progress = Progress::new(
+        scan.files.len(),
+        progress_wanted(args, scan.files.len()),
+        stderr_style(args.color),
+    );
     let mut outcomes = pool::run(
         &scan.files,
         jobs,
         args.fail_fast,
         |path| pipeline::process(path, config),
-        |outcome| progress.advance(outcome.saved()),
+        |_| progress.advance(),
     );
     drop(progress);
 
@@ -193,7 +240,13 @@ fn run_optimize(args: &cli::Args) -> i32 {
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
     let written = if args.json {
-        report::print_json(&mut out, &outcomes, &summary, args.dry_run, args.strip_metadata)
+        report::print_json(
+            &mut out,
+            &outcomes,
+            &summary,
+            args.dry_run,
+            args.strip_metadata,
+        )
     } else {
         let style = stderr_style(args.color);
         let opts = Human {
@@ -220,11 +273,7 @@ fn run_optimize(args: &cli::Args) -> i32 {
 /// Whether to animate. A line of `\r` frames belongs on a terminal, never in a
 /// log file, a CI transcript or a pipe someone is parsing.
 fn progress_wanted(args: &cli::Args, files: usize) -> bool {
-    files > 0
-        && !args.no_progress
-        && !args.quiet
-        && !args.json
-        && io::stderr().is_terminal()
+    files > 0 && !args.no_progress && !args.quiet && !args.json && io::stderr().is_terminal()
 }
 
 /// Scan errors are reported verbatim; they are re-created rather than cloned so

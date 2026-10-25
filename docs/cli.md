@@ -355,24 +355,37 @@ and piped into files.
 ### Progress
 
 Runs of a few hundred files can take minutes, and a program that prints nothing for a minute looks broken.
-While the work is in progress Tzim draws one line on **stderr**:
+While the work is in progress Tzim draws one line on **stderr**. The shape follows the job:
 
 ```
-/ 137/694 files  3.42 s  1.80 MiB saved
+⠋ converting…
+⠋ 00:01 [████░░░░] 3/12
 ```
 
-- frames are ASCII, `|/-\`, for the same reason the report prints `->` instead of an arrow;
-- the line is redrawn every 100 ms and only after the run has lasted 150 ms, so a fast run does not flash;
+The first line is a single file: there is no counter to show, so the spinner and the verb are the whole
+message. The second is a batch: the clock, the bar and the position, in the order the eye looks for them.
+
+- the spinner has ten braille frames and advances every 100 ms;
+- the bar is eight cells — `█` done, `░` remaining — and it is drawn only when there is more than one file;
+- the clock is `mm:ss`, counted from the start of the run. Past 99 minutes it grows to three digits rather
+  than wrapping, because a run that long is a thing the reader wants to know about;
+- the line appears only after 150 ms, so a run that finishes quickly does not flash, and it is erased before
+  the first result is printed, so the report never shares a row with it;
 - it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
-  into noise. The counters, the clock and the running total are the information;
-- the saved total counts the files that have finished, so it only grows;
-- the clock is seconds with two decimals, and switches to `m s` after a minute — `3600.00 s` is correct and
-  reads like a machine talking to itself;
-- it is erased before the first result is printed, so the report never shares a row with it.
+  into noise. The position, the clock and the bar are the information;
+- the spinner and the bar are coloured by the same decision as the rest of stderr (the table above) and are
+  plain when colour is off, so `NO_COLOR=1` produces no escape sequence anywhere;
+- it is written to stderr only. stdout carries the report, one result per line, and nothing else.
 
 It is drawn only when **all** of these hold: stderr is a terminal, the run has at least one file, and
 `--quiet`, `--json` and `--no-progress` are absent. A line of `\r` frames belongs on a terminal; in a log
 file or a CI transcript it is noise that hides the lines around it.
+
+The drawing is [`indicatif`](https://crates.io/crates/indicatif) 0.18. It is the one dependency in this
+project that is not behind a feature flag: the templates and the `mm:ss` clock are ours, but keeping a line
+redrawn from several worker threads consistent with the terminal, at the right width, is not a problem worth
+solving twice. What it costs in bytes is in [size-budget §3](size-budget.md#3-feature-matrix), and why it was
+admitted is in [dependencies §2.9](dependencies.md#29-indicatif--the-progress-line).
 
 The progress line is not a measurement. `Summary:` is.
 

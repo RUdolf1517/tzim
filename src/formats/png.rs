@@ -87,8 +87,8 @@ fn parse(data: &[u8]) -> Result<Parsed<'_>> {
         if data.len() - pos < 12 {
             return Err(Error::parse("png: truncated chunk header"));
         }
-        let len = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
-            as usize;
+        let len =
+            u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
         if len > MAX_CHUNK {
             return Err(Error::parse("png: chunk length exceeds the format limit"));
         }
@@ -185,7 +185,8 @@ fn parse(data: &[u8]) -> Result<Parsed<'_>> {
     if chunks[first..=last].iter().any(|c| c.typ != *b"IDAT") {
         return Err(Error::parse("png: IDAT chunks are not consecutive"));
     }
-    if chunks.last().map(|c| c.typ) != Some(*b"IEND") || chunks.last().map(|c| c.data.len()) != Some(0)
+    if chunks.last().map(|c| c.typ) != Some(*b"IEND")
+        || chunks.last().map(|c| c.data.len()) != Some(0)
     {
         return Err(Error::parse("png: IEND is malformed or not last"));
     }
@@ -350,13 +351,7 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
     }
 }
 
-fn unfilter(
-    filter: u8,
-    raw: &[u8],
-    prev: &[u8],
-    bpp: usize,
-    out: &mut [u8],
-) -> io::Result<()> {
+fn unfilter(filter: u8, raw: &[u8], prev: &[u8], bpp: usize, out: &mut [u8]) -> io::Result<()> {
     for i in 0..raw.len() {
         let a = if i >= bpp { out[i - bpp] } else { 0 };
         let b = prev[i];
@@ -438,11 +433,7 @@ struct AdlerReader<R> {
 
 impl<R: Read> AdlerReader<R> {
     fn new(inner: R) -> Self {
-        AdlerReader {
-            inner,
-            a: 1,
-            b: 0,
-        }
+        AdlerReader { inner, a: 1, b: 0 }
     }
 
     fn finish(&self) -> u32 {
@@ -566,7 +557,10 @@ pub fn optimize(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Can
             if new_stream.len() >= stream.len() || positions.len() < 2 {
                 continue;
             }
-            for (slot, piece) in positions.iter().zip(split_evenly(&new_stream, positions.len())) {
+            for (slot, piece) in positions
+                .iter()
+                .zip(split_evenly(&new_stream, positions.len()))
+            {
                 replacements[*slot] = Some(piece.to_vec());
             }
         }
@@ -631,11 +625,7 @@ fn split_evenly(data: &[u8], count: usize) -> Vec<&[u8]> {
     pieces
 }
 
-fn total_len(
-    parsed: &Parsed<'_>,
-    replacements: &[Option<Vec<u8>>],
-    strip: bool,
-) -> Result<u64> {
+fn total_len(parsed: &Parsed<'_>, replacements: &[Option<Vec<u8>>], strip: bool) -> Result<u64> {
     let mut total = SIGNATURE.len() as u64;
     for (index, chunk) in parsed.chunks.iter().enumerate() {
         if !survives(&chunk.typ, strip) {
@@ -680,8 +670,7 @@ fn write_candidate(
 }
 
 fn write_chunk(w: &mut dyn Write, typ: &[u8; 4], data: &[u8]) -> Result<()> {
-    let len =
-        u32::try_from(data.len()).map_err(|_| Error::internal("png: chunk exceeds u32"))?;
+    let len = u32::try_from(data.len()).map_err(|_| Error::internal("png: chunk exceeds u32"))?;
     w.write_all(&len.to_be_bytes())?;
     w.write_all(typ)?;
     w.write_all(data)?;
@@ -705,10 +694,7 @@ fn write_chunk(w: &mut dyn Write, typ: &[u8; 4], data: &[u8]) -> Result<()> {
 /// whose meaning we cannot check is not a decision this tool makes, even when
 /// asked nicely.
 pub fn is_stripped(typ: &[u8; 4]) -> bool {
-    matches!(
-        typ,
-        b"tEXt" | b"zTXt" | b"iTXt" | b"tIME" | b"eXIf"
-    )
+    matches!(typ, b"tEXt" | b"zTXt" | b"iTXt" | b"tIME" | b"eXIf")
 }
 
 /// True when this chunk survives a stripping rewrite.
@@ -868,12 +854,8 @@ fn compare_frames(a: &[u8], b: &[u8]) -> Result<()> {
                 }
             }
             (Err(_), Err(_)) => break,
-            (Ok(_), Err(e)) => {
-                return Err(Error::verify(format!("candidate stops early: {e}")))
-            }
-            (Err(e), Ok(_)) => {
-                return Err(Error::verify(format!("original stops early: {e}")))
-            }
+            (Ok(_), Err(e)) => return Err(Error::verify(format!("candidate stops early: {e}"))),
+            (Err(e), Ok(_)) => return Err(Error::verify(format!("original stops early: {e}"))),
         }
     }
 
@@ -1053,7 +1035,8 @@ pub fn verify_icon(original: &[u8], candidate: &[u8], opts: &Options) -> Result<
                 "image {index}: directory fields changed"
             )));
         }
-        let is_png = ea.payload.len() >= SIGNATURE.len() && ea.payload[..SIGNATURE.len()] == SIGNATURE;
+        let is_png =
+            ea.payload.len() >= SIGNATURE.len() && ea.payload[..SIGNATURE.len()] == SIGNATURE;
         if is_png {
             verify(ea.payload, eb.payload, opts)
                 .map_err(|e| Error::verify(format!("image {index}: {e}")))?;
@@ -1083,7 +1066,12 @@ mod tests {
     }
 
     /// Builds a small truecolor RGBA PNG with the given scanline filter.
-    pub fn build_png(width: u32, height: u32, filter: u8, extra_chunk: Option<(&[u8; 4], Vec<u8>)>) -> Vec<u8> {
+    pub fn build_png(
+        width: u32,
+        height: u32,
+        filter: u8,
+        extra_chunk: Option<(&[u8; 4], Vec<u8>)>,
+    ) -> Vec<u8> {
         let mut ihdr = Vec::new();
         ihdr.extend_from_slice(&width.to_be_bytes());
         ihdr.extend_from_slice(&height.to_be_bytes());
@@ -1186,13 +1174,21 @@ mod tests {
         for chunk_start in (0..out.len()).step_by(row_bytes + 1) {
             let filter = out[chunk_start];
             let mut cur = vec![0u8; row_bytes];
-            unfilter(filter, &out[chunk_start + 1..chunk_start + 1 + row_bytes], &prev, 4, &mut cur)
-                .unwrap();
+            unfilter(
+                filter,
+                &out[chunk_start + 1..chunk_start + 1 + row_bytes],
+                &prev,
+                4,
+                &mut cur,
+            )
+            .unwrap();
             restored.extend_from_slice(&cur);
             prev = cur;
         }
         let expected: Vec<u8> = (0..height)
-            .flat_map(|y| (0..width).flat_map(move |x| [(x + y) as u8, (x * 3) as u8, y as u8, 0xff]))
+            .flat_map(|y| {
+                (0..width).flat_map(move |x| [(x + y) as u8, (x * 3) as u8, y as u8, 0xff])
+            })
             .collect();
         assert_eq!(restored, expected);
     }

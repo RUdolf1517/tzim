@@ -99,6 +99,11 @@ files before anything is touched.
   breaks a script; it is simply undocumented. The formula and the winget manifest for 0.5.0 were pinned in
   a follow-up PR from the hashes in the release notes, which is the only order that never publishes a hash
   for a file that does not exist yet. v0.6.0, v0.7.0, v0.7.1, v0.8.0 and v0.9.0 follow the same order.
+- **v0.10.0 changes the claims, not the bytes.** No handler was touched: the corpus writes the same total, the
+  contracts and the refusals are unchanged. What changed is that CI now runs the jobs `docs/testing.md` had
+  been listing (`msrv`, `fmt`, `deny`, `audit`), that every build is `--locked`, that the comparative
+  benchmarks are this release's rather than v0.4's, that the progress line is drawn by `indicatif` instead of
+  by hand, and that the README opens with the contract instead of with a directory of links.
 - **v0.9.0 adds one format and refuses another.** zlib joins the handlers at a cost of 4 KiB of binary;
   FLAC is refused after measurement rather than carried in the queue, and the queue itself is now empty.
 - **v0.8.0 changes the interface, not the work.** Colour, a progress line and four fixes found by the
