@@ -34,7 +34,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   §3](docs/size-budget.md#3-feature-matrix)): the feature's cost falls from 118 784 to **102 400 bytes**, which
   still leaves the `jpeg-v1` build 32 768 bytes above the 1 049 440-byte condition issue #39 was approved
   under. The override is not in the tree, and the number is recorded so the next attempt starts from it rather
-  than from a guess.
+  than from a guess. **The decision that followed is on record too**
+  ([roadmap](docs/roadmap.md#v013--bytes-a-line-and-a-second-opinion--implemented)): turning the feature on was
+  within reach at 1 082 208 bytes and was declined, because JPEG is the one handler that is also off at run
+  time, so those 102 KiB would be carried by every user for a format most of them never enable — and paying
+  for it would mean moving the `size` gate off the zero-tolerance number it was just tightened to.
 
 ### Errata for 0.12.1
 

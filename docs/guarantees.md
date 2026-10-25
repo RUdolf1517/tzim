@@ -523,8 +523,9 @@ block, a restart marker where none belongs — all `failed`, exit code 1, origin
    [safety §7.1](safety.md#71-memory--an-enforced-budget) charges). A disagreement is `failed`, exit 1;
    an original the library cannot read is `skipped` with that reason, because the oracle cannot be a
    verdict on a file it cannot decode. The feature is off by default because it costs more than the size
-   condition of #39 allowed; `verify` says nothing less when it is absent, and `guarantees.md` §2.6 says
-   which level a published build reaches.
+   condition of #39 allowed: 118 784 bytes at the release profile and 102 400 at `opt-level = "s"`, against
+   68 KiB of headroom. `verify` says nothing less when it is absent, and §2.6 says which level a published
+   build reaches.
 
 If any condition fails the candidate is discarded and the original is not replaced. Condition 3 exists
 because conditions 1 and 2 share a codec with the writer, and a defect symmetric in both directions — a

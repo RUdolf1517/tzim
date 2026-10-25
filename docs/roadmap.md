@@ -300,6 +300,14 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
   measurement said **+118 784 bytes**, more than the 96 KiB the progress line gave back. The condition was
   kept and the decoder is not in the shipped default: `jpeg-v1` exists, CI tests it on every run, and one
   flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
+  **The decision was taken with the number in hand, not by default.** Turning it on was within reach:
+  building that one dependency at `opt-level = "s"` measures 1 082 208 bytes — 32 768 over the 1 049 440
+  limit, and still 97 KiB *under* the v0.12.1 binary. It was declined for two reasons, and both are arguments
+  about this project rather than about bytes. JPEG is the one handler that is also off at run time, behind
+  `--formats jpeg`, so 102 KiB would be carried by every user for a format most of them never enable; and
+  the price would be moving the `size` gate off the zero-tolerance number it was just tightened to, which is
+  how v0.12.1's green-but-meaningless gate happened. A build that wants the second opinion has one flag; a
+  user who does not pays nothing for it.
 - **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
   with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
   prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)). It found a defect on its
