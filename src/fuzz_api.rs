@@ -25,6 +25,7 @@ fn options() -> Options {
             ico: true,
             jpeg: true,
             tiff: true,
+            zlib: true,
         },
     }
 }

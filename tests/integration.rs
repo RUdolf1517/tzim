@@ -1897,3 +1897,157 @@ fn strip_ansi(text: &str) -> String {
     }
     out
 }
+
+// ---------------------------------------------------------------------------
+// zlib (RFC 1950)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn zlib_is_recompressed_and_the_payload_is_identical() {
+    let ws = Workspace::new("zlib-opt");
+    let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 9) as u8).collect();
+    let original = build_zlib(&payload, 1);
+    let path = ws.write("data.zlib", &original);
+
+    let (code, stdout, stderr) = run(&["data.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a smaller file");
+    assert_eq!(optimized[..2], original[..2], "the header is copied verbatim");
+    assert_eq!(
+        optimized[optimized.len() - 4..],
+        original[original.len() - 4..],
+        "the Adler-32 trailer must be unchanged: the payload is unchanged"
+    );
+    assert_eq!(zlib_payload(&optimized), payload);
+    assert!(stdout.contains("ZLIB"), "{stdout}");
+}
+
+#[test]
+fn a_second_zlib_run_changes_nothing() {
+    let ws = Workspace::new("zlib-noop");
+    let payload: Vec<u8> = (0..80_000u32).map(|i| (i % 5) as u8).collect();
+    ws.write("data.zlib", &build_zlib(&payload, 1));
+
+    let (code, _, _) = run(&["data.zlib"], &ws.path);
+    assert_eq!(code, 0);
+    let first = std::fs::read(ws.file("data.zlib")).unwrap();
+
+    let (code, stdout, _) = run(&["data.zlib"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("already optimal"), "{stdout}");
+    assert_eq!(std::fs::read(ws.file("data.zlib")).unwrap(), first);
+}
+
+#[test]
+fn a_corrupt_adler32_is_refused_and_the_file_is_untouched() {
+    let ws = Workspace::new("zlib-adler");
+    let payload: Vec<u8> = (0..20_000u32).map(|i| (i % 3) as u8).collect();
+    let mut original = build_zlib(&payload, 1);
+    let last = original.len() - 1;
+    original[last] ^= 0xff;
+    let path = ws.write("broken.zlib", &original);
+
+    let (code, stdout, stderr) = run(&["broken.zlib"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("failed"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn a_preset_dictionary_is_not_even_detected() {
+    let ws = Workspace::new("zlib-fdict");
+    // A valid-looking zlib header with FDICT set: the stream needs a dictionary
+    // this build does not have, so the file is not treated as zlib at all.
+    let header = [0x78u8, 0xbb];
+    let mut data = header.to_vec();
+    data.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]); // dictionary id
+    data.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    let path = ws.write("dict.zlib", &data);
+
+    let (code, stdout, stderr) = run(&["dict.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("unsupported"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+}
+
+#[test]
+fn a_small_window_is_skipped_with_a_reason() {
+    let ws = Workspace::new("zlib-window");
+    let payload: Vec<u8> = (0..500u32).map(|i| (i % 4) as u8).collect();
+    let original = zlib_with_window(&build_zlib(&payload, 1), 4);
+    let path = ws.write("small.zlib", &original);
+
+    let (code, stdout, stderr) = run(&["small.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert!(stdout.contains("window"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn data_after_the_stream_is_skipped_and_untouched() {
+    let ws = Workspace::new("zlib-trailing");
+    let payload: Vec<u8> = (0..4_000u32).map(|i| (i % 3) as u8).collect();
+    let mut data = build_zlib(&payload, 6);
+    // A byte between the end of the DEFLATE stream and the checksum: a second
+    // stream could follow, and this build does not concatenate them.
+    data.insert(data.len() - 4, 0x00);
+    let path = ws.write("trailing.zlib", &data);
+
+    let (code, stdout, stderr) = run(&["trailing.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+}
+
+#[test]
+fn a_false_positive_is_reported_and_never_written() {
+    let ws = Workspace::new("zlib-false-positive");
+    // A valid header, then bytes that are not a DEFLATE stream. Detection cannot
+    // tell this apart from a corrupt file, so either verdict is acceptable — but
+    // the file must come back untouched, whatever the verdict is.
+    let mut data = vec![0x78, 0x9c];
+    data.extend_from_slice(b"this is not a deflate stream at all, it only starts like one");
+    data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    let path = ws.write("fake.zlib", &data);
+
+    let (code, stdout, stderr) = run(&["fake.zlib"], &ws.path);
+    assert!(code == 0 || code == 1, "code={code} stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("failed") || stdout.contains("skipped"),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+}
+
+#[test]
+fn zlib_is_listed_and_can_be_named() {
+    let ws = Workspace::new("zlib-formats");
+    let (code, stdout, _) = run(&["--list-formats"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("ZLIB"), "{stdout}");
+
+    let payload: Vec<u8> = (0..40_000u32).map(|i| (i % 6) as u8).collect();
+    ws.write("data.zlib", &build_zlib(&payload, 1));
+    let (code, stdout, stderr) = run(&["--formats", "png", "data.zlib"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+}
+
+#[test]
+fn strip_metadata_has_nothing_to_remove_from_zlib() {
+    let ws = Workspace::new("zlib-strip");
+    let payload: Vec<u8> = (0..60_000u32).map(|i| (i % 11) as u8).collect();
+    let original = build_zlib(&payload, 1);
+    let path = ws.write("data.zlib", &original);
+
+    let (code, stdout, stderr) = run(&["--strip-metadata", "data.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    // A zlib header carries no name, comment or timestamp: the two bytes are the
+    // original two bytes, and no line claims otherwise.
+    assert_eq!(optimized[..2], original[..2]);
+    assert_eq!(zlib_payload(&optimized), payload);
+}

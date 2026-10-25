@@ -12,6 +12,7 @@ pub enum Format {
     Ico,
     Jpeg,
     Tiff,
+    Zlib,
 }
 
 impl Format {
@@ -23,6 +24,7 @@ impl Format {
             Format::Ico => "ico",
             Format::Jpeg => "jpeg",
             Format::Tiff => "tiff",
+            Format::Zlib => "zlib",
         }
     }
 
@@ -34,6 +36,7 @@ impl Format {
             Format::Ico => "ICO",
             Format::Jpeg => "JPEG",
             Format::Tiff => "TIFF",
+            Format::Zlib => "ZLIB",
         }
     }
 }
@@ -78,6 +81,21 @@ pub fn detect(head: &[u8]) -> Option<Format> {
         if tiff {
             return Some(Format::Tiff);
         }
+    }
+
+    // zlib: CM = 8 (DEFLATE), CINFO <= 7, FDICT clear, and a header that passes
+    // RFC 1950's own check — the two bytes, big-endian, divisible by 31. That is
+    // weaker than a magic number, so the handler re-validates everything, and a
+    // false positive costs a `failed` line with the file untouched, never a
+    // rewrite. Checked after the strong signatures above, so a real PNG or gzip
+    // can never be mistaken for a zlib stream.
+    if head.len() >= 2
+        && head[0] & 0x0f == 8
+        && head[0] >> 4 <= 7
+        && head[1] & 0x20 == 0
+        && ((u16::from(head[0]) << 8) | u16::from(head[1])).is_multiple_of(31)
+    {
+        return Some(Format::Zlib);
     }
 
     // A local header (the usual case) or an end-of-central-directory record
@@ -273,6 +291,25 @@ mod tests {
         // Truncated signatures are not a match.
         assert_eq!(detect(&PNG_SIGNATURE[..7]), None);
         assert_eq!(detect(&[0x1f, 0x8b]), None);
+    }
+
+    #[test]
+    fn detects_zlib_and_rejects_near_misses() {
+        // 0x78 0x01 is the canonical "level 0, 32 KiB window" header, and the
+        // pair is a valid multiple of 31.
+        assert_eq!(detect(&[0x78, 0x01, 0x00, 0x00]), Some(Format::Zlib));
+        assert_eq!(detect(&[0x78, 0x9c, 0x00, 0x00]), Some(Format::Zlib));
+        assert_eq!(detect(&[0x78, 0xda, 0x00, 0x00]), Some(Format::Zlib));
+        // Same bytes with the check value broken.
+        assert_eq!(detect(&[0x78, 0x02, 0x00, 0x00]), None);
+        // CM = 7 is not DEFLATE.
+        assert_eq!(detect(&[0x77, 0x01]), None);
+        // CINFO above 7 is invalid in a zlib header.
+        assert_eq!(detect(&[0x88, 0x01]), None);
+        // FDICT asks for a dictionary we do not have: not something to touch.
+        assert_eq!(detect(&[0x78, 0xbb]), None);
+        // A single byte is not a header.
+        assert_eq!(detect(&[0x78]), None);
     }
 
     #[test]

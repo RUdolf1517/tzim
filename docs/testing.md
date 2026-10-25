@@ -102,6 +102,22 @@ not done until every row passes in CI.
 | `T-JPG-08` | A non-smaller candidate is discarded; a second run reports `already optimal` |
 | `T-JPG-09` | Bytes after `EOI` are preserved verbatim |
 
+### zlib
+
+| ID | Test |
+| --- | --- |
+| `T-ZL-01` | a level-1 stream is recompressed, the payload decodes identically, and the file is smaller |
+| `T-ZL-02` | the two header bytes and the four Adler-32 bytes are copied verbatim |
+| `T-ZL-03` | a stream already written at level 9 is reported `already_optimal` and nothing is written |
+| `T-ZL-04` | a wrong Adler-32 is `failed`; the file is untouched |
+| `T-ZL-05` | a header that fails the multiple-of-31 check is `failed`, not "unsupported" |
+| `T-ZL-06` | `FDICT` set: not treated as zlib at all — `unsupported`, untouched |
+| `T-ZL-07` | a declared window below 32 KiB is `skipped` with a reason, untouched |
+| `T-ZL-08` | trailing data after the stream is `skipped`, untouched; a false positive never writes |
+
+The unit tests in `src/formats/zlib.rs` also pin the Adler-32 against `zlib`'s own values, including a 1 MiB
+input that exercises the overflow bound.
+
 ### TIFF
 
 | ID | Assertion |

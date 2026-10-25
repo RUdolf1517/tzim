@@ -9,6 +9,33 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.9.0] - 2026-10-25 — zlib, and a format queue that closes
+
+### Added
+
+- **zlib (RFC 1950)** — the DEFLATE stream is recompressed, the two header bytes and the four Adler-32 bytes
+  are copied verbatim, and the contract is [guarantees §4.10](docs/guarantees.md#410-zlib-rfc-1950--v09).
+  No new dependency: `flate2` was already in the tree and the checksum is twelve lines of arithmetic.
+  Refused with a reason: `CM ≠ 8`, a declared window below 32 KiB (our encoder may exceed it), a preset
+  dictionary (the payload cannot be decoded without bytes that are not in the file), and trailing data.
+
+### Changed
+
+- **FLAC is refused after measurement**, not deferred. `libFLAC` at every level on three deterministic
+  signals: a stronger encoder buys **0.38 %** on musical material, 1.6 % on a pure tone, and **0 %** on files
+  already written at `flac -8`; the encoder plus an independent decoder would cost roughly **150–300 KiB** of
+  a 920 KiB binary. The contract stays on record, the code does not get written, and
+  [docs/flac-audit.md §7](docs/flac-audit.md#7-decision-refused-and-the-measurement-behind-it) has the table.
+- **Raw DEFLATE is refused**, not deferred: a bare stream has no header, no trailer and no signature, so
+  recognising one would mean guessing.
+- The format queue in [docs/roadmap.md](docs/roadmap.md) is now empty, and every remaining candidate is
+  recorded with the reason it is not there.
+
+### Size
+
+- **+8 KiB** (920 → 928 KiB), of which 4 KiB is the zlib handler itself — the cheapest format in the table —
+  and the rest is a page boundary. The budget follows the documented rule (measured + 15 %): 1 059 → 1 069 KiB.
+
 ## [0.8.0] - 2026-10-25 — the terminal, and a contract for FLAC
 
 No output byte changed and no file is treated differently: this release is the interface around the same

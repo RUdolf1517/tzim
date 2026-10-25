@@ -89,7 +89,7 @@ Additional requirements:
 
 | Crate | Direct | Compiled by | Purpose | In the binary |
 | --- | --- | --- | --- | --- |
-| `flate2` | yes | features `png`, `gzip`, `zip`, `tiff` | DEFLATE decode/encode | with any of those |
+| `flate2` | yes | features `png`, `gzip`, `zip`, `tiff`, `zlib` | DEFLATE decode/encode | with any of those |
 | `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
@@ -97,7 +97,9 @@ Additional requirements:
 Four direct dependencies, all of them behind a feature: **every dependency is optional**, which is what
 makes the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) meaningful. A build with
 `--no-default-features --features png` compiles exactly `png`, `flate2` and `crc32fast`, and nothing else.
-The JPEG and ICO handlers add code, not crates. **v0.4 and v0.6 added none**: see §2.6 for JPEG.
+The JPEG, ICO, TIFF and zlib handlers add code, not crates. **v0.4, v0.6, v0.7 and v0.9 added none**:
+§2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a codec that
+was already in the tree.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 
@@ -125,11 +127,13 @@ instead of using a vetted crate.
   it. The residual risk (a bug shared by encoder and decoder) is recorded in
   [guarantees](guarantees.md#47-jpeg--v04-opt-in) and [benchmarks](benchmarks.md).
 
-### 2.7 FLAC: the crates it would need, and why they are not in `Cargo.toml`
+### 2.7 FLAC: the crates it would have needed
 
-The FLAC contract is written ([guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)) and the
-audit behind it is [flac-audit.md](flac-audit.md). The implementation is blocked on the dependency rule in §1:
-these are the three crates it needs, and none of them is added.
+**FLAC is refused** ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)): a
+stronger encoder buys 0.4 % on musical material and 0 % on files already written at `flac -8`, while the
+encoder and an independent decoder together would add roughly 150–300 KiB to a 920 KiB binary. The table below
+is kept as the record of what the "yes" would have cost, and of why the encoder and the decoder cannot be the
+same crate.
 
 | Crate | Version at audit | Licence | Size | Role | Why it is the right one |
 | --- | --- | --- | --- | --- | --- |

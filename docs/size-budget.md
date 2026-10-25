@@ -6,8 +6,8 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 942 944 bytes (920 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zopfli`), v0.8.0. Per-feature measurements are in §3; the profile that got
+> **Measured: 951 136 bytes (928 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
+> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`), v0.9.0. Per-feature measurements are in §3; the profile that got
 > here is in §2, and what it cost in speed is in §5.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
@@ -20,18 +20,19 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 
 | Profile | Features | Measured | Budget (+15 %) |
 | --- | --- | --- | --- |
-| `png` | `png` | 708 KiB | 814 KiB |
-| `core` | `png,gzip` | 712 KiB | 818 KiB |
-| `+zip` | `png,gzip,zip` | 752 KiB | 864 KiB |
-| `images` | `png,gzip,zip,ico` | 764 KiB | 878 KiB |
-| `+jpeg` | `png,gzip,zip,ico,jpeg` | 816 KiB | 938 KiB |
-| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 844 KiB | 970 KiB |
-| `full` | `png,gzip,zip,ico,jpeg,tiff,zopfli` | 920 KiB | 1 059 KiB |
+| `png` | `png` | 708 KiB | 816 KiB |
+| `core` | `png,gzip` | 712 KiB | 820 KiB |
+| `+zip` | `png,gzip,zip` | 752 KiB | 866 KiB |
+| `images` | `png,gzip,zip,ico` | 764 KiB | 880 KiB |
+| `+jpeg` | `png,gzip,zip,ico,jpeg` | 816 KiB | 940 KiB |
+| `+tiff` | `png,gzip,zip,ico,jpeg,tiff` | 844 KiB | 972 KiB |
+| `+zlib` | `png,gzip,zip,ico,jpeg,tiff,zlib` | 848 KiB | 977 KiB |
+| `full` | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | 928 KiB | 1 069 KiB |
 
 `full` is gated on every pull request: the job fails when the static binary exceeds the budget. The other
 rows are reported by the same job (§3) and are the numbers the next tightening uses. The policy is
-*measured + 15 %*, so a change that costs more than a sixth of the current size has to be justified in the
-pull request.
+*measured + 15 %*, computed in bytes and rounded up to whole KiB, so a change that costs more than a sixth of
+the current size has to be justified in the pull request.
 
 Reference point only (not a target): the official oxipng 10.2.1 Linux release archive is ~493 KiB
 compressed, and Leanify advertises "under 1 MB" for a C++ tool covering many formats. We are in the same
@@ -106,7 +107,8 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 | `png,gzip,zip,ico` | 783 136 | 764 |
 | `png,gzip,zip,ico,jpeg` | 836 384 | 816 |
 | `png,gzip,zip,ico,jpeg,tiff` | 865 056 | 844 |
-| `png,gzip,zip,ico,jpeg,tiff,zopfli` | 942 944 | 920 |
+| `png,gzip,zip,ico,jpeg,tiff,zlib` | 869 152 | 848 |
+| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | 951 136 | 928 |
 
 Each feature's cost is visible by subtracting the row above it: `gzip` +4 KiB, `zip` +40 KiB, `ico`
 +12 KiB, the JPEG codec +52 KiB, the TIFF handler +28 KiB, Zopfli +76 KiB. The same deltas measured at
