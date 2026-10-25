@@ -246,7 +246,7 @@ Tested, on every platform CI runs:
 | symlink to a file | `skipped` by default; optimized with `--follow-symlinks` |
 | symlink given directly, and a broken link | reported, nothing written |
 | hard-linked file | `skipped` with a reason naming `--allow-hardlinks`; with the flag the replacement breaks the link on purpose and the other name keeps the old bytes |
-| path that is not valid UTF-8 (Unix) | optimized through the raw bytes; the JSON record carries `path_raw_b64` |
+| path that is not valid UTF-8 (Linux only) | optimized through the raw bytes; the JSON record carries `path_raw_b64`. APFS and Windows reject such a name, so the fixture cannot exist there |
 | Unix socket | `skipped` as "not a regular file", still present afterwards |
 | same file via three different paths | processed once |
 | empty file, 1-byte file | `unsupported` |

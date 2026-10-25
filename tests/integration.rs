@@ -553,7 +553,12 @@ fn a_hard_linked_file_is_skipped_unless_allowed() {
     );
 }
 
-#[cfg(unix)]
+// Linux only, on purpose: ext4, xfs and btrfs store names as bytes, while APFS
+// rejects a name that is not valid UTF-8 with EILSEQ — the fixture cannot even be
+// created there. Windows has the same restriction through UTF-16. The code path
+// under test (`path_raw_b64`, a lossy human field) exists for the filesystems that
+// do allow it.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_path_that_is_not_valid_utf8_is_optimized() {
     use std::ffi::OsStr;
