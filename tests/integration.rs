@@ -626,6 +626,233 @@ fn a_socket_is_skipped_and_never_opened_for_writing() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// T-FS-11. A FIFO has to be skipped *without being opened*: opening one for
+/// writing blocks until a reader appears, so a test that opened it would hang
+/// rather than fail. The mtime is the proof that nothing wrote to it.
+#[cfg(unix)]
+#[test]
+fn t_fs_11_a_fifo_is_skipped_and_never_opened() {
+    use std::os::unix::fs::FileTypeExt;
+
+    let ws = Workspace::new("fifo");
+    let fifo = ws.file("pipe");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo must exist on a Unix system");
+    assert!(status.success(), "mkfifo failed");
+
+    let before = std::fs::symlink_metadata(&fifo).unwrap();
+    let (code, stdout, stderr) = run(&["pipe"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("not a regular file"), "{stdout}");
+
+    let after = std::fs::symlink_metadata(&fifo).unwrap();
+    assert!(after.file_type().is_fifo(), "the FIFO must still be there");
+    assert_eq!(
+        before.modified().unwrap(),
+        after.modified().unwrap(),
+        "nothing may have opened the FIFO for writing"
+    );
+}
+
+/// T-FS-12. A character device is not a file: it is skipped, and it is not
+/// opened. `/dev/null` is the only device a test can rely on existing.
+#[cfg(unix)]
+#[test]
+fn t_fs_12_a_device_node_is_skipped() {
+    let dev = Path::new("/dev/null");
+    if !dev.exists() {
+        eprintln!("skipped: /dev/null does not exist on this system");
+        return;
+    }
+    let (code, stdout, stderr) = run(&["/dev/null"], Path::new("."));
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("not a regular file"), "{stdout}");
+}
+
+/// T-FS-13. A full disk is an ordinary I/O failure: the file is `failed`, it is
+/// untouched, and the candidate the guard owns is gone.
+///
+/// It needs a filesystem with no free space, which cannot be made portably, so
+/// the test is gated on `TZIM_TEST_FULL_DISK` — a directory on a tiny tmpfs,
+/// which CI mounts. Without it the test says so and returns; it never pretends
+/// to have checked.
+#[test]
+fn t_fs_13_a_full_disk_is_a_failure_with_nothing_left_behind() {
+    let Some(dir) = std::env::var_os("TZIM_TEST_FULL_DISK") else {
+        eprintln!(
+            "skipped: TZIM_TEST_FULL_DISK is not set; point it at an empty directory on a \
+             filesystem of a few megabytes to run the ENOSPC test"
+        );
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    if !dir.is_dir() {
+        eprintln!("skipped: {} is not a directory", dir.display());
+        return;
+    }
+
+    // Removes the filler on every path out of this test, including a panicking
+    // assertion: a full tmpfs left behind breaks every later test on it.
+    struct Filler(std::path::PathBuf);
+    impl Drop for Filler {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    let spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = dir.join("full.png");
+    std::fs::write(&path, &original).expect("write the fixture before filling the disk");
+
+    // Fill the filesystem until a write fails, then stop. Whatever is left is
+    // smaller than one page, so creating any file at all fails with ENOSPC
+    // rather than ENOSPC-by-arithmetic.
+    let filler = Filler(dir.join("filler.bin"));
+    {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&filler.0).expect("create the filler");
+        let mut block = vec![0u8; 64 * 1024];
+        loop {
+            if file.write_all(&block).is_err() {
+                block = vec![0u8; 4096];
+                if file.write_all(&block).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = file.flush();
+    }
+
+    let (code, stdout, stderr) = run(&["full.png"], &dir);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("failed"), "{stdout}");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "the original must be untouched"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".tzim-"))
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "a failed run must not leave a temporary file: {:?}",
+        leftovers.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
+    drop(filler);
+}
+
+/// T-FS-14. A symlink cycle under `--follow-symlinks` must terminate, and the
+/// run must say what happened.
+///
+/// It terminates because the kernel refuses to resolve a path with more than a
+/// fixed number of symlink hops — `ELOOP`, 40 on Linux and 32 on macOS — and not
+/// because of the 64-level depth guard, which a cycle never reaches: the test
+/// that asserted the guard was the guard failed, and the observation is worth
+/// more than the assumption (`T-FS-16` covers the guard itself, with real
+/// directories). The cycle is an unreadable path, so it is `failed` with exit
+/// `1`, and everything else in the tree is still processed.
+#[cfg(unix)]
+#[test]
+fn t_fs_14_a_symlink_cycle_terminates_and_is_reported() {
+    let ws = Workspace::new("cycle");
+    // A file with no handler, so nothing in this test depends on a rewrite.
+    ws.write("tree/notes.txt", b"not an image");
+    // `tree/self` points at `tree`: following it walks the same directory again
+    // and again, one level deeper each time.
+    std::os::unix::fs::symlink(".", ws.path.join("tree/self")).unwrap();
+
+    let (code, stdout, stderr) = run(&["tree", "-r", "--follow-symlinks"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("symbolic links"),
+        "the reason must name the loop: {stdout}"
+    );
+    assert!(
+        stdout.contains("failed"),
+        "a path the kernel refuses to resolve is a failure, not a silent skip: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(ws.file("tree/notes.txt")).unwrap(),
+        b"not an image"
+    );
+}
+
+/// T-FS-15. A directory the tool cannot write to is an I/O failure, not a
+/// rewrite: `failed`, and the file is byte-identical afterwards.
+#[cfg(unix)]
+#[test]
+fn t_fs_15_a_read_only_directory_is_a_failure_and_the_file_survives() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ws = Workspace::new("readonly-dir");
+    let original = build_png(&PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    });
+    let path = ws.write("inside.png", &original);
+
+    std::fs::set_permissions(&ws.path, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    // Running as root defeats the permission bits entirely, and a test that
+    // passed because it was root would be a lie. Prove the directory really is
+    // closed before asserting anything about the tool.
+    let probe = ws.path.join("probe");
+    let enforced = std::fs::write(&probe, b"x").is_err();
+    if !enforced {
+        let _ = std::fs::remove_file(&probe);
+        std::fs::set_permissions(&ws.path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: this process can write to a 0555 directory (running as root?)");
+        return;
+    }
+
+    let (code, stdout, stderr) = run(&["inside.png"], &ws.path);
+    std::fs::set_permissions(&ws.path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("failed"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+/// T-FS-16. A tree deeper than the limit is refused rather than walked forever,
+/// and the files above the limit are still processed.
+#[test]
+fn t_fs_16_a_tree_deeper_than_sixty_four_levels_is_refused() {
+    let ws = Workspace::new("deep");
+    let original = build_png(&PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    });
+    ws.write("top.png", &original);
+    let mut deep = ws.path.clone();
+    for level in 0..70 {
+        deep.push(format!("d{level}"));
+    }
+    std::fs::create_dir_all(&deep).expect("create 70 nested directories");
+    std::fs::write(deep.join("deep.png"), &original).unwrap();
+
+    let (code, stdout, stderr) = run(&[".", "-r"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("nesting deeper than 64 levels"),
+        "the walk must stop at the limit and say so: {stdout}"
+    );
+}
+
 #[test]
 fn symlinks_are_not_followed_by_default() {
     #[cfg(unix)]
@@ -2249,6 +2476,156 @@ fn tiff_is_skipped_when_the_format_is_not_enabled() {
 // Traceability rows that had no test (#49). Each name starts with the row id.
 // ---------------------------------------------------------------------------
 
+/// Every scanline filter the builder can write, applied to the data rather than
+/// merely announced in the row's first byte (T-PNG-03).
+#[test]
+fn t_png_03_every_scanline_filter_round_trips() {
+    for filter in 0..=4u8 {
+        let ws = Workspace::new(&format!("row-png-03-f{filter}"));
+        let spec = PngSpec {
+            width: 96,
+            height: 72,
+            filter,
+            level: 1,
+            ..Default::default()
+        };
+        let original = build_png(&spec);
+        // The fixture must decode before the tool touches it: a builder that
+        // writes a filter byte without filtering the row produces a broken file,
+        // and every assertion below would then be about the wrong thing.
+        let (w1, h1, p1) = decode_pixels(&original).expect("the fixture must be a valid PNG");
+        let path = ws.write("filtered.png", &original);
+
+        let (code, stdout, stderr) = run(&["filtered.png"], &ws.path);
+        assert_eq!(code, 0, "filter {filter}: stdout={stdout} stderr={stderr}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        assert!(
+            optimized.len() < original.len(),
+            "filter {filter}: expected a gain"
+        );
+        let (w2, h2, p2) = decode_pixels(&optimized).unwrap();
+        assert_eq!((w1, h1), (w2, h2));
+        assert_eq!(p1, p2, "filter {filter}: pixels must be identical");
+    }
+}
+
+/// T-PNG-04: an interlaced image is recompressed and nothing else. The filter
+/// re-selection is skipped for Adam7 (a pass row is not a scanline), so the only
+/// observable change is the size, and the pixels must survive it.
+#[test]
+fn t_png_04_an_interlaced_image_is_recompressed_and_pixels_are_identical() {
+    let ws = Workspace::new("row-png-04");
+    let spec = PngSpec {
+        // Odd dimensions on purpose: Adam7's later passes are partial rows, and
+        // a pass that falls outside the image must be skipped rather than
+        // written as an empty one.
+        width: 128,
+        height: 96,
+        level: 1,
+        interlaced: true,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    // Signature 8, length 4, type 4, then IHDR: interlace is data byte 12.
+    assert_eq!(original[28], 1, "the fixture must be interlaced");
+    let (w1, h1, p1) = decode_pixels(&original).expect("the fixture must be a valid PNG");
+    let path = ws.write("adam7.png", &original);
+
+    let (code, stdout, stderr) = run(&["adam7.png"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "expected a gain");
+    assert_eq!(
+        optimized[28], 1,
+        "the interlace method must not change: only the compressed stream may"
+    );
+    // Every non-IDAT chunk is byte-identical, IHDR included: that is what
+    // "recompression only" means for an interlaced file.
+    let before: Vec<_> = png_chunks(&original)
+        .unwrap()
+        .into_iter()
+        .filter(|(t, _)| t != "IDAT")
+        .collect();
+    let after: Vec<_> = png_chunks(&optimized)
+        .unwrap()
+        .into_iter()
+        .filter(|(t, _)| t != "IDAT")
+        .collect();
+    assert_eq!(before, after, "no other chunk may change");
+    let (w2, h2, p2) = decode_pixels(&optimized).unwrap();
+    assert_eq!((w1, h1), (w2, h2));
+    assert_eq!(p1, p2, "pixels must be identical");
+}
+
+/// T-APNG-05: a frame sequence that does not number itself 0, 1, 2, … is refused
+/// as corrupt input, before anything is written.
+#[test]
+fn t_apng_05_an_inconsistent_frame_sequence_is_refused() {
+    let ws = Workspace::new("row-apng-05");
+    let original = build_apng(32, 24, 3, 1);
+
+    // Walk the chunks and bump the first fdAT's sequence number, leaving a gap.
+    let mut damaged = original.clone();
+    let mut pos = 8usize;
+    let mut bumped = false;
+    while pos + 8 <= damaged.len() {
+        let len = u32::from_be_bytes([
+            damaged[pos],
+            damaged[pos + 1],
+            damaged[pos + 2],
+            damaged[pos + 3],
+        ]) as usize;
+        let typ = &damaged[pos + 4..pos + 8];
+        let data = pos + 8;
+        if typ == b"fdAT" {
+            let actual = u32::from_be_bytes([
+                damaged[data],
+                damaged[data + 1],
+                damaged[data + 2],
+                damaged[data + 3],
+            ]);
+            damaged[data..data + 4].copy_from_slice(&(actual + 5).to_be_bytes());
+            bumped = true;
+            break;
+        }
+        pos = data + len + 4;
+    }
+    assert!(bumped, "the fixture must contain an fdAT chunk");
+    // The chunk CRCs are now stale for `fdAT`. The sequence check runs on the
+    // chunk walk, which validates CRCs first, so repair the CRC to make sure the
+    // refusal below is about the sequence and not about a checksum.
+    let mut pos = 8usize;
+    while pos + 8 <= damaged.len() {
+        let len = u32::from_be_bytes([
+            damaged[pos],
+            damaged[pos + 1],
+            damaged[pos + 2],
+            damaged[pos + 3],
+        ]) as usize;
+        let data = pos + 8;
+        let crc_at = data + len;
+        if &damaged[pos + 4..pos + 8] == b"fdAT" {
+            let mut hasher = crc32fast::Hasher::new();
+            hasher.update(&damaged[pos + 4..crc_at]);
+            damaged[crc_at..crc_at + 4].copy_from_slice(&hasher.finalize().to_be_bytes());
+            break;
+        }
+        pos = crc_at + 4;
+    }
+
+    let path = ws.write("broken.png", &damaged);
+    let (code, stdout, stderr) = run(&["broken.png"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("failed"), "{stdout}");
+    assert!(
+        stdout.contains("sequence"),
+        "the note must name the reason: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+}
+
 #[test]
 fn t_png_09_zopfli_is_at_least_as_good_as_the_default() {
     let ws = Workspace::new("row-png-09");
@@ -2722,25 +3099,56 @@ fn data_after_the_stream_is_skipped_and_untouched() {
     assert_eq!(std::fs::read(&path).unwrap(), data);
 }
 
+/// #52: RFC 1950's header check is what detection has to go on, and random bytes
+/// satisfy it once in 1984. A file like that is not a zlib stream and must not
+/// fail the run: `unsupported`, exit 0, untouched.
 #[test]
-fn a_false_positive_is_reported_and_never_written() {
+fn a_coincidental_zlib_header_is_unsupported_and_never_written() {
     let ws = Workspace::new("zlib-false-positive");
-    // A valid header, then bytes that are not a DEFLATE stream. Detection cannot
-    // tell this apart from a corrupt file, so either verdict is acceptable — but
-    // the file must come back untouched, whatever the verdict is.
     let mut data = vec![0x78, 0x9c];
-    data.extend_from_slice(b"this is not a deflate stream at all, it only starts like one");
+    // BTYPE = 3 in the first block: a reserved type, so nothing decodes.
+    data.extend_from_slice(&[0xff; 16]);
     data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+
+    // Assert the fixture passes the header check itself. Without this the test
+    // proves nothing: a file the detector ignores is `unsupported` for the other
+    // reason, and the regression would go unnoticed.
+    let header = (u16::from(data[0]) << 8) | u16::from(data[1]);
+    assert_eq!(header % 31, 0, "the fixture must pass RFC 1950's check");
+    assert_eq!(data[0] & 0x0f, 8, "CM must be DEFLATE");
+    assert!(data[0] >> 4 <= 7, "CINFO must be a legal window");
+    assert_eq!(data[1] & 0x20, 0, "FDICT must be clear");
+
     let path = ws.write("fake.zlib", &data);
 
     let (code, stdout, stderr) = run(&["fake.zlib"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("unsupported"), "{stdout}");
     assert!(
-        code == 0 || code == 1,
-        "code={code} stdout={stdout} stderr={stderr}"
+        stdout.contains("not a zlib stream"),
+        "the note has to say what was decided and why: {stdout}"
     );
+    assert_eq!(std::fs::read(&path).unwrap(), data);
+}
+
+/// The half of #52 that must not move: a real stream that ends early is
+/// corruption, and exit 0 would hide it.
+#[test]
+fn a_truncated_zlib_stream_is_still_a_failure() {
+    let ws = Workspace::new("zlib-truncated");
+    let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 11) as u8).collect();
+    let original = build_zlib(&payload, 1);
+    let data = original[..original.len() * 3 / 4].to_vec();
+    let path = ws.write("short.zlib", &data);
+
+    let (code, stdout, stderr) = run(&["short.zlib"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("failed:"), "{stdout}");
+    // The status word, not the summary column: "0 unsupported" in the summary
+    // line says nothing about this file.
     assert!(
-        stdout.contains("failed") || stdout.contains("skipped"),
-        "{stdout}"
+        !stdout.contains("unsupported:"),
+        "a stream that decoded bytes is corruption: {stdout}"
     );
     assert_eq!(std::fs::read(&path).unwrap(), data);
 }

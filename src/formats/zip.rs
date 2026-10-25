@@ -811,6 +811,13 @@ fn nested_child(child: &[u8], opts: &Options) -> Result<Option<(Vec<u8>, u32, u3
     if opts.depth >= opts.max_depth {
         return Ok(None);
     }
+    // Defence in depth, and it cannot fire from `optimize`: `check_limits` has
+    // already refused the archive when the sum of the declared uncompressed
+    // sizes exceeds `--max-uncompressed`, and `inflate_entry` refuses an entry
+    // whose data disagrees with its own declared size — so a child handed to
+    // this function is never larger than the budget (#49, T-NEST-04). The
+    // budget is a limit on the archive, not a running total shared by children;
+    // there is no "remaining budget" to test.
     if child.len() as u64 > opts.max_uncompressed {
         return Ok(None);
     }

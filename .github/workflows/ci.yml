@@ -24,6 +24,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
+      # The ENOSPC test needs a filesystem that can be filled to the last page,
+      # and there is no portable way to make one: a 2 MiB tmpfs is. If the runner
+      # refuses the mount the step warns and the test says it was skipped, so a
+      # sandbox without privileges loses coverage instead of turning the job red.
+      - name: A tiny tmpfs for the full-disk test
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -u
+          dir="$RUNNER_TEMP/tzim-full"
+          mkdir -p "$dir"
+          if sudo mount -t tmpfs -o size=2M tmpfs "$dir"; then
+            sudo chmod 1777 "$dir"
+            echo "TZIM_TEST_FULL_DISK=$dir" >> "$GITHUB_ENV"
+          else
+            echo "::warning::could not mount a tmpfs; t_fs_13 will skip"
+          fi
+
       - name: Build and test
         id: test
         continue-on-error: true
@@ -362,43 +380,6 @@ jobs:
 
       - name: Fail the job
         if: steps.install.outcome == 'failure' || steps.corrupt.outcome == 'failure'
-        shell: bash
-        run: exit 1
-
-  # winget has no Linux runner, and the manifest is a file that is shipped to
-  # users: `winget validate` reads it as a document, and verify.sh downloads the
-  # file it names and compares the hash, which is the half a schema cannot check.
-  winget:
-    name: winget manifest
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Validate the newest manifest
-        id: validate
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -eo pipefail
-          latest=$(ls -d packaging/winget/*/ | sort -V | tail -n 1)
-          echo "manifest: $latest"
-          winget validate --manifest "$latest" 2>&1 | tee /tmp/tzim-winget.log
-
-      - name: Check the hash against the published archive
-        id: hash
-        continue-on-error: true
-        shell: bash
-        run: sh packaging/winget/verify.sh 2>&1 | tee -a /tmp/tzim-winget.log
-
-      - name: Publish failure log
-        if: steps.validate.outcome == 'failure' || steps.hash.outcome == 'failure'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/ci-report.sh /tmp/tzim-winget.log winget
-
-      - name: Fail the job
-        if: steps.validate.outcome == 'failure' || steps.hash.outcome == 'failure'
         shell: bash
         run: exit 1
 

@@ -66,11 +66,16 @@ pub fn chunk(typ: &[u8; 4], data: &[u8]) -> Vec<u8> {
 pub struct PngSpec {
     pub width: u32,
     pub height: u32,
+    /// The scanline filter to write, 0 to 4. It is applied to the data: a row
+    /// declared as `Sub` but written unfiltered is a broken file, and a fixture
+    /// builder that can produce one is worse than none.
     pub filter: u8,
     pub level: u32,
     pub extra_chunks: Vec<(String, Vec<u8>)>,
     /// Adds an `acTL` chunk, turning the file into an APNG.
     pub apng: bool,
+    /// Writes `IHDR` interlace method 1 and an Adam7 stream (#49).
+    pub interlaced: bool,
 }
 
 impl Default for PngSpec {
@@ -82,26 +87,114 @@ impl Default for PngSpec {
             level: 6,
             extra_chunks: Vec::new(),
             apng: false,
+            interlaced: false,
         }
     }
 }
 
-/// Builds a truecolor+alpha, 8-bit, non-interlaced PNG.
+/// The pixel at (x, y) of the fixture image: a gradient plus structure, so that
+/// filtering and interlacing have something to get wrong.
+fn png_pixel(x: usize, y: usize, width: usize, height: usize) -> [u8; 4] {
+    [
+        ((x * 255) / width) as u8,
+        ((y * 255) / height) as u8,
+        ((x + y) % 251) as u8,
+        0xff,
+    ]
+}
+
+/// Applies one PNG scanline filter to `cur`, using `prev` as the row above and
+/// `bpp` as the distance back within the row (PNG spec §9.2).
+fn png_filter(filter: u8, cur: &[u8], prev: &[u8], bpp: usize, out: &mut Vec<u8>) {
+    for i in 0..cur.len() {
+        let x = cur[i];
+        let a = if i >= bpp { cur[i - bpp] } else { 0 };
+        let b = prev[i];
+        let c = if i >= bpp { prev[i - bpp] } else { 0 };
+        let value = match filter {
+            0 => x,
+            1 => x.wrapping_sub(a),
+            2 => x.wrapping_sub(b),
+            3 => x.wrapping_sub(((u16::from(a) + u16::from(b)) / 2) as u8),
+            4 => {
+                let p = i16::from(a) + i16::from(b) - i16::from(c);
+                let (pa, pb, pc) = (
+                    (p - i16::from(a)).abs(),
+                    (p - i16::from(b)).abs(),
+                    (p - i16::from(c)).abs(),
+                );
+                let predictor = if pa <= pb && pa <= pc {
+                    a
+                } else if pb <= pc {
+                    b
+                } else {
+                    c
+                };
+                x.wrapping_sub(predictor)
+            }
+            other => panic!("PngSpec.filter {other} is not a PNG filter"),
+        };
+        out.push(value);
+    }
+}
+
+/// The seven Adam7 passes: (x start, y start, x step, y step).
+const ADAM7: [(usize, usize, usize, usize); 7] = [
+    (0, 0, 8, 8),
+    (4, 0, 8, 8),
+    (0, 4, 4, 8),
+    (2, 0, 4, 4),
+    (0, 2, 2, 4),
+    (1, 0, 2, 2),
+    (0, 1, 1, 2),
+];
+
+/// Builds a truecolor+alpha, 8-bit PNG, interlaced or not.
 pub fn build_png(spec: &PngSpec) -> Vec<u8> {
     let mut ihdr = Vec::new();
     ihdr.extend_from_slice(&spec.width.to_be_bytes());
     ihdr.extend_from_slice(&spec.height.to_be_bytes());
-    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    let interlace = u8::from(spec.interlaced);
+    ihdr.extend_from_slice(&[8, 6, 0, 0, interlace]);
 
+    let (width, height) = (spec.width as usize, spec.height as usize);
+    // Every pass is written as a small image of its own, with its own previous
+    // row for the filter — which is exactly what the format says.
     let mut raw = Vec::new();
-    for y in 0..spec.height as usize {
-        raw.push(spec.filter);
-        for x in 0..spec.width as usize {
-            // A gradient plus structure so filtering has something to work with.
-            raw.push(((x * 255) / spec.width as usize) as u8);
-            raw.push(((y * 255) / spec.height as usize) as u8);
-            raw.push(((x + y) % 251) as u8);
-            raw.push(0xff);
+    if spec.interlaced {
+        for (xs, ys, xstep, ystep) in ADAM7 {
+            // A pass exists only when it contains a pixel: Adam7's first pass
+            // starts at (0,0) and every later one can fall outside a small
+            // image.
+            if width <= xs || height <= ys {
+                continue;
+            }
+            let pass_width = (width - xs).div_ceil(xstep);
+            let pass_height = (height - ys).div_ceil(ystep);
+            let mut prev = vec![0u8; pass_width * 4];
+            let mut cur = vec![0u8; pass_width * 4];
+            for row in 0..pass_height {
+                let y = ys + row * ystep;
+                for column in 0..pass_width {
+                    let x = xs + column * xstep;
+                    cur[column * 4..column * 4 + 4]
+                        .copy_from_slice(&png_pixel(x, y, width, height));
+                }
+                raw.push(spec.filter);
+                png_filter(spec.filter, &cur, &prev, 4, &mut raw);
+                prev.copy_from_slice(&cur);
+            }
+        }
+    } else {
+        let mut prev = vec![0u8; width * 4];
+        let mut cur = vec![0u8; width * 4];
+        for y in 0..height {
+            for x in 0..width {
+                cur[x * 4..x * 4 + 4].copy_from_slice(&png_pixel(x, y, width, height));
+            }
+            raw.push(spec.filter);
+            png_filter(spec.filter, &cur, &prev, 4, &mut raw);
+            prev.copy_from_slice(&cur);
         }
     }
 

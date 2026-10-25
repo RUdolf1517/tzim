@@ -270,12 +270,24 @@ behaviour it changes is a defect:
 
 The tag was cut from `main` after those tests failed before the fix and passed after it.
 
-### v0.12.1 — the two decisions that are still open — **planned**
+### v0.12.1 — the first patch after the audit — **implemented**
 
-- **A weak signature never produces `failed`** (#52): a zlib header that decodes nothing is `unsupported`; one
-  that decodes and then breaks is still `failed`, so a truncated stream keeps its corruption signal.
+- **A coincidental zlib header stops failing the run** (#52): nothing decoded is `unsupported` with exit `0`;
+  a stream that decoded bytes and then broke is still `failed` with exit `1`.
+- **The winget channel is gone** (#56). It never distributed anything — the package was never submitted — and
+  Windows installs from the release zip now, which is the path that always worked.
+- **The last three traceability rows are closed** (#49): `T-PNG-04` needed Adam7 in the fixture builder,
+  `T-APNG-05` needed a frame-sequence check that did not exist, and `T-NEST-04` was deleted because the budget
+  it described does not exist.
+- **`T-FS-11` … `T-FS-16`** (#35): a FIFO, a device node, a full disk, a symlink cycle, a read-only directory
+  and a 70-level tree. The cycle test disproved a sentence in `cli.md` on its first run: what stops a cycle is
+  the kernel's `ELOOP`, not the 64-level guard.
+
+### v0.12.2 — the memory budget — **planned**
+
 - **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
-  reason instead of being read.
+  reason instead of being read. `--jobs` bounds how many files are in flight, not how many bytes they need,
+  and [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) says so until this lands.
 
 Neither is a size change, so the release is a patch. The tag is cut from `main` only after each test fails
 before its fix and passes after it.

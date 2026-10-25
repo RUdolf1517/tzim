@@ -62,16 +62,15 @@ sudo dnf install ./tzim.x86_64.rpm
 
 Both packages install `man tzim` and completion for bash, zsh and fish.
 
-Windows, x64 — until the manifest reaches the community source, winget installs it from this repository:
+Windows, x64 — a zip on the releases page:
 
 ```powershell
-git clone https://github.com/RUdolf1517/tzim; cd tzim
-winget settings --enable LocalManifestFiles
-winget install --manifest .\packaging\winget\0.11.0
+Invoke-WebRequest -Uri https://github.com/RUdolf1517/tzim/releases/latest/download/tzim-x86_64-pc-windows-msvc.zip -OutFile tzim.zip
+Expand-Archive tzim.zip -DestinationPath $HOME\tzim
 ```
 
-`LocalManifestFiles` is once, as Administrator. Or take `tzim-x86_64-pc-windows-msvc.zip` from
-[Releases](https://github.com/RUdolf1517/tzim/releases/latest) and put `tzim.exe` on `PATH`.
+Then put `tzim.exe` on `PATH`. There is no package manager on Windows: the zip is the channel, and nothing is
+written outside the directory you unpack it into.
 
 </details>
 

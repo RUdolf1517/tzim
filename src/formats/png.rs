@@ -63,6 +63,61 @@ struct Chunk<'a> {
     raw: &'a [u8],
 }
 
+/// Validates the `acTL`/`fcTL`/`fdAT` sequence of an animated PNG (#49).
+///
+/// The writer copies these chunks byte for byte and keeps their sequence
+/// numbers, so it never had an opinion about whether the sequence makes sense.
+/// The `png` crate refuses a broken one while decoding — but a decode that stops
+/// on both sides of a comparison is indistinguishable from the end of the frame
+/// loop, so "the crate will catch it" is not a check this program can rely on.
+/// This is the check, and it is structural: `fcTL` and `fdAT` number themselves
+/// 0, 1, 2, … in file order with no gaps, and the number of `fcTL` chunks is the
+/// frame count `acTL` declares.
+fn check_frame_sequence(chunks: &[Chunk<'_>]) -> Result<()> {
+    let declared = match chunks.iter().find(|c| c.typ == *b"acTL") {
+        Some(c) if c.data.len() >= 8 => {
+            u32::from_be_bytes([c.data[0], c.data[1], c.data[2], c.data[3]])
+        }
+        Some(_) => return Err(Error::parse("png: acTL chunk is malformed")),
+        None => return Ok(()),
+    };
+
+    let mut expected: u32 = 0;
+    let mut controls: u32 = 0;
+    for chunk in chunks {
+        if chunk.typ != *b"fcTL" && chunk.typ != *b"fdAT" {
+            continue;
+        }
+        if chunk.data.len() < 4 {
+            return Err(Error::parse(format!(
+                "png: `{}` chunk is too short to carry a sequence number",
+                String::from_utf8_lossy(&chunk.typ)
+            )));
+        }
+        let actual =
+            u32::from_be_bytes([chunk.data[0], chunk.data[1], chunk.data[2], chunk.data[3]]);
+        if actual != expected {
+            return Err(Error::parse(format!(
+                "png: frame sequence is inconsistent: `{}` is numbered {actual} where {expected} was \
+                 expected; the animation is corrupt",
+                String::from_utf8_lossy(&chunk.typ)
+            )));
+        }
+        expected += 1;
+        if chunk.typ == *b"fcTL" {
+            controls += 1;
+        }
+    }
+
+    if controls != declared {
+        return Err(Error::parse(format!(
+            "png: acTL declares {declared} frames and the file carries {controls}; the animation is \
+             corrupt"
+        )));
+    }
+    Ok(())
+}
+
 struct Parsed<'a> {
     header: Header,
     chunks: Vec<Chunk<'a>>,
@@ -192,6 +247,9 @@ fn parse(data: &[u8]) -> Result<Parsed<'_>> {
     }
 
     let has_actl = chunks.iter().any(|c| c.typ == *b"acTL");
+    if has_actl {
+        check_frame_sequence(&chunks)?;
+    }
 
     Ok(Parsed {
         header,

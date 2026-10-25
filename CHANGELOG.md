@@ -9,6 +9,73 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.12.1] - 2026-10-25
+
+One user-visible behaviour change, one channel removed, and the last three traceability rows that had no test.
+The binary is the same size.
+
+### Fixed
+
+- **A coincidental zlib header no longer fails the run.** RFC 1950's header check is two bytes divisible by 31,
+  which 1 random two-byte pair in 1984 satisfies — so a tree of 2000 unrelated files has a **~63 %** chance of
+  containing one, and until now that file was reported as corrupt: `failed`, exit 1, whole run red. The rule is
+  now by how far the stream got: **nothing decoded → `unsupported`, exit 0**, with a note saying the header was
+  a coincidence and the file is untouched; **something decoded and then failed → `failed`, exit 1**, unchanged.
+  A truncated `.zlib` that produced bytes still fails, and the two cases are never merged; the cost of making
+  the rule decidable is that a stream cut so short that nothing decodes is `unsupported` too, because at that
+  length it is byte-for-byte indistinguishable from a coincidental header. Nothing is lost but the label: the
+  file is untouched either way. The classifier is the error the handler
+  raises, not a second rule in the pipeline: `Error::Unsupported` is the one variant a handler may use to
+  overrule the detector, and detection itself is untouched — `BTYPE = 3` would divide the probability by 1.33
+  and a trial decode at detection time would cost a pass over every unrecognised file.
+- **An inconsistent APNG frame sequence is now refused by this program.** Nothing in the handler validated
+  `fcTL`/`fdAT` numbering: the writer copies the chunks number for number, so a broken sequence survived to
+  verification, where the `png` crate was the only thing that objected — and a decode that stops on *both*
+  sides of a comparison is indistinguishable from the end of the frame loop, so that is not a verdict this
+  program can rely on. `png::check_frame_sequence` now requires `fcTL`/`fdAT` to number themselves 0, 1, 2, …
+  with no gaps and the number of `fcTL` chunks to equal the frame count `acTL` declares. A broken animation is
+  `failed`, exit 1, and nothing is written. The real-file corpus had the evidence: twelve of Pillow's own
+  negative APNG fixtures were being rewritten and reported as `optimized`, and they are now `failed` and listed
+  in `.github/corpus-allowlist.txt` with that reason.
+
+### Added
+
+- **Adam7 in the fixture builder**, and the scanline filter `PngSpec` asks for is now applied to the data
+  instead of being written in the row's first byte — a builder that could produce a "Sub" row that was never
+  filtered could produce a file no decoder accepts. `T-PNG-04` has a test at last: an interlaced image is
+  recompressed, every non-`IDAT` chunk is byte-identical, and the decoded pixels are compared.
+- **`T-FS-11` … `T-FS-16`**, the filesystem scenarios that `docs/testing.md` had been listing as untested: a
+  FIFO (skipped, and the mtime proves nothing opened it), a device node, a full disk, a symlink cycle at the
+  64-level depth limit, a read-only directory, and a tree 70 levels deep.
+- **A 2 MiB tmpfs in the Linux `test` job** so the full-disk test runs rather than skipping: the test fills the
+  filesystem to the last page, then requires `failed`, the original intact and no `.tzim-*.tmp` left behind. It
+  is gated on `TZIM_TEST_FULL_DISK` and prints that it was skipped when the variable is unset; if the runner
+  refuses the mount the step warns instead of failing.
+
+### Removed
+
+- **The winget channel.** `packaging/winget/` — nine versions of three manifests and a verifier, 152 KiB —
+  described a submission to `microsoft/winget-pkgs` that never happened, plus a `windows-latest` CI job, two
+  tests and twenty lines of submission instructions to keep the fiction consistent (issue #56). Windows
+  installs from the release zip: download `tzim-x86_64-pc-windows-msvc.zip`, extract it, put `tzim.exe` on
+  `PATH`. The Homebrew formula and the Linux packages are untouched, and a future package manager on Windows
+  belongs in the release workflow, submitted from CI, not in nine hand-kept directories here.
+- **`T-NEST-04`**, with the reason written where the row was: there is no per-child "remaining budget" —
+  `zip::check_limits` refuses the archive on the sum of its declared uncompressed sizes before decompressing
+  anything, so a child is never larger than `--max-uncompressed` and the per-entry guard cannot fire. The
+  contract now says that, instead of asserting a limit that does not exist.
+
+### Changed
+
+- **What stops a symlink cycle is now the measured answer.** `cli.md` said cycles are stopped by the 64-level
+  depth limit; the test for that row failed, because the kernel stops a path with more than a fixed number of
+  symlink hops first (`ELOOP` — 40 on Linux, 32 on macOS) and the cycle never reaches 64. The depth limit is
+  what stops a tree of *real* directories at 64 levels and what protects the stack, and `T-FS-16` proves that
+  part. A cycle is `failed` with the OS reason, exit `1`, and the rest of the run is unaffected.
+- `docs/guarantees.md` §4.10 states the zlib split and the two probabilities; §4.5 says the frame sequence is
+  checked by this program; §4.6 says what `--max-uncompressed` actually limits. `docs/cli.md` gains the one
+  case where `unsupported` carries a note, and says which error kinds can never appear in `error`.
+
 ## [0.12.0] - 2026-10-25 — the audit
 
 An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues. This release answers them, with the

@@ -66,6 +66,14 @@ pub fn process(path: &Path, cfg: &Config) -> Outcome {
                 outcome.status = Status::Skipped;
                 outcome.note = Some(message);
             }
+            // A handler that proves the detector wrong is not a failure: the
+            // file is simply not the format the signature suggested. The note
+            // says which handler and why, because the user will want to know
+            // that a `.zlib` of theirs was read and put back untouched.
+            Error::Unsupported(message) => {
+                outcome.status = Status::Unsupported;
+                outcome.note = Some(message);
+            }
             other => {
                 outcome.status = Status::Failed;
                 outcome.error = Some(other);

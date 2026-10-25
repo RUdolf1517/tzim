@@ -41,7 +41,7 @@ be enabled at run time with `--formats jpeg`.
 
 Asset names are the Rust target triples and carry no version. That is deliberate: it makes
 `https://github.com/RUdolf1517/tzim/releases/latest/download/<asset>` a stable URL, which is what
-`install.sh`, the Homebrew formula and the winget manifest download from. The `.deb` and `.rpm` are built by
+`install.sh` and the Homebrew formula download from. The `.deb` and `.rpm` are built by
 `packaging/linux-packages.sh` from the Linux tarball with [nfpm](https://nfpm.goreleaser.com/), so the two
 cannot describe the same binary differently.
 
@@ -57,7 +57,6 @@ release workflow is the only place a shipped binary is produced.
 | Homebrew | macOS arm64, Linux x86_64 | `brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim` then `brew install RUdolf1517/tzim/tzim` |
 | apt | Debian, Ubuntu (amd64, arm64) | `curl -fsSLO .../releases/latest/download/tzim_amd64.deb` then `sudo apt install ./tzim_amd64.deb` |
 | dnf | Fedora, RHEL (x86_64, aarch64) | `curl -fsSLO .../releases/latest/download/tzim.x86_64.rpm` then `sudo dnf install ./tzim.x86_64.rpm` |
-| winget | Windows x64 | local manifest from `packaging/winget/<version>/` until the package is accepted upstream |
 | cargo | anything with Rust 1.88+ | `cargo install --git https://github.com/RUdolf1517/tzim` |
 | archive | everything else | unpack the tarball or zip, put `tzim` on `PATH` |
 
@@ -99,8 +98,9 @@ files before anything is touched.
 
 ## 4. What is deliberately not provided
 
-- **No MSI, no `.exe` installer.** Windows gets a zip and a winget manifest whose installer type is `zip`
-  with a portable nested binary: nothing is written outside the user's package store.
+- **No MSI, no `.exe` installer, and no Windows package manager.** Windows gets the release zip: unpack it
+  and put `tzim.exe` on `PATH`. Nothing is written outside the directory you unpack into, and there is no
+  manifest in this repository standing in for a package that was never submitted.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
   binary is built and packaged, and this project would rather have fewer of them than stale ones.
 - **No crates.io publication yet.** The crate is packaged and built from the package in CI (`cargo package`),
@@ -116,12 +116,12 @@ files before anything is touched.
 - **v0.4.1 shipped nothing a user can observe.** It added the real-file corpus, the fuzz targets and the
   comparative benchmarks; the binary was the same code as 0.4.0.
 - **v0.4.2 changes packaging, not behaviour.** Same binary content, new asset names, plus `.deb`, `.rpm`,
-  `install.sh`, the Homebrew formula and the winget manifest.
+  `install.sh` and the Homebrew formula.
 - **v0.5.0 changes the command line, not the bytes.** `tzim optimize <path>` became `tzim <path>`, and
   `-i`, `--list-formats` and `--check-deps` were added. The old verb is still accepted, so upgrading never
-  breaks a script; it is simply undocumented. The formula and the winget manifest for 0.5.0 were pinned in
-  a follow-up PR from the hashes in the release notes, which is the only order that never publishes a hash
-  for a file that does not exist yet. v0.6.0, v0.7.0, v0.7.1, v0.8.0 and v0.9.0 follow the same order.
+  breaks a script; it is simply undocumented. The formula for 0.5.0 was pinned in a follow-up PR from the
+  hashes in the release notes, which is the only order that never publishes a hash for a file that does not
+  exist yet. v0.6.0, v0.7.0, v0.7.1, v0.8.0 and v0.9.0 follow the same order.
 - **v0.10.0 changes the claims, not the bytes.** No handler was touched: the corpus writes the same total, the
   contracts and the refusals are unchanged. What changed is that CI now runs the jobs `docs/testing.md` had
   been listing (`msrv`, `fmt`, `deny`, `audit`), that every build is `--locked`, that the comparative
@@ -146,53 +146,9 @@ files before anything is touched.
    `.github/workflows/release.yml`, which builds the three archives and the two Linux packages,
    smoke-tests each binary (`--version`, `--list-formats`), and uploads everything with `SHA256SUMS`.
 4. A follow-up pull request pins the artifacts: the SHA-256 of the macOS and Linux archives into
-   `Formula/tzim.rb`, the Windows archive's into `packaging/winget/<version>/`, and every `version` field in
-   both is bumped in the same commit. Until that commit lands, `brew install` serves the previous release —
-   the tap never points at a version whose hashes are invented.
-5. `packaging/winget/<version>/` is submitted to `microsoft/winget-pkgs` as
-   `manifests/r/RUdolf1517/tzim/<version>/`. Until it is accepted, the manifest in this repository can be
-   installed locally with `winget install --manifest`.
-
-   The submission is a pull request against a repository this project does not own, so the release workflow
-   cannot make it. What CI *can* do, and does, is fail when the manifest would install nothing: `winget
-   validate` reads it as a document on a Windows runner, and `packaging/winget/verify.sh` downloads the
-   archive it names and compares the hash — the half a schema cannot check, and the one that actually breaks
-   a user's install.
-
-   **Submitting it by hand.** The rules that decide whether the pull request passes are in the repository's
-   [first-time contributor checklist](https://github.com/microsoft/winget-pkgs/blob/master/doc/FirstContribution.md);
-   the three that matter here:
-
-   - **one package version per pull request** — a multi-file manifest set for a single `PackageIdentifier`
-     and `PackageVersion`; not several versions, and not a version plus an unrelated change;
-   - **manifest files only** — no README, no tooling, no spelling fixes in the same pull request;
-   - **a multi-file manifest set**, with the `# yaml-language-server: $schema=…` header on every file, which
-     is what `packaging/winget/<version>/` already is. The schema version there is `1.10.0`, which the
-     repository still accepts; the pull-request template names the version it currently recommends, and
-     bumping is one line in each of the three files followed by `winget validate`.
-
-   ```sh
-   gh repo fork microsoft/winget-pkgs --clone
-   cd winget-pkgs
-   git switch -c rudolf1517-tzim-0.11.0
-
-   version=0.11.0
-   mkdir -p "manifests/r/RUdolf1517/tzim/$version"
-   cp /path/to/tzim/packaging/winget/"$version"/*.yaml "manifests/r/RUdolf1517/tzim/$version/"
-
-   git add manifests/r/RUdolf1517/tzim
-   git commit -m "Add RUdolf1517.tzim version $version"
-   git push -u origin HEAD
-   gh pr create --repo microsoft/winget-pkgs --title "Add RUdolf1517.tzim version $version" \
-       --body "New package: tzim, a lossless file optimizer. Manifests copied from the project's repository; \
-   the hashes were checked against the published release archive by packaging/winget/verify.sh."
-   ```
-
-   Later releases are the same command with a new `version`, which is what `wingetcreate update
-   RUdolf1517.tzim --version <version> --submit` automates once a token is available. The validation
-   pipeline on the pull request runs the same two checks as the `winget` job here, plus a schema check.
-
-6. The release notes state plainly what the release does **not** do: which formats are refused, which
+   `Formula/tzim.rb`, and every `version` field in it is bumped in the same commit. Until that commit lands,
+   `brew install` serves the previous release — the tap never points at a version whose hashes are invented.
+5. The release notes state plainly what the release does **not** do: which formats are refused, which
    guarantees are not claimed, and which numbers are unmeasured (see [benchmarks](benchmarks.md)).
 
 A release is never cut from a red build, and artifacts are never uploaded by hand.
