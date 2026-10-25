@@ -441,8 +441,13 @@ mod tests {
                 a.update(&[0u8; 10_000]);
                 a.finish()
             },
-            // a = 1 + 10 000 = 10 001; b = 10 000 + (0 + 1 + … + 9 999) = 50 005 000,
-            // which is 57 164 modulo 65 521.
+            // Ten thousand **zero bytes**, so `a += byte` never changes `a`:
+            // a = 1 and b = 1 added 10 000 times = 10 000 = 0x2710. Hence
+            // (b << 16) | a = 0x2710_0001, which is what `zlib.adler32` returns
+            // for the same input. (The arithmetic that looks natural here — the
+            // sum of 0..9 999 — belongs to a comment measuring the length, not
+            // the bytes. Getting this wrong in the code would refuse every
+            // zlib file as corrupt.)
             0x2710_0001
         );
     }

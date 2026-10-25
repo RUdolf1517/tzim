@@ -146,8 +146,10 @@ pub fn expand(
     problems: &mut Vec<(PathBuf, Error)>,
     depth: usize,
 ) {
-    // A depth guard prevents pathological trees from exhausting the stack even
-    // when symlink cycles are excluded by the visited set in `walk`.
+    // A depth guard, and it is *the* guard: a symlink cycle under
+    // `--follow-symlinks` is caught here rather than by a visited set of
+    // `(device, inode)` pairs, because the walk holds no such set. The limit is
+    // 64 levels; deeper subtrees are reported as refused.
     if depth > 64 {
         problems.push((
             path.to_path_buf(),

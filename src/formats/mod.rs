@@ -200,12 +200,28 @@ pub struct Options {
     pub allow: Allow,
 }
 
+/// Whether a candidate may replace its original.
+///
+/// This is invariant I2 from `docs/guarantees.md` in one place. Without
+/// `--strip-metadata` a candidate must be **strictly** smaller; with the flag an
+/// **equal-size** candidate is legitimate, because zeroing a DOS timestamp or a
+/// gzip MTIME removes metadata without removing bytes. A larger candidate is
+/// never accepted, under any flag.
+///
+/// Written once because it was written three times, with three answers: the
+/// pipeline rejected an equal candidate as an internal error while gzip, ZIP and
+/// the `strip` fuzz target accepted it, which is issue #26 of the audit.
+pub fn size_ok(original: usize, candidate: usize, strip: bool) -> bool {
+    candidate > 0 && (candidate < original || (strip && candidate == original))
+}
+
 /// What a handler produced.
 #[derive(Clone, Copy, Debug)]
 pub enum Cand {
     /// A candidate was written; the value is its length in bytes.
     Written(u64),
-    /// No candidate was strictly smaller than the input.
+    /// No candidate was smaller than the input (or, under `--strip-metadata`,
+    /// no smaller and nothing to remove at the same size).
     NoGain,
 }
 
@@ -248,6 +264,20 @@ pub fn optimize(format: Format, input: &[u8], dst: &mut dyn Write, opts: &Option
 /// else, while ZIP and JPEG are compared by parsers from this repository. In no
 /// case does verification reuse the encoder that produced the candidate.
 pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
+    // G3 clause 4, checked here rather than left implied by the pipeline: a
+    // verifier that accepts a larger candidate is not verifying the contract.
+    if !size_ok(original.len(), candidate.len(), opts.strip_metadata) {
+        return Err(Error::verify(format!(
+            "candidate is {} bytes and the original {}; {}",
+            candidate.len(),
+            original.len(),
+            if opts.strip_metadata {
+                "a stripping rewrite may keep the size but never grow it"
+            } else {
+                "a rewrite must be strictly smaller"
+            }
+        )));
+    }
     match format {
         #[cfg(feature = "png")]
         Format::Png => png::verify(original, candidate, opts),
@@ -319,4 +349,38 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "header preserved byte for byte; Adler-32 recomputed and matched",
     ));
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::size_ok;
+
+    /// The four combinations of invariant I2, in one place. `size_ok` is the only
+    /// copy of the rule — the pipeline, the verifier dispatcher and the fuzzer all
+    /// call it — so this test is the whole specification.
+    #[test]
+    fn equal_size_is_accepted_only_when_stripping() {
+        assert!(size_ok(100, 99, false), "smaller is the normal case");
+        assert!(!size_ok(100, 100, false), "without --strip-metadata, equal is not a gain");
+        assert!(size_ok(100, 99, true), "smaller is still accepted with the flag");
+        assert!(
+            size_ok(100, 100, true),
+            "zeroing a timestamp removes metadata without removing bytes"
+        );
+    }
+
+    #[test]
+    fn a_larger_candidate_is_never_accepted() {
+        assert!(!size_ok(100, 101, false));
+        assert!(!size_ok(100, 101, true), "no flag permits growth");
+    }
+
+    #[test]
+    fn an_empty_candidate_is_never_accepted() {
+        // A handler that wrote nothing has failed, not won: `0 < 100` would
+        // otherwise read as an infinite gain.
+        assert!(!size_ok(100, 0, false));
+        assert!(!size_ok(100, 0, true));
+        assert!(!size_ok(0, 0, true), "an empty original cannot be improved");
+    }
 }

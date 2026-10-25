@@ -181,7 +181,13 @@ pub fn print_human<W: Write + ?Sized>(
         for o in outcomes {
             let path = o.path.to_string_lossy();
             let mut line = String::with_capacity(path.len() + 72);
-            line.push_str(&format!("{path:<width$}"));
+            // Padded by display cells, not by characters: `{path:<width$}` counts
+            // characters, which is why a CJK name used to push the rest of the
+            // line to the right.
+            line.push_str(&path);
+            for _ in display_width(&path)..width {
+                line.push(' ');
+            }
             line.push_str("  ");
             // The format column is context, not a result: dimming it keeps the
             // eye on the status and the number.
@@ -358,7 +364,67 @@ pub fn print_json<W: Write + ?Sized>(
 }
 
 fn display_width(s: &str) -> usize {
-    s.chars().count()
+    s.chars().map(char_width).sum()
+}
+
+/// Width of one character in terminal cells.
+///
+/// Counting characters was wrong for the users it mattered to: a CJK path takes
+/// two cells per character, so every column after it slid right, and a combining
+/// accent took one cell while occupying none. This is the usual `wcwidth`
+/// approximation, with the ranges written out as a table rather than added as a
+/// dependency (`docs/dependencies.md`: no crate for this). The table is short on
+/// purpose: the CJK, Hangul, kana and emoji blocks, the combining marks that
+/// follow Latin, Greek and Cyrillic, and the zero-width format characters.
+/// Anything outside it counts as one cell, which is the safe default — the worst
+/// consequence of a missing range is the old ragged column, not a wrong number.
+fn char_width(c: char) -> usize {
+    let cp = c as u32;
+    if matches!(cp,
+        0x0300..=0x036F
+            | 0x0483..=0x0489
+            | 0x0591..=0x05BD
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F
+            | 0x0E31
+            | 0x0E34..=0x0E3A
+            | 0x0E47..=0x0E4E
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x20D0..=0x20F0
+            | 0xFE00..=0xFE0F
+            | 0xFE20..=0xFE2F
+            | 0xFEFF
+            | 0xE_0100..=0xE_01EF
+    ) {
+        return 0;
+    }
+    if matches!(cp,
+        0x1100..=0x115F
+            | 0x2E80..=0x303E
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xA960..=0xA97F
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+            | 0xFE10..=0xFE19
+            | 0xFE30..=0xFE6F
+            | 0xFF00..=0xFF60
+            | 0xFFE0..=0xFFE6
+            | 0x1F_300..=0x1F_64F
+            | 0x1F_680..=0x1F_6FF
+            | 0x1F_900..=0x1F_9FF
+            | 0x2_0000..=0x2_FFFD
+            | 0x3_0000..=0x3_FFFD
+    ) {
+        return 2;
+    }
+    1
 }
 
 /// Human-readable binary size with two decimals.
@@ -472,6 +538,24 @@ mod tests {
         assert_eq!(size(1_048_576), "1.00 MiB");
         assert_eq!(size(1_048_575), "1024.00 KiB");
         assert_eq!(size(1024 * 1024 * 1024 + 512 * 1024), "1.00 GiB");
+    }
+
+    #[test]
+    fn display_width_counts_cells_not_characters() {
+        assert_eq!(display_width("photo.png"), 9);
+        assert_eq!(
+            display_width("фото.png"),
+            8,
+            "Cyrillic is one cell per letter"
+        );
+        assert_eq!(display_width("写真.png"), 8, "two wide characters, four cells");
+        assert_eq!(display_width("📷.png"), 6, "an emoji is two cells");
+        assert_eq!(
+            display_width("e\u{301}"),
+            1,
+            "a combining accent occupies no cell"
+        );
+        assert_eq!(display_width(""), 0);
     }
 
     #[test]

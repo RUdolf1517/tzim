@@ -159,8 +159,11 @@ COMMAND-LINE CONVENTIONS:
     Options may appear before, between or after paths; `-rq` and `-j4` are
     accepted; `--` ends option parsing. Unknown options exit 2 and print usage.
 
-Tzim never removes metadata, never re-encodes lossily and never converts
-formats. If the result is not strictly smaller, the original is left alone.
+Tzim never re-encodes lossily and never converts formats. Metadata is kept
+unless --strip-metadata asks for a fixed, documented list to be removed. If the
+result is not strictly smaller, the original is left alone; with
+--strip-metadata an equal-size rewrite is accepted, because zeroing a timestamp
+removes information without removing bytes.
 ";
 
 pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {

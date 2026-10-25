@@ -1138,15 +1138,26 @@ mod tests {
 
     #[test]
     fn filters_roundtrip_for_all_types() {
-        let bpp = 4usize;
-        let prev = vec![10u8, 20, 30, 40, 50, 60, 70, 80];
-        let cur = vec![11u8, 22, 33, 44, 55, 66, 77, 88];
-        for filter in 0..5u8 {
-            let mut filtered = vec![0u8; cur.len()];
-            filter_row(filter, &cur, &prev, bpp, &mut filtered);
-            let mut restored = vec![0u8; cur.len()];
-            unfilter(filter, &filtered, &prev, bpp, &mut restored).unwrap();
-            assert_eq!(restored, cur, "filter {filter} did not round-trip");
+        // Every bytes-per-pixel value a real file can have, not just RGBA8's
+        // four: bpp 1 is 1-bit gray or palette, 2 is gray+alpha or 16-bit gray,
+        // 3 is RGB or 16-bit palette, 4 is RGBA or 16-bit gray+alpha, 6 is RGB16
+        // and 8 is RGBA16. The filter byte arithmetic is defined in terms of bpp,
+        // so this is the table that pins it. (#33: the old version tested bpp 4
+        // only while `docs/testing.md` claimed every value.)
+        for bpp in 1..=8usize {
+            let row_len = bpp * 4;
+            let prev: Vec<u8> = (0..row_len).map(|i| (i * 7 + 3) as u8).collect();
+            let cur: Vec<u8> = (0..row_len).map(|i| (i * 11 + 5) as u8).collect();
+            for filter in 0..5u8 {
+                let mut filtered = vec![0u8; cur.len()];
+                filter_row(filter, &cur, &prev, bpp, &mut filtered);
+                let mut restored = vec![0u8; cur.len()];
+                unfilter(filter, &filtered, &prev, bpp, &mut restored).unwrap();
+                assert_eq!(
+                    restored, cur,
+                    "bpp {bpp} filter {filter} did not round-trip"
+                );
+            }
         }
     }
 
