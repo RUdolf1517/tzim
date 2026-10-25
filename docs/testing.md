@@ -9,19 +9,20 @@ every contract has an executable check, and the failure modes that damage user d
 
 ## 1. Invariants under test
 
-These hold for every format and are tested as properties, not as anecdotes.
+These hold for every format. Where a row below says the evidence is a unit test, a review, or nothing, it
+says so: the table is a description of the tests that exist, not a wish list.
 
 | ID | Invariant | How it is tested |
 | --- | --- | --- |
-| I1 | The original is never modified unless the candidate passes all checks | inject failure at each pipeline stage; hash the original before and after |
-| I2 | A candidate is only used if strictly smaller | fixtures whose best candidate is larger or equal; assert `already_optimal` and an unchanged file |
-| I3 | No metadata is removed | per-format inventory comparison, including unknown/private chunks and extra fields |
-| I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler may exist, so there is nothing to test |
-| I5 | Concurrent modification aborts the operation | test hook modifies the file mid-run; assert `failed` and an unchanged file |
-| I6 | Verification uses an independent decoder | architecture test: the writer modules do not appear in the verification path |
-| I7 | Replacement is atomic where the platform allows | instrumented test in `replace`: the rename is the last operation; failure before it leaves the original intact |
-| I8 | Unparseable input is refused, never repaired | corpus of truncated/corrupted files; assert `failed` and no output |
-| I9 | Presentation never changes results | the same file rendered with `--color=always` and `--color=never` is identical once SGR sequences are stripped; `--json --color=always` contains no escape sequence; the real-file corpus reports the same "bytes written" total as the previous release |
+| I1 | The original is never modified unless the candidate passes all checks | every refusal and failure test compares the file before and after (bytes, and `mtime` where it matters). There is **no** failure-injection harness: the stages that can fail are reached through real refusals — a corrupt input, an unsupported path, a read-only file, a candidate that is not smaller — not through a fake error at a chosen line |
+| I2 | A candidate is only used if smaller, or the same size when stripping | `formats::size_ok` unit test (all four flag/size combinations, plus the empty-candidate case); `strip_metadata_equal_size_zip_is_optimized` and `strip_metadata_equal_size_gzip_is_not_a_failure` for the two handlers that can emit an equal-size candidate; fixtures with nothing to gain assert `already_optimal` |
+| I3 | No metadata is removed | per-format inventory comparison in the integration tests, including unknown/private PNG chunks and ZIP extra fields |
+| I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler exists, so there is nothing to test |
+| I5 | Concurrent modification aborts the operation | unit test of `replace::changed_since` (length, mtime, `(device, inode)`); the abort path itself is not driven end-to-end, because nothing can move a file at the right instant deterministically without a hook |
+| I6 | Verification uses an independent decoder | documented per format in [guarantees §2.6](guarantees.md#26-verification-independence), and true for PNG/ICO/gzip/ZIP/zlib content through the `png` and `flate2` crates. There is **no** architecture test; the claim is checked by review, and the JPEG case where it does not hold is stated rather than hidden |
+| I7 | Replacement is atomic where the platform allows | unit tests of the `replace` guard (`TempFile` removes itself unless committed) and of `changed_since`; that the `rename` is the last step is verified by reading `replace::commit`, which is 20 lines with one syscall in the middle |
+| I8 | Unparseable input is refused, never repaired | corrupted inputs per format (bad CRC, truncated, missing `IEND`, trailing bytes, bad zlib trailer, inconsistent ZIP headers); assert `failed` and no output |
+| I9 | Presentation never changes results | the same tree rendered with `--color=always` and `--color=never` is identical once SGR sequences are stripped; `--json --color=always` contains no escape sequence; the real-file corpus reports the same "bytes written" total as the previous release |
 
 Idempotence is also a property: running Tzim twice on the same tree must produce zero changes the second
 time.
@@ -39,7 +40,7 @@ not done until every row passes in CI.
 | --- | --- |
 | `T-PNG-01` | All non-IDAT chunks (including an unknown/private chunk) are byte-identical, in the same order |
 | `T-PNG-02` | IHDR payload is byte-identical |
-| `T-PNG-03` | Decoded pixels are identical for every color type × bit depth (gray, gray+alpha, RGB, RGBA, palette at 1/2/4/8 bits, 8 and 16 bit) |
+| `T-PNG-03` | Decoded pixels are identical for the colour types the fixture writer builds (RGBA8). The other colour types — gray, gray+alpha, RGB, palette at 1/2/4/8 bits, 16-bit — are exercised by the real-file corpus, which asserts that they are rewritten without error but does **not** re-decode them; the writer is linear in the pixel bytes and touches only the compressed stream, but that is an argument, not a test. Widening `build_png` is the honest fix and is not done |
 | `T-PNG-04` | Interlaced images: recompression only, pixels identical |
 | `T-PNG-05` | APNG: `acTL`/`fcTL`/`fdAT` untouched; default image pixels identical |
 | `T-PNG-06` | Corrupted inputs (bad CRC, truncated, missing IEND, bytes after IEND) are refused |
@@ -134,20 +135,51 @@ input that exercises the overflow bound.
 | `T-TIF-10` | `--strip-metadata` removes the textual tags only; geometry, colour and ICC survive |
 | `T-TIF-11` | `--formats png` reports a TIFF as skipped, not failed |
 
+### The verifiers are tested against corrupted candidates
+
+Every traceability row above says what the *handler* produces. The other half of the contract is that the
+verifier refuses what it must, and until this existed no test called `verify` with a bad candidate: a verifier
+that accepted everything would have passed the whole suite.
+
+`tests/verification.rs` builds a valid original, builds a candidate that differs in exactly one field the
+contract names, and requires `Err`:
+
+| Test | Format | Corruption | The check it pins |
+| --- | --- | --- | --- |
+| `verification_rejects_changed_pixels` | PNG | one byte of one pixel, CRC recomputed | `decoded pixels differ` |
+| `verification_rejects_a_dropped_chunk` | PNG | `tEXt` removed by hand, no `--strip-metadata` | chunk inventory |
+| `verification_rejects_a_kept_filename` | gzip | `FNAME` kept under the flag | the stripped header |
+| `verification_rejects_a_changed_stored_entry` | ZIP | one byte of a stored entry, CRC left alone | payload comparison |
+| `verification_rejects_a_surviving_comment` | ZIP | archive comment put back under the flag | comment removal |
+| `verification_rejects_a_changed_tag_value` | TIFF | an ASCII tag's value changed, geometry untouched | tag values |
+| `verification_rejects_a_changed_bitmap_entry` | ICO | one byte of a BMP entry | payload comparison |
+| `verification_rejects_changed_trailing_bytes` | JPEG | bytes appended after `EOI` | the trailing-bytes rule |
+| `verification_rejects_a_larger_candidate` | all | candidate longer than the input | G3 clause 4, in the dispatcher |
+| `verification_accepts_an_equal_size_candidate_only_when_stripping` | all | equal length, with and without the flag | the flag half of I2 |
+
+Each corruption is chosen so that the other checks in the same function cannot see it — that is the point of
+the file. Two rules are therefore **not** covered, and the reason is in the module comment: the APNG `fdAT`
+sequence check (the `png` crate refuses a broken sequence first) and the JPEG coefficient comparison (a
+corrupted entropy stream usually fails to parse, so the test would pass for the wrong reason).
+
 ---
 
 ## 3. Test levels
 
 ### Unit tests
 
-- PNG scanline filters: encode/decode round-trip for all five filter types, all bytes-per-pixel values,
-  including bpp 1, 2, 3, 4, 6, 8 and 16-bit samples; property test with random rows.
+- PNG scanline filters: encode/decode round-trip for all five filter types at every bytes-per-pixel value
+  from 1 to 8, which covers 1-bit gray, palette, gray+alpha, RGB, RGBA, RGB16 and RGBA16. The rows are a
+  fixed table, not a property test, and the table is the point: the arithmetic is defined in terms of bpp.
 - Argument parser: every flag, combinations, `--`, conflicting flags, missing values.
-- Size formatting and column alignment (including Unicode and wide characters).
+- Size formatting, and `display_width`: cells rather than characters, so a CJK path counts two per
+  character, an emoji two, and a combining accent zero. The range table behind it is tested on those four
+  cases; anything outside the table counts as one cell, which is the old behaviour.
 - JSON escaping: control characters, quotes, backslashes, non-UTF-8 paths.
 - gzip header parse/serialise round-trip, including all flags.
 - ZIP structure reader/writer: offsets, descriptors, EOCD, comments.
-- Dedup and traversal policy.
+- `--include`/`--exclude` filtering (`src/walk.rs`, two unit tests). Deduplication and traversal order are
+  covered by integration tests, not by unit tests.
 - Colour detection (`src/style.rs`): a pure function of a probe struct, so `NO_COLOR`, `CLICOLOR`,
   `CLICOLOR_FORCE`, `TERM=dumb`, a pipe and a non-ANSI console are all covered without a terminal, and the
   three-way `--color` flag is tested against each of them.
@@ -184,60 +216,48 @@ The command line has its own contract, because it is what every other test goes 
 
 ### Fixture corpus
 
-Committed under `tests/fixtures/`, generated by scripts in `tests/fixtures/generate/`, with provenance,
-licence and a one-line description in `tests/fixtures/README.md`. Fixtures are deliberately small; large
-real-world samples are generated, not committed.
+**No binary fixture is committed.** Every fixture is built at run time by `tests/common/mod.rs`: writers for
+PNG, gzip, ZIP, ICO, JPEG and TIFF, a `Workspace` type that owns a temporary directory, and byte-level
+editors (`parse_zip`, `png_chunks`, `inflate_member`, …) used by the assertions. A test therefore states the
+exact bytes it depends on, and a reader can see what "corrupt" means instead of trusting a blob.
 
-| Format | Cover |
+| Format | Built by the fixture writers |
 | --- | --- |
-| PNG | every color type and bit depth; interlaced; APNG with several frames; palette with `tRNS`; `iCCP`, `eXIf`, `tEXt`, `tIME`, `pHYs`, `sBIT`; an unknown private chunk; zero-length `tEXt`; data after IEND; bad CRC; truncated; huge dimensions in IHDR with tiny data |
-| gzip | empty payload; 1 byte; 1 MiB of text; `FEXTRA`; `FNAME` with non-ASCII bytes; `FCOMMENT`; `FHCRC`; multi-member; trailing garbage; truncated; `CM = 7`; reserved flags |
-| ZIP | store-only; deflate; mixed; data descriptors; ZIP64; encrypted; signed JAR; APK with signing block; signed OOXML (`_xmlsignatures/`); signed VSIX; ODF and EPUB; archive comment; entry comments; NTFS/extended timestamp extra fields; non-UTF-8 names; duplicate names; empty archive; empty entry; symlink entry; truncated; overlapping offsets; prepended stub |
-| ICO | PNG-based, BMP-based, mixed, 256×256 |
-| JPEG | baseline; progressive; restart markers; CMYK; EXIF+ICC; arithmetic-coded (refused); 12-bit (refused); truncated |
+| PNG | RGBA8 at a chosen deflate level; interlaced; palette; `tEXt`/`tIME`/`pHYs`/`iCCP`; an unknown private chunk; APNG with several frames; bad CRC; truncated; missing `IEND`; bytes after `IEND`; huge IHDR dimensions with tiny data |
+| gzip | empty payload; 1 byte; `FEXTRA`; `FNAME` with non-ASCII bytes; `FCOMMENT`; `FHCRC`; multi-member; trailing garbage; truncated; `CM = 7`; reserved flags |
+| ZIP | store-only; deflate; mixed; data descriptors (with and without signature); ZIP64; encrypted; signed JAR; APK signing block; signed OOXML; ODF and EPUB; archive comment; entry comments; extra fields; non-UTF-8 names; duplicate names; empty archive; truncated; overlapping offsets; prepended stub |
+| ICO | PNG-based, BMP-based, mixed |
+| JPEG | baseline; restart markers; EXIF and ICC; progressive, arithmetic-coded and 12-bit inputs that must be refused |
+| TIFF | little- and big-endian; uncompressed and Deflate strips; tiles; multi-IFD; planar 2; predictor 2; LZW; an unknown out-of-line tag; the textual tags for `--strip-metadata` |
 
-Corrupted fixtures are produced by a generator that flips bytes at documented offsets, so the failure is
-reproducible rather than a random blob.
+Corrupted inputs are produced by flipping documented bytes in those writers, so a failure is reproducible
+rather than a random blob. Large real-world samples are not fixtures at all: they are the corpus below,
+downloaded and never committed.
 
 ### Filesystem and environment tests
+
+Tested, on every platform CI runs:
 
 | Scenario | Expected |
 | --- | --- |
 | path with spaces and Unicode (`иконка 🌀.png`) | optimized correctly |
-| path that is not valid UTF-8 (Unix) | optimized; JSON contains `path_raw_b64` |
-| read-only directory | `failed`, original intact |
 | read-only file | `skipped`, original intact |
 | missing path among valid ones | that path `failed`, others processed, exit `1` |
 | symlink to a file | `skipped` by default; optimized with `--follow-symlinks` |
-| symlink loop in a tree | terminates, reports, exit `0` or `1` |
-| hard-linked file | `skipped` by default; processed with `--allow-hardlinks` |
+| symlink given directly, and a broken link | reported, nothing written |
+| hard-linked file | `skipped` with a reason naming `--allow-hardlinks`; with the flag the replacement breaks the link on purpose and the other name keeps the old bytes |
+| path that is not valid UTF-8 (Unix) | optimized through the raw bytes; the JSON record carries `path_raw_b64` |
+| Unix socket | `skipped` as "not a regular file", still present afterwards |
 | same file via three different paths | processed once |
-| FIFO / socket / device | skipped, never opened for writing |
-| disk full (small tmpfs) | `failed`, original intact, no temporary file left |
-| file modified during processing | `failed`, original intact |
-| `SIGKILL` during processing | original intact; a `.tzim-*.tmp` may remain (asserted, documented) |
-| second run on the optimized tree | zero changes (idempotence) |
 | empty file, 1-byte file | `unsupported` |
-| very deep directory tree | traversal terminates within limits |
+| directory as input without `--recursive` | only its top-level files |
+| second run on the optimized tree | zero changes (idempotence) |
 
-### Failure injection
-
-A `test-hooks` feature (never enabled in release builds) provides:
-
-- `TZIM_TEST_FAIL_AFTER_WRITE` — fail after the candidate is written;
-- `TZIM_TEST_FAIL_BEFORE_RENAME` — fail after verification;
-- `TZIM_TEST_CORRUPT_CANDIDATE` — produce a candidate that violates the contract;
-- `TZIM_TEST_SLOW_WRITE` — widen the race window for the concurrent-modification test.
-
-Each hook has a test asserting the outcome, the original hash, exit code and temporary-file cleanup.
-
-### Property tests (`proptest`)
-
-- filter round-trip: any row, any bpp, any filter type;
-- "output is never larger than input", over random valid PNGs and gzip files;
-- "verification always passes for an accepted candidate";
-- idempotence: `optimize(optimize(x)) == optimize(x)` in terms of size and status;
-- parser robustness: arbitrary bytes never panic, only produce `Err`.
+**Not tested**, and listed here so that nobody assumes otherwise: a read-only *directory* (the fixture would
+have to be immune to running as root, which CI on `ubuntu-latest` does), a FIFO or a device node, a full disk
+(`ENOSPC`), a file modified while it is being processed, `SIGKILL` mid-run, and a symlink loop deeper than
+the 64-level limit. Each needs an environment the test constructs by hand — a tmpfs, a signal delivered at a
+chosen instant, `mknod` — which is why they are still open rather than claimed.
 
 ### Real-file corpus
 
@@ -266,7 +286,7 @@ assertion in disguise:
 | No unexpected `failed` status | a real file that used to work no longer does, or a valid file is being refused |
 | No `verify` or `internal` error, on any file | the handler produced a candidate its own contract rejected, or the code is broken |
 | Nothing rewritten on the second pass, byte-identical manifest | the rewrite is not a fixed point |
-| The set of refused files is unchanged | a construct that used to be supported silently stopped being supported |
+| The counts of every status are recorded in the run summary | a change in how many files are refused or failed is visible in the report — but **not gated**: there is no committed baseline of refused paths, so a file that starts being refused does not fail CI unless it also fails the allowlist check |
 
 Files that are corrupt in the upstream archive are listed by name in `.github/corpus-allowlist.txt`, with the
 reason recorded. A file that fails without being listed is an error, and a listed file that stops failing
@@ -284,10 +304,14 @@ no release build enables:
 | `roundtrip` | detection, the handler for the detected format, and verification of the candidate |
 | `strip` | the same round trip with `--strip-metadata`: the removal paths and the checks that the removed structures are gone |
 
+The fuzz build enables **all seven** handlers (`fuzz/Cargo.toml`: `png, gzip, zip, ico, jpeg, tiff, zlib`), so
+a detected TIFF or zlib stream reaches its real parser instead of the "format not compiled" arm.
+
 The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
-and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input and
-passes verification. The seed corpus is the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is
-part of CI (`fuzz.yml`); longer runs are performed before a release.
+and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input
+(`formats::size_ok`, the same predicate the binary uses) and passes verification. All three targets are
+seeded with the pngsuite and libjpeg-turbo test images. A 60 s-per-target smoke run is part of CI
+(`fuzz.yml`); longer runs are performed before a release.
 
 Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored.
 
@@ -310,6 +334,7 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
 | `lockfile` | ubuntu-latest | regenerates `Cargo.lock` and commits it to the branch (§4.1) |
+| `docs` | ubuntu-latest | `.github/scripts/md-links.py` over every Markdown file: every relative link resolves and every `#anchor` exists. The gate is `broken: 0` |
 
 `audit` overlaps the advisory half of `deny`, and both stay: `deny` is the one that also knows about licences
 and duplicate versions, `audit` is the RustSec-native check that speaks the advisory database directly. Two

@@ -11,32 +11,44 @@ The rule is simple: **the original file is the last thing that changes, and it c
 
 ## 1. Algorithm
 
-For every file, in this order:
+For every file, in this order (`src/pipeline.rs::run`, then `src/replace.rs::commit`):
 
-1. **Inspect without following links.** `symlink_metadata` (lstat). Refuse symbolic links, directories,
-   FIFOs, sockets and devices. A missing path is an error for that argument.
-2. **Open read-only** and capture a snapshot from the open handle: length, modification time (with
-   nanoseconds), access time, permission bits, hard-link count, `(device, inode)`.
-3. **Refuse hard-linked files** when the link count is greater than one (`--allow-hardlinks` overrides).
+1. **Inspect without following links.** `symlink_metadata` (lstat). A symbolic link is skipped (never
+   followed), and anything that is not a regular file — directory, FIFO, socket, device — is skipped.
+   A missing path is an error for that path only.
+2. **Take the snapshot from that stat, not from an open handle.** Length, modification time, access time,
+   permission bits, hard-link count, `(device, inode)`. No file is opened at this point, which is why the
+   snapshot describes the name, not a file description.
+3. **Apply the size limits** (`--min-size`, `--max-size`). Outside the range the file is skipped.
+4. **Refuse hard-linked files** when the link count is greater than one (`--allow-hardlinks` overrides).
    Replacing one of several links would silently separate the paths.
-4. **Refuse read-only files.** If no write permission bit is set for the owner (POSIX) or the file is marked
-   read-only (Windows), the file is skipped rather than replaced.
-5. **Detect the format** by reading the first bytes from the already-open handle, not by re-opening the path.
-   No handler → `unsupported`, nothing written.
-6. **Create the candidate** as a new file in the **same directory**, with `create_new` and mode `0600`, using
-   a unique name. A guard object owns it and removes it on any early exit.
-7. **Optimize** into the candidate. The handler must not touch the original.
-8. **Verify** the candidate against the format contract, reading both files with independent decoders. See
-   [guarantees](guarantees.md). This includes checksum validation of the candidate.
-9. **Compare sizes.** Unless `candidate.len() < original.len()`, the candidate is discarded and the outcome
-   is `already_optimal`.
-10. **Re-check the original.** Stat the path again and compare `(device, inode, length, mtime)`. If anything
+5. **Refuse read-only files.** If the file is marked read-only, it is skipped rather than replaced.
+6. **Detect the format** by opening the path read-only and reading its first bytes
+   (`detect::detect_path`). No handler for the detected format → `unsupported`, nothing written.
+7. **Check the policy.** `--formats` decides which formats this run may touch; a format that is not
+   compiled into the build, or not enabled for this run, is `skipped` with the reason.
+8. **Create the candidate** as a new file in the **same directory**, with `create_new` and mode `0600`, under
+   a unique name. A guard object owns it and removes it on any early return. On Unix, the candidate's owner
+   is compared with the original's: a different owner means the replacement would change ownership, so the
+   file is skipped unless `--allow-root-ownership-change` is given.
+9. **Read the input once** (bounded by `--max-size`) and **optimize** into the candidate. The handler must
+   not touch the original.
+10. **Compare sizes** — `formats::size_ok`: a candidate that is empty, or not strictly smaller, is not a
+    result, with the single documented exception of an equal-size candidate under `--strip-metadata`
+    ([guarantees](guarantees.md), I2). A handler that finds nothing to gain returns `already_optimal`
+    before this point; a candidate that is *larger* is an internal error, because no handler may produce one.
+11. **Verify** the candidate against the format contract, reading the original and the candidate back from
+    their files. See [guarantees](guarantees.md); this includes checksum validation of the candidate.
+12. **`--dry-run` stops here.** The candidate is deleted by the guard and nothing is replaced.
+13. **Re-check the original.** Stat the path again and compare `(device, inode, length, mtime)`. If anything
     changed, abort this file: another process modified it while we were working.
-11. **Apply metadata** to the candidate: permission bits, modification time, access time.
-12. **Flush.** `fsync` the candidate (unless `--no-fsync`).
-13. **Replace.** A single `rename(candidate, original)` in the same directory. On POSIX this is atomic.
-14. **Flush the directory** on Unix (`fsync` on the directory handle) so the rename itself is durable.
-15. **Report.** The temporary guard is disarmed only after a successful rename.
+14. **Apply metadata** to the candidate: permission bits, modification time, access time.
+15. **Flush** the candidate with `fsync` (unless `--no-fsync`), then close the handle — required before a
+    rename on Windows.
+16. **Replace.** A single `rename(candidate, original)` in the same directory, then disarm the guard. On
+    POSIX this is atomic.
+17. **Flush the directory** on Unix (`fsync` on the directory handle, best effort) so the rename itself is
+    durable. A failure here is a warning, not a failed file.
 
 No step truncates, edits or rewrites the original in place. There is no point in the procedure where the
 original is partially written.
@@ -47,8 +59,11 @@ original is partially written.
 
 - Created in the **destination directory**, never in `/tmp`, so the final `rename` stays within one
   filesystem and remains atomic.
-- Names follow `.tzim-<pid>-<random>.tmp`, are created with `create_new` (never reuse an existing file) and
-  are removed by an RAII guard on success, error and early return.
+- Names follow `.tzim-<pid>-<nanoseconds>-<attempt>.tmp`: the pid separates processes, the clock separates
+  two concurrent runs inside one process, and `attempt` (0..64) resolves the collision that remains. They
+  are created with `create_new`, so an existing file can never be reused or truncated, and with mode `0600`.
+- The guard removes the file on **every early exit** — an error, a refusal, a dry run. On success the file is
+  **renamed**, and the guard is disarmed only after the rename returns.
 - The guard does not survive `SIGKILL`, `abort()`, or a power loss. An orphaned temporary file is possible;
   it is always a *new* file, never a damaged original.
 - Tzim never deletes files it did not create, and does not scan directories for "stale" temporaries. That
@@ -137,9 +152,11 @@ bug in Tzim.
   of concurrent candidates, which is also the memory bound.
 - **Several Tzim processes on the same file:** no lock is taken. Both compute candidates; whichever renames
   last wins, and both outputs are individually valid and verified. The second process usually detects the
-  first one's change at step 10 and aborts. The residual window between that check and the `rename` cannot
+  first one's change at step 13 and aborts. The residual window between that check and the `rename` cannot
   be closed without advisory locking, and stale locks are a worse failure mode than the race, so it is
-  documented rather than "fixed".
+  documented rather than "fixed". The same window exists between the format probe (step 6), the full read
+  (step 9) and the check — three separate opens of the path — and it is closed only as far as
+  `(device, inode, length, mtime)` can detect.
 - **External writer:** the same mechanism applies. A file that changes mid-run is not replaced, and the
   user is told so.
 - **Windows:** an open handle held by another process can cause the `rename` to fail. That surfaces as a
@@ -148,7 +165,7 @@ bug in Tzim.
 
 ---
 
-## 7. Disk space
+## 7. Disk space and memory
 
 The candidate needs up to the size of the output file, in the same directory as the original. Tzim does not
 pre-check free space (`std` has no portable `statvfs`); it handles `ENOSPC` as an ordinary I/O error: the
@@ -156,15 +173,27 @@ temporary file is removed and the original stays untouched.
 
 For very large files on nearly full volumes, free at least the size of the largest file before running.
 
+**Memory.** A file is read into memory in full (`fs::read`), and every handler builds its candidate in
+memory, so the peak for one file is roughly twice its size plus the decoder's own buffers. With `--jobs`
+files in flight, the peak is bounded by `--max-size` × `--jobs`: the defaults are 2 GiB and 4, which is
+8 GiB. That bound is real and can be reached, so lower `--jobs` (or `--max-size`) on a small machine:
+`tzim . -r --jobs 1` on a laptop is the safe default for a tree of large files. ZIP entries are bounded
+additionally by `--max-uncompressed`, and images by `--max-pixels`.
+
+This is a design consequence, not an oversight: every writer needs random access to its output, and a
+streaming pipeline would change all of them. It is recorded in [cli §7](cli.md#7-defaults-and-limits) as a
+limit with a number, so it can be planned for instead of guessed at.
+
 ---
 
 ## 8. Privileges
 
 - Running as a normal user over your own files preserves permissions and ownership.
-- Running as root over other users' files **changes ownership to root**. Tzim prints a warning when the
-  effective user is root and the file's owner differs, and skips such a file unless
-  `--allow-root-ownership-change` is given. (Option introduced with the implementation; the warning is part
-  of v0.1.)
+- Replacing a file that belongs to **another user** changes its ownership: the candidate belongs to whoever
+  runs Tzim. There is no portable way to keep the original owner without libc, so on Unix Tzim compares the
+  candidate's uid with the original's and **skips** such a file, with a reason that names
+  `--allow-root-ownership-change`, the flag that permits the replacement anyway. Nothing is printed unless
+  the file is actually skipped; the check is not about root specifically, but root is the common case.
 - Files without write permission are skipped rather than replaced.
 - Tzim never elevates privileges, never calls `sudo`, and never changes its own credentials.
 

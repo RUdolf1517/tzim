@@ -101,7 +101,7 @@ in CI, in the benchmarks, in the README, and on the progress line.
   with an explicit refspec, runs on every branch, and shares a concurrency group with `fmt`.
 - **`rustfmt` runs over this tree for the first time.** The environment the project is written in cannot run
   it, so the `fmt` job formats and commits, and fails on the run that had to change something. Two jobs now
-  write to the branch; [testing §4.1](docs/testing.md#41-the-two-jobs-that-write-to-the-branch) says why and
+  write to the branch; [testing §4.1](docs/testing.md#42-the-two-jobs-that-write-to-the-branch) says why and
   what happens on a fork.
 - **The comparative benchmarks are this release's.** §3.2 of [benchmarks](docs/benchmarks.md) carried v0.4.0
   numbers taken before the `-Os`/`-O3` profile split, with a paragraph explaining why they were not re-taken.
@@ -175,7 +175,7 @@ work. The corpus still writes 379 177 bytes.
   ANSI sequences are detected and left alone.
 - **A progress line** on stderr for runs that take longer than a moment: ASCII frames, the file counter,
   the clock and the running total. Drawn only when stderr is a terminal; `--no-progress` turns it off.
-- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--contract-written-not-implemented)),
+- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--refused-after-measurement)),
   written before any code as every contract here is, with the audit behind it in
   [docs/flac-audit.md](docs/flac-audit.md). No FLAC support is claimed: the handler and its tests do not
   exist, and the implementation is blocked on three crates that have not been approved.
@@ -208,7 +208,7 @@ work. The corpus still writes 379 177 bytes.
 
 - The example in [cli §3](docs/cli.md#3-human-output) showed one decimal and a percentage in the summary,
   neither of which the program has ever printed. The text now matches the binary.
-- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-need-and-why-they-are-not-in-cargotoml)
+- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-have-needed)
   record the FLAC crates that are not added and why colour and progress are not dependencies.
 
 ## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter

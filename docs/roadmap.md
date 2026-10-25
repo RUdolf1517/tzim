@@ -25,6 +25,12 @@ planning aids, not commitments.
 
 ## 2. Releases
 
+**Read the status notes as history, not as a description of the binary you have.** Each one was written when
+that release shipped, and it keeps the numbers of that release: the test counts, the sizes and the corpus
+figures below are frozen at the version they belong to. Today's numbers are in CI — the `size` job prints the
+real binary, `corpus` prints the real-file totals — and in [benchmarks](benchmarks.md). A note that disagrees
+with the tree is a historical note, not a lie, as long as it says which release it describes.
+
 ### v0.1 — foundation, PNG, gzip
 
 **Contents**
@@ -180,7 +186,7 @@ build behaves differently.
   encoder this repository would have to write and could not verify. BigTIFF, tiles, separate planes,
   predictors, EXIF/GPS sub-IFDs and unknown *out-of-line* tags are refused with a reason; unknown tags that
   fit in the entry itself are copied untouched.
-- `--strip-metadata` removes the textual tags only ([cli §4](cli.md#4---strip-metadata)), and the acceptance
+- `--strip-metadata` removes the textual tags only ([cli §4](cli.md#2-options)), and the acceptance
   rule stays "never larger".
 
 **Why the version moves**: a new format is observable. The binary grows by roughly 10 KiB, measured in
@@ -191,10 +197,10 @@ build behaves differently.
 Nothing here changes a byte of output:
 
 - colour and a progress line, both off unless a terminal is attached, with `--color`, `--no-color`,
-  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §9](cli.md#9-colour-and-progress));
+  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §9](cli.md#10-colour-and-progress));
 - clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
-  stdout pipe that exits quietly instead of aborting ([cli §10](cli.md#10-conformance-with-cli-conventions));
-- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)
+  stdout pipe that exits quietly instead of aborting ([cli §10](cli.md#11-conformance-with-cli-conventions));
+- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)
   and the [audit](flac-audit.md) behind it.
 
 ### v0.9 — zlib, and the end of the format queue — **implemented**

@@ -1,6 +1,6 @@
 # FLAC: the audit behind the contract
 
-Related: [guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented) · [formats](formats.md) ·
+Related: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FLAC — the audit that a contract is allowed to follow. It exists because the format

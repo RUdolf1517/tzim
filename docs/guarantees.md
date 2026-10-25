@@ -37,7 +37,11 @@ write anything:
 - every failure path;
 - every `--dry-run` run.
 
-G1 is verified by comparing file length and a full content hash of the file before and after the run.
+G1 holds because nothing is written on those paths: the candidate guard deletes the temporary file on
+every exit, before the rename that would make it visible. The only comparison the program itself makes is
+the re-check of `(device, inode, length, mtime)` immediately before a replacement (`replace::changed_since`),
+and that check exists to *abort*, not to prove equality. Proving byte-identity is the job of the tests
+([testing](testing.md), invariant I1): they hash the file, run the binary, and hash it again.
 
 ### G2 — exactly reversible
 
@@ -59,8 +63,10 @@ G3 is the only class used for real optimizations. It is always verified by:
 2. decoding both input and candidate and comparing content — with an independent library where one exists,
    and with this repository's own reader where it does not ([§2.6](#26-verification-independence));
 3. comparing the inventory of significant properties and preserved byte ranges;
-4. confirming the candidate is not larger than the input (strictly smaller unless `--strip-metadata`
-   removed something, see [§2.7](#27-g4--metadata-removed-on-request)).
+4. confirming the candidate is not larger than the input — `formats::size_ok` in `src/formats/mod.rs`,
+   called from `formats::verify` before the format-specific verifier and again in `src/pipeline.rs` before
+   the temporary file is read back. Strictly smaller unless `--strip-metadata` removed something
+   (see [§2.7](#27-g4--metadata-removed-on-request)); never larger, under any flag.
 
 ### G4 — metadata removed on request
 
@@ -138,7 +144,7 @@ These hold for every format, in addition to the per-format contract.
 | ID | Invariant |
 | --- | --- |
 | **I1** | The original file is never modified unless a candidate has passed every check. |
-| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field (`--strip-metadata`, §2.7). A larger candidate is never accepted, under any flag. |
+| **I2** | A candidate is only used if `candidate.len() < original.len()`, or if it is the same length under `--strip-metadata`, when the only change is a removed metadata field (§2.7). A larger candidate — or an empty one — is never accepted, under any flag. Implemented once, as `formats::size_ok`. |
 | **I3** | No metadata, comment, attachment, vendor chunk, private field or unknown structure is removed or normalized. The single exception is the explicit `--strip-metadata` request, which removes the fixed list in §2.7 and nothing beyond it. |
 | **I4** | No lossy transformation, no format conversion, no quality, resolution, rate or bit-depth change. |
 | **I5** | If the input changes on disk between the initial stat and the replacement, the operation is aborted. |
@@ -499,6 +505,37 @@ then:
 
 What the shared reader cannot catch is a structural field both sides misread; the strip bytes themselves
 are compared through an independent inflater, so a content change cannot hide behind it.
+
+**Removed by `--strip-metadata`.** Only the tags in this table, and only the entry itself: the tag
+disappears from the IFD and its out-of-line value stops being written. The list is a constant in the code
+(`tiff::STRIPPED_TAGS`) and a unit test compares the two, so a tag cannot be added to one without the other.
+
+| Tag | Name | Why it is metadata |
+| --- | --- | --- |
+| 269 | `DocumentName` | the name of the scanned document |
+| 270 | `ImageDescription` | free text about the image |
+| 271 | `Make` | camera or scanner manufacturer |
+| 272 | `Model` | camera or scanner model |
+| 305 | `Software` | the program that wrote the file |
+| 306 | `DateTime` | when the file was written |
+| 315 | `Artist` | the person who made the image |
+| 316 | `HostComputer` | the machine that produced the file |
+| 333 | `InkNames` | the ink set of a separated file |
+| 33432 | `Copyright` | the copyright notice |
+| 33723 | `IPTC/NAA` | IPTC caption, keywords, credit |
+| 34377 | `Photoshop` | Photoshop image resources (also carries IPTC) |
+| 37510 | `UserComment` | free text |
+| 37724 | `ImageSourceData` | Photoshop layer data |
+| 40091 | `XPTitle` | Windows title |
+| 40092 | `XPComment` | Windows comment |
+| 40093 | `XPAuthor` | Windows author |
+| 40094 | `XPKeywords` | Windows keywords |
+| 40095 | `XPSubject` | Windows subject |
+| 42112 | `GDAL_NODATA` | the nodata marker of a geospatial raster |
+
+Everything else is kept, in particular `Orientation` (274), `XResolution`/`YResolution` (282/283),
+`ResolutionUnit` (296), `ColorMap` (320), `ICCProfile` (34675), the XMP packet (700), `GeoKeyDirectory`
+(34735) and the private tags. `42113` (`GDAL_METADATA`) is **kept** on purpose: it is not in the list.
 
 **Refused (skipped, exit 0):** BigTIFF, tiles, more than one IFD, planar `2`, predictor other than `1`/
 absent, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable non-zero bytes,
