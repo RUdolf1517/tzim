@@ -2512,6 +2512,44 @@ fn tiff_reversed_bit_order_is_skipped() {
     );
 }
 
+/// The other half of the `FillOrder 2` story, and the one that has no repair:
+/// 0.7 to 0.12.1 wrote exactly this combination — reversed bits *and* Deflate —
+/// so a file like this is already damaged when tzim is run on it. Telling its
+/// owner that "Deflate would make the file unreadable" describes a future that
+/// has passed, so the note has to say the data cannot be recovered and where the
+/// way out is. Still `skipped`, exit 0, nothing written.
+#[test]
+fn tiff_fill_order_two_with_deflate_says_the_file_cannot_be_repaired() {
+    let ws = Workspace::new("tiff-fill-order-damaged");
+    let spec = TiffSpec {
+        fill_order: Some(2),
+        compression: 8,
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("damaged.tif", &original);
+
+    let (code, stdout, stderr) = run(&["damaged.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("cannot be decoded by libtiff"),
+        "the note must say the file cannot be read now, not that it would become unreadable: {stdout}"
+    );
+    assert!(
+        stdout.contains("cannot repair it"),
+        "and that no re-run of tzim helps: {stdout}"
+    );
+    assert!(
+        stdout.contains("backup"),
+        "a refusal a person cannot act on is half a refusal: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a refused file stays byte-identical"
+    );
+}
+
 #[test]
 fn tiff_predictor_is_skipped() {
     let ws = Workspace::new("tiff-predictor");
