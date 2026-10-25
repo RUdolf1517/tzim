@@ -254,30 +254,28 @@ what the tool can read:
   receive it, and the `installer` job installs the published release and then proves a doctored archive is
   refused.
 
-### v0.12 — the audit — **implemented**
+### v0.12 — the audit, answered — **implemented**
 
-An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues; this release answers the ones that
-belong to code and documents, each with a test that fails before the fix. It changes no supported file's
-output, and the binary measures the same.
+An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues. The release answers them, and the one
+behaviour it changes is a defect:
 
-- **The equal-size candidate stops being a failure.** Zeroing a gzip `MTIME` or a ZIP timestamp can shrink a
-  file without shortening it, and the pipeline used to call that `internal error` and exit `1`. The rule now
-  lives in one function, `formats::size_ok`, called by the pipeline, the verification dispatcher and both fuzz
-  targets (issues #26, #44).
-- **G3 clause 4 is checked where the contract says** — in verification, not implied by whichever caller
-  remembered it.
-- **The information commands describe the build they are in**: `--info`, `--list-formats` and `--check-deps`
-  read `cfg!` instead of promising JPEG and Zopfli unconditionally, and no longer claim that metadata is
-  never removed.
-- **`tests/verification.rs`**: one negative test per verifier. Until it existed, six of the seven could have
-  accepted everything and the suite would have stayed green.
-- **The documents match the code**: `safety.md` §1 (stat, two opens, real temporary-file name), G1 without a
-  content hash, the TIFF `--strip-metadata` list in §4.8, `cli.md` examples and format ids, `testing.md`
-  without test hooks or `proptest`, eight anchors fixed, and §3.1 stating what "verified" compares.
-- **PDF and FITS are specified and measurable**: contracts §4.11 and §4.12, with [pdf-audit](pdf-audit.md) and
-  [fits-audit](fits-audit.md) fixing their decision thresholds before the numbers exist.
+- **The equal-size candidate stops being an internal error** (#26, #44): one predicate, `formats::size_ok`,
+  used by the pipeline, the verification dispatcher and both fuzz targets.
+- **The verifiers are tested** (#43): `tests/verification.rs` gives every one of them a candidate that must be
+  refused.
+- **Documents and code agree in the same release**: [guarantees §3.1](guarantees.md#31-what-verified-actually-compares--and-what-it-does-not)
+  says what "verified" compares, [safety §1](safety.md#1-algorithm) is the algorithm that runs, and
+  `T-FS-*` / `T-STRIP-*` rows are in [testing §2](testing.md#2-traceability) with the test behind each one.
+- **Seven traceability rows that had no test have one**; three say so in the row and give the reason (#49).
 
-### v0.12.1 — planned
+The tag was cut from `main` after those tests failed before the fix and passed after it.
+
+### v0.12.1 — the two decisions that are still open — **planned**
+
+- **A weak signature never produces `failed`** (#52): a zlib header that decodes nothing is `unsupported`; one
+  that decodes and then breaks is still `failed`, so a truncated stream keeps its corruption signal.
+- **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
+  reason instead of being read.
 
 Two decisions from the audit that change behaviour and therefore wait for their own tests:
 
