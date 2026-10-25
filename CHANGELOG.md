@@ -9,6 +9,77 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.12.0] - 2026-10-25 — the audit
+
+An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues. This release answers them, with the
+rule the audit itself states: `docs/guarantees.md` is the contract, so a divergence between the code and the
+document is a bug in one of them, and every fix ships with a test that fails before it. Nothing here changes
+what a supported file turns into, with one exception, and that exception is a bug being removed.
+
+### Fixed
+
+- **`--strip-metadata` no longer turns an equal-size result into a failure.** A ZIP with a stored entry and
+  non-zero timestamps, or a gzip member with a non-zero `MTIME`, can be rewritten to exactly the same length:
+  zeroing a timestamp removes metadata without removing bytes. The handlers accepted that candidate and the
+  pipeline then called it an internal error and exited 1. The rule now lives in one function,
+  `formats::size_ok` (strictly smaller, or the same length under the flag, never larger, never empty), and it
+  is called by the pipeline, by the verification dispatcher and by both fuzz targets.
+- **G3 clause 4 ("the candidate is not larger") is checked in verification**, as the contract says, instead of
+  being implied by whichever caller remembered it.
+- **`--info`, `--list-formats` and `--check-deps` describe the build they are in.** They claimed that metadata
+  is never removed (untrue since the flag exists) and named JPEG and Zopfli unconditionally, which is wrong
+  for `--features png`. Both are now read from `cfg!`.
+- **`unsupported: unsupported format`** — the note repeated the status word on every such line and in every
+  JSON record. The status is the message.
+- **The TIFF `--strip-metadata` list is in the contract.** Twenty tags, printed in
+  [guarantees §4.8](docs/guarantees.md#48-tiff-classic-baseline-strips--v07) and pinned by a test that
+  compares the document's list with the constant in the code.
+- **A path with CJK or emoji characters no longer breaks the column alignment**: the report measures display
+  cells, not characters, and a combining mark counts as zero.
+- **The Adler-32 test comment** derived the wrong numbers for an all-zero input (it summed 0..9999 instead of
+  the bytes). The value was right; the explanation would have led the next reader to break the code.
+
+### Added
+
+- **`tests/verification.rs`**: one negative test per verifier. Until this, `png::verify`, `jpeg::verify`,
+  `tiff::verify`, `zip::verify`, `gzip::verify` and `verify_icon` were never called by a test, so a verifier
+  that accepted everything passed the suite. Two rules are deliberately not covered, and the module says
+  which and why: a test that survives the deletion of the check it guards is decoration.
+- **`.github/scripts/md-links.py` and a `docs` CI job**: every relative link and every `#anchor` in the
+  eighteen Markdown files, with `broken: 0` as the gate. Seven anchors were broken and nobody noticed,
+  because nobody clicks 226 links.
+- Tests for rows of the traceability table that had none: `--zopfli` never worse than the default, gzip
+  `FCOMMENT` and `FHCRC`, ZIP unknown-method and multi-disk refusal, `--max-uncompressed`, a malformed ICO
+  directory.
+- Tests for filesystem cases that had none: a hard link (skipped, and broken on purpose with
+  `--allow-hardlinks`), a Unix socket, and — on Linux, where the filesystem allows the name — a path that is
+  not valid UTF-8, with `path_raw_b64` in the record.
+- Tests that pin `--formats` as a policy rather than a filter: a PNG under `--formats gzip` is `skipped` with
+  a reason, and a nested child inherits the allowlist.
+- PNG scanline filters are round-tripped at every bytes-per-pixel value from 1 to 8, not only RGBA8's four.
+- The fuzz build compiles `tiff` and `zlib`, so those parsers are reachable, and the `strip` target has seeds.
+
+### Changed
+
+- **The documents were corrected where the code was right**, and the code where the contract was:
+  `safety.md` §1 is now the algorithm the code runs (it described a snapshot taken from an open handle that
+  is never opened, the wrong temporary name, and a root warning that is a skip); `cli.md` has real output
+  examples, the real JSON record and a section naming the three statuses `--formats` can produce;
+  `testing.md` lost the failure-injection and `proptest` sections (neither exists), describes the fixtures
+  that are actually built at run time, and lists the filesystem scenarios that are *not* tested by name;
+  `roadmap.md` marks every status note as history, so its v0.1 test counts cannot be read as today's;
+  `guarantees.md` §2.6 gained the TIFF row and states that an already-Deflate TIFF strip has no external
+  checksum to anchor it.
+- `safety.md` §7 gained the memory bound this pipeline really has: peak memory is roughly `--max-size` ×
+  `--jobs`, which is 8 GiB at the defaults.
+- The symlink story is the real one: a cycle is stopped by a depth limit of 64 directories, not by a visited
+  set of `(device, inode)` pairs, and the wiring that no longer exists is no longer described.
+
+### Not in this release
+
+Two audit items are owner decisions, not defects, and stay open: what to cut to make the binary smaller
+(#38), and whether to verify JPEG with an independent decoder and a new dependency (#39).
+
 ## [0.11.0] - 2026-10-25 — distribution
 
 No handler changed and no file is treated differently. This release is about the three minutes between

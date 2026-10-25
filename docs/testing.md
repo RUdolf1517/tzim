@@ -32,7 +32,8 @@ time.
 ## 2. Traceability
 
 Each contract clause maps to at least one named test. The list is the checklist used in review; a format is
-not done until every row passes in CI.
+not done until every row passes in CI. A row whose assertion has no test says so in the row itself — the
+table is evidence, not a plan.
 
 ### PNG
 
@@ -41,19 +42,19 @@ not done until every row passes in CI.
 | `T-PNG-01` | All non-IDAT chunks (including an unknown/private chunk) are byte-identical, in the same order |
 | `T-PNG-02` | IHDR payload is byte-identical |
 | `T-PNG-03` | Decoded pixels are identical for the colour types the fixture writer builds (RGBA8). The other colour types — gray, gray+alpha, RGB, palette at 1/2/4/8 bits, 16-bit — are exercised by the real-file corpus, which asserts that they are rewritten without error but does **not** re-decode them; the writer is linear in the pixel bytes and touches only the compressed stream, but that is an argument, not a test. Widening `build_png` is the honest fix and is not done |
-| `T-PNG-04` | Interlaced images: recompression only, pixels identical |
+| `T-PNG-04` | Interlaced images: recompression only, pixels identical. **No test**: `PngSpec` cannot write an interlaced file |
 | `T-PNG-05` | APNG: `acTL`/`fcTL`/`fdAT` untouched; default image pixels identical |
 | `T-PNG-06` | Corrupted inputs (bad CRC, truncated, missing IEND, bytes after IEND) are refused |
 | `T-PNG-07` | A candidate that is not smaller is discarded; file unchanged, status `already_optimal` |
 | `T-PNG-08` | The output parses strictly and all chunk CRCs are valid |
-| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified |
+| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified — `t_png_09_zopfli_is_at_least_as_good_as_the_default` compares the two runs and requires the strong one to be no larger |
 
 ### gzip
 
 | ID | Assertion |
 | --- | --- |
-| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` |
-| `T-GZ-02` | `FHCRC` preserved and still valid |
+| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` — `t_gz_01_a_comment_is_preserved` splices the comment in and compares the header byte for byte |
+| `T-GZ-02` | `FHCRC` preserved and still valid — `t_gz_02_fhcrc_is_preserved_and_still_valid` builds the CRC-16 the format defines and re-checks it in the output |
 | `T-GZ-03` | Payload identical; trailer (`CRC32`, `ISIZE`) unchanged |
 | `T-GZ-04` | Multi-member and trailing-garbage inputs are refused |
 | `T-GZ-05` | Truncated or bad-trailer inputs are refused |
@@ -71,10 +72,10 @@ not done until every row passes in CI.
 | `T-ZIP-06` | Stored entries stay stored |
 | `T-ZIP-07` | Signed archives are refused (JAR `META-INF` signatures, APK signing block, `_xmlsignatures/`, `package/services/digital-signature/`) |
 | `T-ZIP-08` | ODF/EPUB archives are accepted and keep `mimetype` stored first |
-| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused |
+| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused — `t_zip_09_an_unknown_compression_method_is_refused` (method 12) and `t_zip_09_a_multi_disk_archive_is_refused` (a non-zero disk number) |
 | `T-ZIP-10` | Truncated archives and inconsistent local headers are refused |
 | `T-ZIP-11` | Every entry's decompressed bytes and CRC are identical |
-| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) |
+| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) — `t_zip_12_max_uncompressed_is_enforced` for the first, an earlier test for the second |
 
 ### ICO / APNG / nested / JPEG
 
@@ -83,16 +84,16 @@ not done until every row passes in CI.
 | `T-ICO-01` | Directory header and entry order preserved |
 | `T-ICO-02` | Embedded PNGs satisfy the PNG contract and decode identically |
 | `T-ICO-03` | BMP/DIB entries are byte-identical |
-| `T-ICO-04` | Malformed directories and out-of-range offsets are refused |
+| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_an_implausible_image_count_is_refused` (a count that disagrees with the file) and the earlier offset test |
 | `T-APNG-01` | `acTL` payload preserved |
 | `T-APNG-02` | Every `fcTL` preserved, in order |
 | `T-APNG-03` | Every frame decodes identically (pixels and frame metadata) |
 | `T-APNG-04` | The default image is optimized and verified |
-| `T-APNG-05` | Inconsistent frame sequences are refused |
+| `T-APNG-05` | Inconsistent frame sequences are refused. **No test**: no fixture produces an inconsistent `fcTL`/`fdAT` sequence, and the `png` crate would reject one before this build's own check runs |
 | `T-NEST-01` | A child that fails verification is stored unmodified |
 | `T-NEST-02` | Optimized children satisfy their own contracts |
 | `T-NEST-03` | `--max-depth` is enforced |
-| `T-NEST-04` | Nested expansion respects the parent's size budget |
+| `T-NEST-04` | Nested expansion respects the parent's size budget. **No test**: `--max-depth` is tested, the per-entry budget is not |
 | `T-JPG-01` | Marker inventory (type, order, payload) preserved; Exif and `COM` payloads survive |
 | `T-JPG-02` | `DQT` and `SOF0` payloads byte-identical |
 | `T-JPG-03` | Every DCT coefficient identical after the rewrite (stronger than comparing pixels) |

@@ -95,15 +95,22 @@ would suggest more than any of these delivers.
 | zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
+| TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed in the input — the original side is raw bytes; **shared `flate2`** for strips that were already Deflate, with no external checksum to anchor the original | A strip that was already Deflate is one `flate2` decode compared with another `flate2` decode; unlike gzip, zlib and ZIP there is no CRC written by the original encoder to catch a decoder that is wrong the same way on both sides |
 | JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
 
-**The honest consequence for JPEG.** Its verification is the weakest of the five, and it cannot be
+**The honest consequence for JPEG.** Its verification is the weakest of the seven, and it cannot be
 strengthened without an independent JPEG decoder, which would mean a new dependency and a much larger
 binary. What is in place instead: a strict parser that refuses anything it cannot fully validate, a
 coefficient-level comparison (stronger than comparing pixels, which a second decoder would give), the
 fixtures and the real-file corpus, and a fuzz target for the entropy reader. None of that is a proof. A
 symmetric codec defect would pass every check in this repository. This is the main reason JPEG is opt-in and
 why its gain is not oversold.
+
+**For TIFF** the content comparison is independent only while the strips are uncompressed: `optimize` turns
+compression `1` into Deflate, and for that path the original is raw bytes read without a decoder. A TIFF whose
+strips were *already* Deflate is re-compressed and compared `flate2` against `flate2`, and TIFF has no
+per-strip checksum of its own — so a symmetric defect in the inflater would survive. The structure is compared
+field by field (V3), which is where a layout mistake would show up, and the fuzz target covers the parser.
 
 **For ZIP** the risk is smaller than it sounds: the structure is copied, not synthesized, so most bytes are
 compared literally; the payload of every entry is inflated independently and its CRC-32 recomputed from the

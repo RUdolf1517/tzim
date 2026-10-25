@@ -2246,6 +2246,183 @@ fn tiff_is_skipped_when_the_format_is_not_enabled() {
 }
 
 // ---------------------------------------------------------------------------
+// Traceability rows that had no test (#49). Each name starts with the row id.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn t_png_09_zopfli_is_at_least_as_good_as_the_default() {
+    let ws = Workspace::new("row-png-09");
+    let spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let plain = ws.write("plain.png", &original);
+    let strong = ws.write("strong.png", &original);
+
+    let (code, _, stderr) = run(&["plain.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = run(&["strong.png", "--zopfli"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+
+    let plain_out = std::fs::read(&plain).unwrap();
+    let strong_out = std::fs::read(&strong).unwrap();
+    assert!(plain_out.len() < original.len());
+    assert!(
+        strong_out.len() <= plain_out.len(),
+        "--zopfli must never be worse: {} > {}",
+        strong_out.len(),
+        plain_out.len()
+    );
+    // The candidate is still a PNG with identical pixels, whichever candidate won.
+    let (_, _, p1) = decode_pixels(&original).unwrap();
+    let (_, _, p2) = decode_pixels(&strong_out).unwrap();
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn t_gz_01_a_comment_is_preserved() {
+    let ws = Workspace::new("row-gz-01");
+    let payload = b"comment-carrying payload".repeat(200);
+    let bare = build_gzip(&payload, None, None, 0, 1);
+    // build_gzip writes FNAME and FEXTRA but not FCOMMENT, so set flag bit 4 and
+    // splice the NUL-terminated comment in after the ten-byte header.
+    let mut original = bare[..10].to_vec();
+    original[3] |= 0x10;
+    original.extend_from_slice(b"written by a test\0");
+    original.extend_from_slice(&bare[10..]);
+    let path = ws.write("comment.gz", &original);
+
+    let (code, stdout, stderr) = run(&["comment.gz"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let out = std::fs::read(&path).unwrap();
+    assert!(out.len() < original.len());
+    assert!(
+        out.windows(18).any(|w| w == b"written by a test\0"),
+        "FCOMMENT must survive verbatim"
+    );
+    let header_len = 10 + b"written by a test\0".len();
+    assert_eq!(
+        &out[..header_len],
+        &original[..header_len],
+        "the header, comment included, is copied verbatim"
+    );
+}
+
+#[test]
+fn t_gz_02_fhcrc_is_preserved_and_still_valid() {
+    let ws = Workspace::new("row-gz-02");
+    let payload = b"header checksum payload".repeat(200);
+    let bare = build_gzip(&payload, Some(b"name.txt"), None, 0, 1);
+    // FLG |= FHCRC, and the two CRC-16 bytes are the low half of the header's
+    // CRC-32, which is what the format defines.
+    let mut original = bare[..10].to_vec();
+    original[3] |= 0x02;
+    let mut with_name = original.clone();
+    with_name.extend_from_slice(b"name.txt\0");
+    let crc16 = (crc32fast::hash(&with_name) & 0xffff) as u16;
+    original.extend_from_slice(&with_name[10..]);
+    original.extend_from_slice(&crc16.to_le_bytes());
+    original.extend_from_slice(&bare[10 + 9..]);
+    let path = ws.write("fhcrc.gz", &original);
+
+    let (code, stdout, stderr) = run(&["fhcrc.gz"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let out = std::fs::read(&path).unwrap();
+    assert_eq!(out[3] & 0x02, 0x02, "FHCRC flag must survive");
+    let header_len = 10 + 9 + 2;
+    assert_eq!(&out[..header_len], &original[..header_len], "header verbatim");
+    let recomputed = (crc32fast::hash(&out[..header_len - 2]) & 0xffff) as u16;
+    assert_eq!(
+        u16::from_le_bytes([out[header_len - 2], out[header_len - 1]]),
+        recomputed,
+        "the stored CRC-16 must still match the header it covers"
+    );
+}
+
+#[test]
+fn t_zip_09_an_unknown_compression_method_is_refused() {
+    let ws = Workspace::new("row-zip-09");
+    let mut spec = ZipEntrySpec::deflated("odd.bin", &compressible(2000), 1);
+    spec.method = 12; // bzip2: valid in the format, not implemented here
+    let original = build_zip(&[spec], b"");
+    let path = ws.write("odd.zip", &original);
+
+    let (code, stdout, stderr) = run(&["odd.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert!(stdout.contains("compression method"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn t_zip_09_a_multi_disk_archive_is_refused() {
+    let ws = Workspace::new("row-zip-09-disk");
+    let original = build_zip(&[ZipEntrySpec::deflated("a.txt", &compressible(2000), 1)], b"");
+    let mut damaged = original.clone();
+    let eocd = damaged.len() - 22;
+    assert_eq!(
+        u32::from_le_bytes([
+            damaged[eocd],
+            damaged[eocd + 1],
+            damaged[eocd + 2],
+            damaged[eocd + 3]
+        ]),
+        ZIP_EOCD_SIG
+    );
+    // "number of this disk" = 1: the archive claims to be the second of a set.
+    damaged[eocd + 4] = 1;
+    let path = ws.write("split.zip", &damaged);
+
+    let (code, stdout, stderr) = run(&["split.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("multi-disk"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+}
+
+#[test]
+fn t_zip_12_max_uncompressed_is_enforced() {
+    let ws = Workspace::new("row-zip-12");
+    let original = build_zip(&[ZipEntrySpec::deflated("big.txt", &compressible(200_000), 9)], b"");
+    let path = ws.write("big.zip", &original);
+
+    let (code, stdout, stderr) = run(&["big.zip", "--max-uncompressed", "1000"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("--max-uncompressed"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    // The same archive is fine with the default limit.
+    let (code, _, stderr) = run(&["big.zip"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(std::fs::read(&path).unwrap().len() <= original.len());
+}
+
+#[test]
+fn t_ico_04_an_implausible_image_count_is_refused() {
+    let ws = Workspace::new("row-ico-04");
+    let entry = IcoEntrySpec {
+        width: 16,
+        height: 16,
+        bit_count: 32,
+        payload: bmp_icon_payload(64),
+    };
+    let original = build_ico(1, &[entry]);
+    let mut damaged = original.clone();
+    // The directory says 300 images while the file holds one.
+    damaged[4..6].copy_from_slice(&300u16.to_le_bytes());
+    let path = ws.write("count.ico", &damaged);
+
+    let (code, stdout, stderr) = run(&["count.ico"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("implausible image count"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+}
+
+// ---------------------------------------------------------------------------
 // Terminal behaviour: colour, progress, closed pipes, usage errors.
 // ---------------------------------------------------------------------------
 
