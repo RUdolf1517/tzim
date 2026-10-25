@@ -204,14 +204,21 @@ with open(os.path.join(work, "refusals.txt"), "w", encoding="utf-8") as fh:
             name = os.path.basename(record["path"])
         fh.write(f"{name}\t{reason(record)}\n")
 
-# The same table in the report, collapsed: the gate compares counts, and a
-# human needs the file names when a count has to change.
+# The same table in the report, collapsed and **bounded**: `ci-report.sh`
+# publishes the last 150 lines of the report, so a section that grows without a
+# limit silently pushes the numbers out of the comment (it did, on the first run
+# of this block). Thirty lines is enough to recognise a reason, and the full list
+# is in the `corpus-run` artifact.
 if refused:
-    lines.append("<details><summary>The refused set, file by file</summary>")
+    with open(os.path.join(work, "refusals.txt"), encoding="utf-8") as fh:
+        entries = [line.rstrip("\n") for line in fh]
+    lines.append(
+        f"<details><summary>The refused set, first {min(len(entries), 30)} of "
+        f"{len(entries)} (all of it in the `corpus-run` artifact)</summary>"
+    )
     lines.append("")
     lines.append("```")
-    with open(os.path.join(work, "refusals.txt"), encoding="utf-8") as fh:
-        lines.extend(line.rstrip("\n") for line in fh)
+    lines.extend(entries[:30])
     lines.append("```")
     lines.append("")
     lines.append("</details>")
