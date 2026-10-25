@@ -33,6 +33,11 @@ exist at all.
 
 ### Changed
 
+- **The winget manifest is checked against the release, not just against a schema.** `winget validate` reads
+  the manifest as a document; `packaging/winget/verify.sh` downloads the archive it names and compares the
+  hash, which is the half that decides whether an install works. A new `winget` CI job on Windows runs both,
+  and `docs/releases.md` §5 has the exact steps for submitting to `microsoft/winget-pkgs`, since that pull
+  request is against a repository this project does not own.
 - **`install.sh` verifies what it downloads.** The archive is checked against `SHA256SUMS` before it is
   unpacked; a mismatch prints both hashes and exits instead of falling back to a source build that would hide
   it. The installed binary is run once before success is reported, and with `TZIM_VERSION` set the reported
@@ -46,6 +51,12 @@ exist at all.
   installer.
 - The `.deb` and `.rpm` description now lists the formats the binary actually has: it had been stuck at the
   v0.4 set, without TIFF and without zlib.
+
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.11.0/` are pinned to the published v0.11.0 artifacts and their
+  SHA-256, copied from the release notes after the build. The formula gained the two platforms this release
+  made possible: Intel macOS and Linux ARM64.
 
 ### Size
 
