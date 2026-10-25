@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.8.0"
+  version "0.9.0"
   license "MIT"
 
   livecheck do
@@ -27,15 +27,15 @@ class Tzim < Formula
   # those, and a formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.8.0/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "614dd2c10a0b7119fa8d7391f693e2f3d4b3bafb64d210fdf6852352ffcac9e7"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.9.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "7575229dda936b8f9fb092f00025baeb85ae1e8706d40d5b4cce1d17d8cc588b"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.8.0/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "273240f8eed64983e8eafd93b0b7f611beeec34f9e84a48dd44e09c8db39b28a"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.9.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "731e1e103f96a19465b1bf7df72c9813fedb2edf418d6304d94a2f496f934252"
     end
   end
 
