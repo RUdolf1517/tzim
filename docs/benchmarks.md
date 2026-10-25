@@ -11,20 +11,25 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.10.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Commit | v0.13.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
 | Target | `x86_64-unknown-linux-musl` (static-pie, no libc dependency, no interpreter) |
-| Profile | `--release`, `opt-level = "s"` for this crate and for `indicatif`/`console`, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
-| Features in the binary | every runtime feature; the fuzz entry points are excluded by construction |
-| **Size** | **1 049 440 bytes (1 024 KiB)** |
-| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 19 |
-| Budget for this profile | 1 179 KiB (measured + 15 %, see [size-budget §1](size-budget.md#1-budget)) |
-| Headroom | 155 KiB |
+| Profile | `--release`, `opt-level = "s"` for this crate, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
+| Features in the binary | every runtime feature; `fuzz-api` is excluded by construction and `jpeg-v1` is off by default |
+| **Size** | **979 808 bytes (956 KiB)** |
+| Change from v0.12.1 | **−69 632 bytes (−68 KiB)** |
+| Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 14 (was 19) |
+| Gate | 979 808 bytes, exactly — [size-budget §1](size-budget.md#1-budget) |
 
-Of those 1 024 KiB, **96 KiB is the progress line**: `indicatif` and `console`, added in v0.10.0 at the user's
-request. Sixteen of those were recovered by compiling the two crates at `opt-level = "s"` instead of the
-wildcard `3` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)), and the rest is the
-price of not writing a bar, a spinner and a terminal-width-aware redraw by hand
-([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
+**The 68 KiB came back from the progress line.** v0.12.1 carried `indicatif` and `console` — 96 KiB, a tenth
+of the binary — and v0.13 draws the same line in `src/progress.rs` for nothing
+([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)). Five dependency lines left
+the tree with them.
+
+The other half of the release is a decoder that is **not** in this number: `jpeg-v1`, the independent JPEG
+verifier, measures **+118 784 bytes** (116 KiB) and therefore ships off ([dependencies
+§2.10](dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)). It was approved on the
+condition that the shipping binary does not grow past 1 049 440 bytes, and it does not fit even with the 96 KiB
+that was freed; the condition was kept and the feature is a flag.
 
 The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
 feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
@@ -51,6 +56,8 @@ crate, because no Rust JPEG library exposes DCT coefficients (see
 | v0.10.0 | progress line drawn by `indicatif`, not by hand; CI and benchmark honesty; no handler changed | 1 024 KiB (+96 KiB) |
 | v0.11.0 | distribution: ARM64 artifact, manual page, completions, a verifying installer; nothing added to the binary | 1 024 KiB (+0) |
 | v0.12.0 | the audit: one size predicate, honest interface text, verifier tests, a display-width table; nothing added to the binary | 1 024 KiB (+0) |
+| v0.12.1 | two defects fixed, one channel removed, three traceability rows closed; the binary is byte-for-byte the same | 1 024 KiB (+0) |
+| v0.13.0 | `indicatif` and `console` removed, the progress line drawn by hand again (86 lines of it are new arithmetic, 96 KiB of crates are gone); `jpeg-v1` available and off | 956 KiB (−68 KiB) |
 
 The v0.6.0 row is a linker artefact rather than new behaviour: the same code compiled as a library plus a
 binary crosses one more 4 KiB page boundary. It is recorded because the budget is measured, not inferred.

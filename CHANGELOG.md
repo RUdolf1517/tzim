@@ -25,8 +25,10 @@ job that only checks an upper bound is what made the question reasonable.
 
 Six issues, one of them a removal: the progress line is drawn here again, a crate nobody here wrote now
 stands on the far side of the JPEG comparison, `--jobs` stops pretending to bound memory, and CI gains the
-three coverage gaps and the independent-decoder job that were listed against it. The binary is `SIZE_BYTES`
-bytes.
+three coverage gaps and the independent-decoder job that were listed against it. The binary is
+**979 808 bytes (956 KiB)**, 68 KiB smaller than v0.12.1: the 96 KiB that `indicatif` and `console` were
+paying for came back, and the independent JPEG decoder — 116 KiB — does not ship, for the reason recorded
+under *Changed* below.
 
 ### Added
 

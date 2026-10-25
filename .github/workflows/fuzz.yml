@@ -95,7 +95,7 @@ jobs:
           PY
           cp fuzz/corpus/zlib/* fuzz/corpus/roundtrip/
           cp fuzz/corpus/zlib/* fuzz/corpus/strip/
-          echo "seeds: $(find fuzz/corpus -type f | wc -l)
+          echo "seeds: $(find fuzz/corpus -type f | wc -l)"
 
       - name: Run targets
         shell: bash
