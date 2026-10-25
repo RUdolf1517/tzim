@@ -1654,17 +1654,24 @@ mod tests {
     }
 
     /// A complete baseline JPEG built by hand: one 8×8 greyscale block, one
-    /// quantisation table of ones, DC coefficients only.
+    /// quantisation table, DC coefficients only.
     ///
     /// It exists because the oracle in `super::oracle` needs a real file and this
     /// module's tests cannot reach the integration fixtures. `dc` is the DC
     /// difference of the single block, so two calls with different values are two
     /// different images — which is what the pixel-digest test needs.
+    ///
+    /// The table is **eight**, not one, and that is not decoration: the inverse
+    /// DCT of a block whose only non-zero coefficient is `DC` is the constant
+    /// `DC × Q / 8`, so with a quantiser of 1 a DC difference of 1 rounds back to
+    /// zero and the "different" image decodes pixel for pixel identical. At
+    /// eight, one DC step is one pixel level, which is what makes a changed
+    /// coefficient observable in a decoded image.
     pub(super) fn sample_jpeg_with_dc(dc: i32) -> Vec<u8> {
         let mut out = vec![0xff, 0xd8];
-        // DQT, 8-bit precision, table 0: sixty-four ones.
+        // DQT, 8-bit precision, table 0: sixty-four eights.
         out.extend_from_slice(&[0xff, 0xdb, 0x00, 0x43, 0x00]);
-        out.extend_from_slice(&[1u8; 64]);
+        out.extend_from_slice(&[8u8; 64]);
         // SOF0: 8 bits, 8×8, one component, 1×1 sampling, table 0.
         out.extend_from_slice(&[
             0xff, 0xc0, 0x00, 0x0b, 0x08, 0x00, 0x08, 0x00, 0x08, 0x01, 0x01, 0x11, 0x00,
@@ -1684,15 +1691,15 @@ mod tests {
         // One block: the DC difference, then end-of-block, then ones to pad.
         let mut bits = String::new();
         match dc {
-            0 => bits.push_str("0"), // symbol 0, one bit
+            0 => bits.push('0'),              // symbol 0, one bit
             v if v > 0 => {
-                bits.push_str("10"); // symbol 1
-                bits.push('1'); // the magnitude bit
+                bits.push_str("10");          // symbol 1
+                bits.push('1');               // the magnitude bit
             }
             _ => panic!("this fixture only builds non-negative DC differences"),
         }
         bits.push('0'); // end of block
-        while bits.len() % 8 != 0 {
+        while !bits.len().is_multiple_of(8) {
             bits.push('1');
         }
         let mut byte = 0u8;

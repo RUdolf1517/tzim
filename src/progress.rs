@@ -171,11 +171,8 @@ impl Frame {
         let mut line = String::with_capacity(width.min(160));
 
         if self.total <= 1 {
-            self.style.paint_into(
-                &mut line,
-                Pen::Green,
-                &FRAMES[self.tick % FRAMES.len()].to_string(),
-            );
+            self.style
+                .paint_into(&mut line, Pen::Green, &FRAMES[self.tick % FRAMES.len()].to_string());
             line.push_str(" converting…");
             return clip(line, width);
         }
@@ -205,7 +202,7 @@ impl Frame {
 
         for tail in [eta_text, rate_text].into_iter().flatten() {
             let candidate = format!("{line}{tail}");
-            if display_width(&candidate) <= width {
+            if cells(&candidate) <= width {
                 line = candidate;
             }
         }
@@ -220,7 +217,7 @@ impl Frame {
 /// are reset before the cut so a truncated line cannot leak colour into the
 /// report.
 fn clip(line: String, width: usize) -> String {
-    if display_width(&line) <= width {
+    if cells(&line) <= width {
         return line;
     }
     // Colour is decoration; a truncated line is easier to read plain.
@@ -236,6 +233,16 @@ fn clip(line: String, width: usize) -> String {
         used += w;
     }
     out
+}
+
+/// The width in display cells of a line that may carry colour.
+///
+/// [`display_width`] counts characters, and an SGR sequence is several of them:
+/// measuring a coloured line with it made the padding and the narrow-terminal
+/// decisions wrong by the length of the escapes. Colour is the only markup this
+/// program emits, so removing it is the whole of the work.
+fn cells(line: &str) -> usize {
+    display_width(&strip_sgr(line))
 }
 
 /// Removes `ESC [ ... m` sequences. Only the ones this program writes exist, and
@@ -361,7 +368,7 @@ impl Drop for Progress {
         if let Some(ticker) = self.ticker.take() {
             let _ = ticker.join();
         }
-        erase(&state);
+        erase(state);
     }
 }
 
@@ -382,9 +389,9 @@ fn draw(state: &Shared, tick: usize) {
     };
     let width = width_from_env();
     let line = frame.render(width);
-    let cells = display_width(&line);
-    let previous = state.painted.swap(cells, Ordering::Relaxed);
-    let padding = " ".repeat(previous.saturating_sub(cells));
+    let used = cells(&line);
+    let previous = state.painted.swap(used, Ordering::Relaxed);
+    let padding = " ".repeat(previous.saturating_sub(used));
 
     let stderr = std::io::stderr();
     let mut handle = stderr.lock();
@@ -457,10 +464,7 @@ mod tests {
     fn an_empty_run_is_an_empty_bar_and_a_finished_run_is_full() {
         assert_eq!(bar_position(0, 148), 0);
         assert_eq!(bar(0, 148, Style::plain()), EMPTY.to_string().repeat(CELLS));
-        assert_eq!(
-            bar(148, 148, Style::plain()),
-            FULL.to_string().repeat(CELLS)
-        );
+        assert_eq!(bar(148, 148, Style::plain()), FULL.to_string().repeat(CELLS));
         // A finished run is pinned to the end rather than left to rounding.
         assert_eq!(bar_position(148, 148), CELLS * 8);
         assert_eq!(bar_position(1000, 148), CELLS * 8);
@@ -571,9 +575,9 @@ mod tests {
         for width in [20usize, 24, 40, 80, 200] {
             let line = frame(120, 148, Duration::from_secs(90)).render(width);
             assert!(
-                display_width(&line) <= width,
+                cells(&line) <= width,
                 "width {width}: {line:?} is {} cells",
-                display_width(&line)
+                cells(&line)
             );
             assert!(!line.contains('\n'), "{line:?}");
             assert!(!line.contains('\r'), "{line:?}");
@@ -619,7 +623,11 @@ mod tests {
         let a = plain.render(80);
         let b = coloured.render(80);
         assert_ne!(a, b, "colour must actually paint something");
-        assert_eq!(display_width(&a), display_width(&b));
+        assert_eq!(
+            cells(&a),
+            cells(&b),
+            "colour must not change the width in cells"
+        );
         assert!(!a.contains('\u{1b}'));
         assert!(b.contains("\u{1b}[32m"), "the bar or spinner must be green");
         assert_eq!(strip_sgr(&b), a, "the same line, minus the sequences");
