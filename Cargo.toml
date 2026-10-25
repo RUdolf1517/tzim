@@ -88,5 +88,14 @@ incremental = false
 [profile.release.package."*"]
 opt-level = 3
 
+# One dependency is not hot, and its size is the whole argument: the independent
+# JPEG decoder runs only under `jpeg-v1`, one 8×8 block at a time, in a build that
+# has already decided to spend cycles on nothing else there. `-Os` for it is the
+# same trade `indicatif` and `console` carried until v0.13 removed them
+# (docs/size-budget.md §5). Whether it is enough to fit #39's condition is
+# measured by the `size` job, byte for byte.
+[profile.release.package.jpeg-decoder]
+opt-level = "s"
+
 [lints.rust]
 unsafe_code = "forbid"
