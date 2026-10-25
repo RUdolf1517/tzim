@@ -204,7 +204,7 @@ What the numbers say, without softening either half:
   finds 0.88 %; a stream from an old encoder, or one written at level 1, has far more room. This set is
   published at the level it is because a benchmark that only shows the flattering case is not a benchmark.
 - These files are heavily skewed towards `pngsuite`, which is deliberately poorly compressed in places. That
-  is why Tzim saves 7.63 % here and 9.75 % on the whole corpus: same code, different input. Both numbers are
+  is why Tzim saves 7.63 % here and 9.74 % on the whole corpus: same code, different input. Both numbers are
   published because either one alone would mislead.
 
 ### 3.3 Older spot measurements

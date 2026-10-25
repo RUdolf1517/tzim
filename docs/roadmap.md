@@ -294,11 +294,12 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
   *better* — a 64-position bar, a rate over the last eight completions, an ETA that waits for evidence, and
   clipping by display width ([cli §10](cli.md#10-colour-and-progress),
   [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
-- **A JPEG decoder nobody here wrote** (#39): `jpeg-decoder` verifies both sides of an accepted candidate
-  (`jpeg-v1`, default), which closes the symmetric-codec hole
-  [guarantees §2.6](guarantees.md#26-verification-independence) had been describing since v0.4. Approved on
-  one condition — the binary must not grow past 1 049 440 bytes — and the `size` gate now enforces exactly
-  that.
+- **A JPEG decoder nobody here wrote** (#39): `jpeg-decoder` verifies both sides of an accepted candidate,
+  which closes the symmetric-codec hole [guarantees §2.6](guarantees.md#26-verification-independence) had been
+  describing since v0.4. Approved on one condition — the binary must not grow past 1 049 440 bytes — and the
+  measurement said **+118 784 bytes**, more than the 96 KiB the progress line gave back. The condition was
+  kept and the decoder is not in the shipped default: `jpeg-v1` exists, CI tests it on every run, and one
+  flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
 - **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
   with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
   prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)).
@@ -320,7 +321,7 @@ with a reason, so the next release does not start with "add another format":
 | FLAC | refused, measured | 0.4 % for a quarter of the binary |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
 | FITS | under measurement, not supported | never refused, never examined; the tile-compression convention is specified in [guarantees §4.12](guarantees.md#412-fits--contract-written-not-implemented) and [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| DICOM | not evaluated | a tag dictionary of several thousand entries; nobody has measured whether the refusals or the dictionary cost more |
+| DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
 | PDF | refused, under measurement | no object-level comparison proves a rendering; the narrow `FlateDecode` slice is specified in [guarantees §4.11](guarantees.md#411-pdf--contract-written-not-implemented) and [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) fixes the decision rule in advance |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
 | raw DEFLATE | refused | no signature: recognition would be a guess |

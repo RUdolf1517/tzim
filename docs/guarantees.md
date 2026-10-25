@@ -429,11 +429,13 @@ unchanged.
 **Verification:** decode every frame of both files independently and compare frame metadata and pixel bytes;
 compare all control chunks byte for byte.
 
-**Refused (failed, exit 1):** malformed frame sequences — `fcTL` and `fdAT` number themselves 0, 1, 2, … in
-file order with no gaps, and the number of `fcTL` chunks must be the frame count `acTL` declares. This is
-checked structurally on the input before anything is written; the `png` crate refuses such a file while
-decoding too, but a decode that stops on both sides of a comparison is indistinguishable from the end of the
-frame loop, so the crate is not something this program may rely on for that verdict (#49).
+**Corrupt (failed, exit 1):** malformed frame sequences — `fcTL` and `fdAT` number themselves 0, 1, 2, … in
+file order with no gaps, and the number of `fcTL` chunks must be the frame count `acTL` declares — and a frame
+whose data does not inflate. The sequence is checked structurally on the input before anything is written
+(#49); the `png` crate refuses such a file while decoding too, but a decode that stops on both sides of a
+comparison is indistinguishable from the end of the frame loop, so the crate is not something this program may
+rely on for that verdict. "Corrupt", not "refused": a broken animation is invalid input and exits `1`, while
+this document reserves `refused` for a valid file the run declines to rewrite.
 
 **Verification:** the candidate is re-parsed, every non-`IDAT`/`fdAT` chunk is compared byte for byte, the
 `fdAT` count and sequence numbers are compared, and every frame is decoded from both files and compared for
@@ -1049,6 +1051,84 @@ The measurement and its pre-registered thresholds are in
 [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance): Tier 2 needs a median of 8 % or
 more on at least 15 % of the corpus and ships behind a flag; Tier 1 needs 2 % and ships on by default; if
 neither clears its bar, the format is refused with the numbers on record.
+
+---
+
+### 4.13. DICOM — contract written, not implemented
+
+**Status: not implemented, and not yet justified.** No DICOM code exists and `--list-formats` does not name the
+format. This contract is written for the same reason §4.11 was: it makes the question decidable.
+[dicom-audit](dicom-audit.md) pre-registers the measurement that would admit or refuse each of the three tiers,
+and what follows are the clauses an implementation would have to satisfy if one were. Nothing here is a claim of
+support.
+
+The shape of the opportunity is **not** the one PDF and FITS have, and that difference is the whole reason this
+section exists. A Deflated Explicit VR Little Endian data set is compressed with **raw DEFLATE (RFC 1951)** — no
+zlib header, no Adler-32 — as both pydicom and DCMTK implement it, and as DCMTK states in a comment when the
+alternative is compiled in: a zlib header there *"IS NOT DICOM COMPLIANT"*. So this is the *bare* DEFLATE that
+[formats](formats.md) §5 refuses for want of a signature, and it is readable here only because the File Meta
+Information group names the encoding. The identification is the meta group; the transform is §4.10 without the
+container.
+
+**Tier 1 — recompress a deflated data set.** Inflate the stream after the meta group, deflate it again at a higher
+level, and put a smaller stream back. The data set is **never parsed** and no data dictionary is required.
+
+**Accepted subset, Tier 1** — a file is rewritten only when all of these hold, and is skipped with a reason
+otherwise:
+
+- `DICM` at offset 128;
+- the File Meta Information group parses as Explicit VR Little Endian, contains only defined-length elements, and
+  its `(0002,0000)` group length agrees with where the group ends;
+- `(0002,0010)` is `1.2.840.10008.1.2.1.99`;
+- the bytes after the group are one DEFLATE stream that inflates to completion;
+- nothing follows the stream except, at most, one `0x00` padding byte, and only when the stream length is odd.
+
+**Preserved, byte-identically:** the preamble, `DICM`, and every element of the meta group, including
+`(0002,0000)`, whose value counts the meta group and not the file.
+
+**Allowed to change:** the compressed bytes of the data set, their length, the presence of the single pad byte,
+and the total length of the file.
+
+**Tier 2 — deflate an explicit-VR data set** is specified and gated, not promised: the same file with transfer
+syntax `1.2.840.10008.1.2.1` is walked element by element to prove the encoding is honest, then written as a
+DEFLATE stream under `1.2.840.10008.1.2.1.99`. Every inflated byte is identical to the original data set; what
+changes is the transfer syntax, the meta group length, and the encoding of the whole data set. That is a change a
+reader without the deflated syntax cannot survive at all, so it is **opt-in behind `--dicom-deflate`** in the
+pre-registered rule, whatever its gain. **Tier 3 — translating implicit VR to explicit VR — is refused**: it
+needs a 5 189-entry dictionary (measured, [dicom-audit §0](dicom-audit.md#0-what-is-a-fact-here-and-what-has-to-be-re-read-before-coding))
+to recover the VRs and it re-encodes every element header, which is re-encoding rather than compression.
+
+**Verification** — structure **V3** (this repository's own meta-group reader), content **V1** with `flate2`:
+
+1. both files parse, and every meta-group boundary lands where `(0002,0000)` says;
+2. every meta byte is identical;
+3. Tier 1: both streams inflate, and the two inflated byte sequences are equal;
+4. Tier 2: the candidate inflates to exactly the original data set, byte for byte;
+5. `candidate.len() < input.len()`, and under `--strip-metadata` the rule of [§2.7](#27-g4--metadata-removed-on-request).
+
+**The weakness, stated rather than implied.** The deflated stream carries no checksum, so the original side of a
+Tier 1 comparison is anchored by nothing — the same position TIFF's already-Deflate strips are in (§2.6), and one
+step worse, because there is not even a header to validate. A defect symmetric in `flate2`'s inflate and deflate
+would survive. Tier 2 does not have this weakness: its original side is raw bytes that no decoder touched.
+
+**Refused (skipped, exit 0):** no `DICM`; a meta group that does not parse or whose length disagrees with itself;
+any transfer syntax other than the two above, including all 39 encapsulated ones; encapsulated pixel data in a
+file offered to Tier 2; a stream that does not inflate; trailing bytes that are not a single pad byte, or a pad
+byte when the length is already even; a data set above the byte budget.
+
+**Corrupt (failed, exit 1):** a `DICM` signature followed by a meta group that ends in the middle of an element.
+It leaves the original untouched.
+
+**`--strip-metadata`** removes nothing here: every meta-group element is either identification or the encoding
+itself, and this project does not invent a new transfer syntax to save a few bytes.
+
+**Expected gain:** unmeasured. Estimates are in
+[dicom-audit §3](dicom-audit.md#3-where-the-bytes-are--honest-estimates-not-measurements), and the point of that
+section is that the answer depends almost entirely on what a corpus contains. The measurement and its
+pre-registered thresholds are in [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance):
+Tier 1 needs a median of 2 % and ships on inside a `dicom` feature; Tier 2 needs 15 % and ships behind
+`--dicom-deflate`; the implicit-VR tier needs the corpus to be more than half implicit-VR bytes to justify its
+dictionary; if nothing clears, DICOM is refused with the numbers on record, exactly as FLAC was.
 
 ---
 
