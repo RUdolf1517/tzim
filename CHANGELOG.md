@@ -31,6 +31,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 - The format queue in [docs/roadmap.md](docs/roadmap.md) is now empty, and every remaining candidate is
   recorded with the reason it is not there.
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.9.0/` are pinned to the published v0.9.0 artifacts and their
+  SHA-256, copied from the release notes after the build.
+
 ### Size
 
 - **+8 KiB** (920 → 928 KiB), of which 4 KiB is the zlib handler itself — the cheapest format in the table —
