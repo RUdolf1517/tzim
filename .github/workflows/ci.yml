@@ -107,15 +107,19 @@ jobs:
         run: |
           set -o pipefail
           {
+            # The markers are for the failure report: ci-report.sh publishes the
+            # tail of this log, and the tail has to say which of the two
+            # commands it came from.
+            echo "=== 1/2 compile every test target (--no-run) ==="
             # Every test target has to compile in this configuration, including
             # the ones that cannot run in it. A test file that stops building
             # for `--features png` is a test file that has quietly become
             # all-features-only, and `--no-run` is what notices. This also
             # builds the binary itself, which the integration target links.
             cargo test --no-default-features --features png --no-run --locked
-            # Then the targets whose assertions hold in this build: the library's
-            # unit tests (each handler module is gated, so the PNG ones run), the
-            # verifier tests, and the shipped-document checks.
+            echo "=== 2/2 run the targets whose assertions hold here ==="
+            # The library's unit tests (each handler module is gated, so the PNG
+            # ones run), the verifier tests, and the shipped-document checks.
             cargo test --no-default-features --features png --locked \
               --lib --test verification --test packaging
           } 2>&1 | tee /tmp/tzim-minimal.log

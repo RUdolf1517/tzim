@@ -450,6 +450,11 @@ mod tests {
         assert_eq!(args.paths, vec![PathBuf::from("--weird-name.png")]);
     }
 
+    /// `--formats` refuses a name this build has no handler for, which is what
+    /// `Allow::named` is for, so this test needs the handler it names: in the
+    /// `png`-only configuration (#68) `jpeg` is not compiled in and the same
+    /// command line is a usage error by design.
+    #[cfg(feature = "jpeg")]
     #[test]
     fn formats_flag_narrows_and_enables_jpeg() {
         let args = parse_ok(&["--formats", "jpeg,png", "x.jpg"]);
