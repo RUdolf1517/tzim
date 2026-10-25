@@ -230,6 +230,123 @@ jobs:
         shell: bash
         run: exit 1
 
+  # What a release does that a test cannot: it packages. `cargo package` builds
+  # the crate from the tarball it would upload to crates.io, which is the only
+  # way to find out that a file is missing from it, that the readme path is
+  # wrong, or that the crate does not build outside a git checkout.
+  package:
+    name: cargo package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Package, then build from the package
+        id: package
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo package --locked 2>&1 | tee /tmp/tzim-package.log
+          ls -l target/package/
+
+      - name: Publish failure log
+        if: steps.package.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-package.log package
+
+      - name: Fail the job
+        if: steps.package.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  # The installer is the first thing most users run, and it downloads from a
+  # release that already exists — so the network path, the checksum lookup and
+  # the archive layout are all tested against the published artifacts rather
+  # than against a local build.
+  installer:
+    name: install.sh (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the published release into a temporary directory
+        id: install
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          dir="${RUNNER_TEMP}/tzim-install"
+          rm -rf "$dir"
+          # The latest release, not this branch's build: the point is that the
+          # script and the artifacts agree today.
+          TZIM_INSTALL_DIR="$dir" sh ./install.sh 2>&1 | tee /tmp/tzim-install.log
+          "$dir/tzim" --version | tee -a /tmp/tzim-install.log
+          "$dir/tzim" --list-formats | tee -a /tmp/tzim-install.log
+
+      - name: Refuse a corrupted download
+        id: corrupt
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          # A mirror that serves the wrong bytes has to be caught, not installed.
+          # The asset is downloaded here, one byte is appended, and the doctored
+          # copy is served next to the release's real SHA256SUMS: the installer
+          # must abort, and must leave nothing behind.
+          work="${RUNNER_TEMP}/tzim-corrupt"
+          rm -rf "$work"
+          mkdir -p "$work/serve" "$work/prefix"
+
+          case "$(uname -s)/$(uname -m)" in
+            Linux/x86_64) asset=tzim-x86_64-unknown-linux-musl.tar.gz ;;
+            Darwin/arm64) asset=tzim-aarch64-apple-darwin.tar.gz ;;
+            *) echo "no asset name for this runner"; exit 1 ;;
+          esac
+
+          base="https://github.com/RUdolf1517/tzim/releases/latest/download"
+          curl -fsSL "$base/$asset" -o "$work/serve/$asset"
+          curl -fsSL "$base/SHA256SUMS" -o "$work/serve/SHA256SUMS"
+          printf 'x' >> "$work/serve/$asset"
+
+          (cd "$work/serve" && python3 -m http.server 8123 >/dev/null 2>&1) &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+          sleep 2
+
+          if TZIM_BASE_URL="http://127.0.0.1:8123" TZIM_INSTALL_DIR="$work/prefix" \
+              sh ./install.sh > "$work/log" 2>&1; then
+            echo "a corrupted archive was installed" >&2
+            cat "$work/log" >&2
+            exit 1
+          fi
+          cat "$work/log"
+          grep -q "SHA-256 mismatch" "$work/log"
+          test ! -e "$work/prefix/tzim"
+
+      - name: Publish failure log
+        if: steps.install.outcome == 'failure' || steps.corrupt.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            cat /tmp/tzim-install.log 2>/dev/null
+            cat "${RUNNER_TEMP}/tzim-corrupt/log" 2>/dev/null
+          } > /tmp/tzim-installer.log
+          bash .github/scripts/ci-report.sh /tmp/tzim-installer.log installer
+
+      - name: Fail the job
+        if: steps.install.outcome == 'failure' || steps.corrupt.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
   size:
     name: binary size
     runs-on: ubuntu-latest

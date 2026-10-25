@@ -9,6 +9,56 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.11.0] - 2026-10-25 — distribution
+
+No handler changed and no file is treated differently. This release is about the three minutes between
+`curl` and a working tool: what the installer checks, what the packages contain, and which architectures
+exist at all.
+
+### Added
+
+- **A Linux ARM64 binary** (`aarch64-unknown-linux-musl`), cross-linked on an x86_64 runner with the
+  toolchain's own `rust-lld` and the self-contained musl libc that ships with `rustc`, so no cross C
+  toolchain is involved. ARM64 servers and single-board computers now install a binary instead of compiling
+  one, and `tzim_arm64.deb` / `tzim.aarch64.rpm` exist next to the x86_64 packages.
+- **A manual page** (`man/tzim.1`) and **completion for bash, zsh and fish** (`completions/`), installed by
+  the `.deb`, the `.rpm` and the Homebrew formula and shipped inside the POSIX archives. `man tzim` and tab
+  completion now work after a package install.
+- **`TZIM_BASE_URL`** in `install.sh`, for a mirror. The checksum check applies there too.
+- **A `package` CI job**: `cargo package --locked`, then a build from the packaged tarball — the crate as
+  crates.io would receive it, so `cargo install tzim` is one `cargo publish` away rather than a rewrite.
+- **An `installer` CI job**: runs `install.sh` against the latest published release on Linux and macOS, then
+  serves a doctored archive with one byte appended next to the release's real `SHA256SUMS` and asserts that
+  the install aborts, says `SHA-256 mismatch`, and leaves nothing behind.
+
+### Changed
+
+- **`install.sh` verifies what it downloads.** The archive is checked against `SHA256SUMS` before it is
+  unpacked; a mismatch prints both hashes and exits instead of falling back to a source build that would hide
+  it. The installed binary is run once before success is reported, and with `TZIM_VERSION` set the reported
+  version has to match. A `curl | sh` installer that trusts the network more than the project's own checksums
+  is a strange thing to ship next to this program.
+- **The release archives carry the man page and the completions** next to the binary, so the formula, the
+  packages and the repository install the same text.
+- **`install.sh` covers Linux ARM64 and Intel macOS**, and names every platform the release matrix builds.
+- **`tests/packaging.rs`** fails when an option in `--help` is missing from the man page or any completion,
+  when the man page's version drifts from the crate, or when a release target is not fetchable by the
+  installer.
+- The `.deb` and `.rpm` description now lists the formats the binary actually has: it had been stuck at the
+  v0.4 set, without TIFF and without zlib.
+
+### Size
+
+- **+0 bytes.** 1 049 440 bytes (1 024 KiB), the same number as v0.10.0: this release adds packaging, a
+  manual page and an architecture that is built from the same source. One feature row moved by 4 KiB because
+  the linker crossed a page boundary, which is recorded in [size-budget §3](docs/size-budget.md#3-feature-matrix)
+  rather than smoothed over.
+
+### Fixed
+
+- **`--strip-metadata` was accepted by the parser and missing from `--help`** since v0.6. It is documented
+  now, and the completions and the man page list it.
+
 ## [0.10.0] - 2026-10-25 — the claims around the code
 
 No handler changed and no file is treated differently: the corpus writes the same total, and every contract

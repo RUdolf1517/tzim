@@ -36,7 +36,7 @@ cargo fmt --check
 
 If your environment cannot run `cargo` (this project is partly written in one that cannot), the `fmt` and
 `lockfile` jobs in CI will run `cargo fmt` and resolve `Cargo.lock` for you and commit the result to your
-branch — see [docs/testing.md §4.1](docs/testing.md#41-the-two-jobs-that-write-to-the-branch).
+branch — see [docs/testing.md §4.2](docs/testing.md#42-the-two-jobs-that-write-to-the-branch).
 
 Optional tooling:
 

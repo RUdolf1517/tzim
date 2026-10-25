@@ -35,6 +35,16 @@ jobs:
           - name: linux-x86_64
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+          # ARM64 servers and single-board computers. Cross-compiled on an
+          # x86_64 runner with the self-contained musl libc that ships with
+          # rustc and the `rust-lld` linker that ships with the toolchain, so
+          # there is no cross C toolchain to install and nothing to build on a
+          # developer machine. `cross: true` tells the smoke test that the
+          # binary cannot run here.
+          - name: linux-aarch64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            cross: true
           - name: macos-aarch64
             os: macos-latest
             target: aarch64-apple-darwin
@@ -61,11 +71,20 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
+        shell: bash
         # Default features: the fuzz entry points are not part of a release.
         # `--locked` because the bytes that are signed and published must come
         # from the dependency set that was reviewed, not from whatever resolves
         # on the day of the release.
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            # `rust-lld` is part of the toolchain and links aarch64; the musl
+            # crt objects and libc come from rustc's self-contained set.
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld
+            export RUSTFLAGS="-C link-self-contained=yes"
+          fi
+          cargo build --release --locked --target "${{ matrix.target }}"
 
       - name: Smoke-test the binary
         shell: bash
@@ -73,6 +92,23 @@ jobs:
           set -euo pipefail
           bin="target/${{ matrix.target }}/release/tzim"
           if [ -f "${bin}.exe" ]; then bin="${bin}.exe"; fi
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            # Built for another architecture: it cannot execute here, so assert
+            # what the file *is* rather than pretending to have run it. The
+            # first real execution happens in the `interop` style steps below,
+            # which check the archives rather than the binaries.
+            kind="$(file -b "$bin")"
+            echo "$kind"
+            case "$kind" in
+              *"ARM aarch64"*) ;;
+              *) echo "not an aarch64 binary" >&2; exit 1 ;;
+            esac
+            case "$kind" in
+              *"statically linked"* | *"static-pie linked"*) ;;
+              *) echo "not statically linked" >&2; exit 1 ;;
+            esac
+            exit 0
+          fi
           "$bin" --version
           # Tags before 0.5 only know the `formats` verb.
           "$bin" --list-formats || "$bin" formats
@@ -89,13 +125,22 @@ jobs:
 
           if [ -f "${bin}.exe" ]; then
             cp "${bin}.exe" dist/tzim.exe
-            (cd dist && 7z a "../${name}.zip" tzim.exe > /dev/null)
+            cp LICENSE dist/
+            (cd dist && 7z a "../${name}.zip" tzim.exe LICENSE > /dev/null)
             asset="${name}.zip"
             rm -rf dist
           else
+            # The archive is a small distribution, not just a binary: the manual
+            # page and the completions are installed by the formula and by the
+            # Linux packages, and shipping them here is what makes those two
+            # point at the same text the repository has.
             cp "$bin" dist/tzim
             chmod +x dist/tzim
-            (cd dist && tar czf "../${name}.tar.gz" tzim)
+            cp LICENSE dist/
+            mkdir -p dist/man dist/completions
+            cp man/tzim.1 dist/man/
+            cp completions/tzim.bash completions/_tzim completions/tzim.fish dist/completions/
+            (cd dist && tar czf "../${name}.tar.gz" tzim LICENSE man completions)
             asset="${name}.tar.gz"
             rm -rf dist
           fi

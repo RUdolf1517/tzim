@@ -39,8 +39,20 @@ class Tzim < Formula
     end
   end
 
+  # Archives from v0.11.0 onwards ship the manual page and the three
+  # completions next to the binary, so the formula installs the same
+  # documentation the .deb, the .rpm and the repository carry. The `File.exist?`
+  # checks are for the pinned version only: while this formula points at an
+  # older archive, those files are simply not there yet, and a formula that
+  # refuses to install is worse than one without a man page.
   def install
     bin.install "tzim"
+    man1.install "man/tzim.1" if File.exist?("man/tzim.1")
+    if File.exist?("completions/tzim.bash")
+      bash_completion.install "completions/tzim.bash" => "tzim"
+      zsh_completion.install "completions/_tzim"
+      fish_completion.install "completions/tzim.fish"
+    end
   end
 
   def caveats
