@@ -114,6 +114,8 @@ every serious optimizer has it and users otherwise reach for a tool that removes
 | ZIP family | archive comment, entry comments, DOS timestamps | names, extra fields (some are structure: ZIP64, the Unicode path), attributes, order, method, CRCs |
 | JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop/IPTC), `COM` | `APP0` (JFIF density), `APP2` (ICC), `APP14` (Adobe colour transform), every other `APPn`, all quantization and Huffman tables, every DCT coefficient |
 | ICO / CUR | nothing of its own; embedded PNGs are stripped under the PNG rule | the directory, bitmap entries, every PNG chunk in the keep list above |
+| TIFF | the documentation tags listed in [§4.8](#48-tiff-classic-baseline-strips--v07) | colour, geometry, `Orientation`, ICC, strips, unknown tags |
+| FLAC (when implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 
 Rules that hold in every format:
 
@@ -508,12 +510,84 @@ does not match `RowsPerStrip` × row bytes for the last strip — all leave the 
 nothing on LZW (refused). This is the honest range: an uncompressed 8-bit RGB scan shrinks by roughly the
 entropy of its content, while a TIFF from a modern scanner is often already Deflate- or LZW-compressed.
 
-### 4.9. FLAC — research, no contract yet
+### 4.9. FLAC — contract written, not implemented
 
-No contract exists for FLAC, therefore **no support is claimed and no code will be written** until a
-contract and its verification method are specified here. The open question is whether the stream MD5, the
-seek table and every metadata block can be preserved across a re-encode without trusting the encoder that
-produced them.
+**Status: contract, no code.** The audit behind it is [flac-audit.md](flac-audit.md); the implementation
+waits for the dependency decision recorded there (§7). Nothing in this section is a claim that the binary
+supports FLAC: `docs/formats.md` says `contract written, not implemented`, and `--list-formats` will name
+the format only when the handler exists and its tests pass.
+
+**Transformation.** Re-encode the audio frames with a better encoder. The decoded samples are identical;
+the frames, their lengths and the byte offsets that point at them are not, because a FLAC encoder is free
+to choose the block size, the prediction order, the Rice partitioning and the stereo mode, and a different
+encoder chooses differently.
+
+**Accepted subset** — a file is rewritten only when all of these hold, and is skipped with a reason
+otherwise:
+
+- the stream starts with `fLaC` at offset 0. A leading ID3v2 tag is refused, not skipped over: it is
+  outside the format, and a rewriter that walks past it is one offset bug away from damaging it;
+- `STREAMINFO` is present, first, and exactly 34 bytes long, with a sample rate of at least 1 Hz, 1–8
+  channels, a bit depth of 8, 16 or 24, and a non-zero `total samples`. A zero `total samples` means "unknown
+  length" (a stream, not a file) and is refused;
+- every metadata block type is one of the seven defined types (`0`–`6`). A reserved type (`7`–`126`) or the
+  forbidden `127` is refused: an unknown block cannot be classified as metadata or as structure;
+- block lengths add up to a position that lies inside the file, and the frames that follow decode;
+- the audio is not encrypted or otherwise transformed outside the format.
+
+LZW has a counterpart here: there is no "refuse the compression method" case, because FLAC has exactly one
+entropy coding — but there is an equivalent, and it is the encoder. If the encoder cannot express a
+combination the input uses (a block size outside its range, a bit depth it does not implement), that is a
+refusal with the reason, never a conversion.
+
+**Preserved:** the marker; every metadata block, byte for byte, in its original order — `PADDING`
+(including its length), `APPLICATION`, `VORBIS_COMMENT`, `CUESHEET` and `PICTURE`; the `STREAMINFO` fields
+that describe the audio: sample rate, channel count, bit depth, total samples, and the MD5 of the unencoded
+audio.
+
+**Allowed to change:** every frame; the frame headers' coded numbers and CRCs; `STREAMINFO`'s min/max block
+size and min/max frame size, which describe the frames and must be recomputed correctly; each `SEEKTABLE`
+point's byte offset, and only that — its sample number and its frame length are recomputed from the same
+sample position, and a point that cannot be resolved makes the file a refusal; the file length.
+
+**Verification.** The candidate is decoded with a decoder that is not the encoder (`claxon`, against
+`flacenc`; see [§2.6](#26-verification-independence)), and:
+
+1. both files decode to the same sample rate, channel count and bit depth;
+2. the decoded sample streams are compared exactly — byte equality, no tolerance, no resampling. The input's
+   frames are decoded through the same path, so this also proves the *input* still decodes identically;
+3. the MD5 of the candidate's decoded audio equals the MD5 in the candidate's `STREAMINFO` and the MD5 in
+   the input's `STREAMINFO`. When the input stores a zero MD5 ("not computed", which is legal), clause 2
+   carries the proof alone and the candidate's own MD5 must still be correct;
+4. every metadata block other than `STREAMINFO` and `SEEKTABLE` is byte-identical, and appears in the same
+   order and at the same length;
+5. `STREAMINFO`'s sample rate, channel count, bit depth, total samples and MD5 are unchanged; its min/max
+   block size and min/max frame size match the frames actually written;
+6. every `SEEKTABLE` point resolves to the frame that contains its sample number, and its frame length is
+   that frame's;
+7. the coded frame numbers cover the whole stream: no gap, no overlap, no frame beyond `total samples`;
+8. the candidate is strictly smaller than the input.
+
+Clause 2 is what makes FLAC the strongest contract in this document: the comparison is between integers,
+and the only way to pass it with damaged audio is to damage the reference the same way.
+
+**Refused (skipped, exit 0):** a leading ID3v2 tag, a reserved or forbidden metadata block type, a zero
+sample rate or zero total samples, a bit depth the encoder does not implement, more than 8 channels, a
+`SEEKTABLE` point that does not resolve, a `STREAMINFO` that disagrees with the frames it precedes. The file
+is valid and is left untouched.
+
+**Corrupt (failed, exit 1):** a truncated stream, a frame CRC that does not match, a metadata length that
+runs past the end of the file, a decoder error in the input. All leave the original untouched.
+
+**`--strip-metadata`** removes `VORBIS_COMMENT`, `PICTURE` and `PADDING` and keeps `STREAMINFO`,
+`SEEKTABLE`, `CUESHEET` and `APPLICATION`. With the flag the acceptance rule becomes "never larger"
+([§2.7](#27-g4--metadata-removed-on-request)); without it, `PADDING` is preserved byte for byte and the
+rule is "strictly smaller".
+
+**Expected gain:** 0–3 %, and 0 % is the common answer. A file from `flac -8` is already what the format
+allows; files from older settings, hardware recorders or low-effort rips have 1–3 % left. This contract does
+not promise more than the format can give, and the tool's refusal to write a larger file is what protects
+the user from the rest.
 
 ---
 

@@ -186,16 +186,28 @@ build behaves differently.
 **Why the version moves**: a new format is observable. The binary grows by roughly 10 KiB, measured in
 [size-budget](size-budget.md) like every other handler.
 
-### v0.8+ — research queue
+### v0.8 — the terminal, and a contract for FLAC — **implemented**
 
-Each of these requires a contract written *before* implementation:
+Nothing here changes a byte of output:
 
-| Candidate | Open question |
-| --- | --- |
-| FLAC | Can metadata blocks, seek tables and the stream MD5 be preserved across re-encoding? |
-| WOFF2 | Is Brotli re-encoding verifiable without the encoder itself? |
-| zlib/raw DEFLATE files | Small addition, unclear real-world value |
-| PDF | Only if a verifiable object-level comparison becomes possible; currently **no** |
+- colour and a progress line, both off unless a terminal is attached, with `--color`, `--no-color`,
+  `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §9](cli.md#9-colour-and-progress));
+- clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
+  stdout pipe that exits quietly instead of aborting ([cli §10](cli.md#10-conformance-with-cli-conventions));
+- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)
+  and the [audit](flac-audit.md) behind it.
+
+### v0.9+ — research queue
+
+A format is added only after its contract is written; these are the candidates left, in the order the
+audit in [flac-audit §7](flac-audit.md#7-decision) recommends:
+
+| Candidate | State | Blocker |
+| --- | --- | --- |
+| FLAC | contract written | two crates and a hash, none of them approved yet |
+| zlib / raw DEFLATE | not started, **no new dependency** | only the decision to do it |
+| WOFF2 | **recommended for removal** | Brotli re-encoding cannot be verified without the encoder |
+| PDF | **no** | no verifiable object-level comparison |
 
 ---
 

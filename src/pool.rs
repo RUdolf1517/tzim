@@ -10,9 +10,20 @@ use crate::report::{Outcome, Status};
 /// `--fail-fast` and verification failures stop new files from starting; files
 /// already in flight are allowed to finish, because aborting them mid-write is
 /// exactly the behaviour this project refuses to have.
-pub fn run<F>(files: &[PathBuf], jobs: usize, fail_fast: bool, work: F) -> Vec<Outcome>
+///
+/// `on_done` is called once per finished file, from whichever thread finished it.
+/// It exists for the progress line and must stay cheap and lock-free; the order
+/// of its calls is not the order of the results.
+pub fn run<F, G>(
+    files: &[PathBuf],
+    jobs: usize,
+    fail_fast: bool,
+    work: F,
+    on_done: G,
+) -> Vec<Outcome>
 where
     F: Fn(&Path) -> Outcome + Sync,
+    G: Fn(&Outcome) + Sync,
 {
     let total = files.len();
     if total == 0 {
@@ -24,11 +35,14 @@ where
         let mut aborted = false;
         for path in files {
             if aborted {
-                results.push(aborted_outcome(path));
+                let outcome = aborted_outcome(path);
+                on_done(&outcome);
+                results.push(outcome);
                 continue;
             }
             let outcome = work(path);
             aborted = should_abort(&outcome, fail_fast);
+            on_done(&outcome);
             results.push(outcome);
         }
         return results;
@@ -45,6 +59,7 @@ where
             let next = &next;
             let stop = &stop;
             let work = &work;
+            let on_done = &on_done;
             scope.spawn(move || loop {
                 if stop.load(Ordering::Relaxed) {
                     return;
@@ -54,6 +69,7 @@ where
                     return;
                 }
                 let outcome = work(&files[index]);
+                on_done(&outcome);
                 if should_abort(&outcome, fail_fast) {
                     stop.store(true, Ordering::Relaxed);
                 }
@@ -103,9 +119,13 @@ mod tests {
     #[test]
     fn preserves_discovery_order() {
         let list = files(20);
-        let out = run(&list, 4, false, |p| {
-            Outcome::new(p.to_path_buf(), Status::AlreadyOptimal, 1)
-        });
+        let out = run(
+            &list,
+            4,
+            false,
+            |p| Outcome::new(p.to_path_buf(), Status::AlreadyOptimal, 1),
+            |_| {},
+        );
         assert_eq!(out.len(), 20);
         for (i, o) in out.iter().enumerate() {
             assert_eq!(o.path, list[i]);
@@ -115,20 +135,48 @@ mod tests {
     #[test]
     fn sequential_mode_matches() {
         let list = files(5);
-        let out = run(&list, 1, false, |p| {
-            Outcome::new(p.to_path_buf(), Status::AlreadyOptimal, 1)
-        });
+        let out = run(
+            &list,
+            1,
+            false,
+            |p| Outcome::new(p.to_path_buf(), Status::AlreadyOptimal, 1),
+            |_| {},
+        );
         assert_eq!(out.len(), 5);
+    }
+
+    #[test]
+    fn every_finished_file_is_announced_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let list = files(20);
+        let seen = AtomicUsize::new(0);
+        let out = run(
+            &list,
+            4,
+            false,
+            |p| Outcome::new(p.to_path_buf(), Status::AlreadyOptimal, 1),
+            |_| {
+                seen.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+        assert_eq!(out.len(), 20);
+        assert_eq!(seen.load(Ordering::Relaxed), 20);
     }
 
     #[test]
     fn fail_fast_stops_new_work() {
         let list = files(8);
-        let out = run(&list, 1, true, |p| {
-            let mut o = Outcome::new(p.to_path_buf(), Status::Failed, 1);
-            o.error = Some(crate::error::Error::parse("boom"));
-            o
-        });
+        let out = run(
+            &list,
+            1,
+            true,
+            |p| {
+                let mut o = Outcome::new(p.to_path_buf(), Status::Failed, 1);
+                o.error = Some(crate::error::Error::parse("boom"));
+                o
+            },
+            |_| {},
+        );
         // The first file fails; the rest are reported as not processed.
         assert_eq!(out[0].status, Status::Failed);
         assert!(out[1..].iter().all(|o| o.status == Status::Skipped));

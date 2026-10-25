@@ -42,7 +42,7 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
 | JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
 | TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
-| FLAC | v0.8+ | research | Lossless re-encode, all metadata blocks preserved | 0–3 % | high | not written yet |
+| FLAC | v0.8+ | **contract written, not implemented** | Lossless re-encode, every metadata block preserved; frames and seek offsets are the only things that move | 0–3 %, and 0 % is the common answer | high | [§4.9](guarantees.md#49-flac--contract-written-not-implemented) |
 
 ### ZIP-based formats covered by the ZIP handler
 

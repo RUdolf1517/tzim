@@ -1740,3 +1740,160 @@ fn tiff_is_skipped_when_the_format_is_not_enabled() {
     assert!(stdout.contains("skipped"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
+
+// ---------------------------------------------------------------------------
+// Terminal behaviour: colour, progress, closed pipes, usage errors.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn colour_is_absent_in_a_pipe_and_present_when_forced() {
+    let ws = Workspace::new("colour");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    ws.write("a.png", &build_png(&spec));
+
+    // Piped stdout is not a terminal, so the default is plain text — even
+    // though the same bytes would be coloured in a real terminal.
+    let (code, plain, _) = run(&["a.png"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(!plain.contains('\u{1b}'), "a pipe must stay clean: {plain:?}");
+
+    let (code, forced, _) = run(&["--color=always", "--dry-run", "a.png"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(forced.contains("\u{1b}["), "--color=always must colour: {forced:?}");
+
+    let (code, never, _) = run(&["--color=never", "--dry-run", "a.png"], &ws.path);
+    assert_eq!(code, 0);
+    assert!(!never.contains('\u{1b}'), "--color=never must not colour: {never:?}");
+
+    // The escape sequences must not change the text: stripping them gives back
+    // exactly what --color=never printed. Only the first line is compared,
+    // because the summary carries the elapsed time, which differs between runs.
+    assert_eq!(
+        strip_ansi(forced.lines().next().unwrap()),
+        never.lines().next().unwrap()
+    );
+}
+
+#[test]
+fn json_is_never_coloured() {
+    let ws = Workspace::new("colour-json");
+    let spec = PngSpec {
+        width: 32,
+        height: 32,
+        level: 1,
+        ..Default::default()
+    };
+    ws.write("a.png", &build_png(&spec));
+
+    let (code, stdout, stderr) = run(&["--json", "--color=always", "a.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.contains('\u{1b}'), "JSON carried an escape: {stdout:?}");
+    assert!(stdout.lines().last().unwrap().contains("\"type\":\"summary\""));
+}
+
+#[test]
+fn a_closed_pipe_is_not_a_crash() {
+    let ws = Workspace::new("closed-pipe");
+    let spec = PngSpec {
+        width: 32,
+        height: 32,
+        level: 1,
+        ..Default::default()
+    };
+    for i in 0..40 {
+        ws.write(&format!("f{i:02}.png"), &build_png(&spec));
+    }
+
+    // The reader disappears before the writer says anything: the shape of
+    // `tzim . -r | head -1`. Writing must fail quietly, not panic.
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_tzim"))
+        .args(["-r", "."])
+        .current_dir(&ws.path)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    let _ = child.stdout.take();
+    let output = child.wait_with_output().expect("wait");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert!(!stderr.contains("failed printing"), "{stderr}");
+}
+
+#[test]
+fn usage_errors_show_the_usage_line() {
+    let ws = Workspace::new("usage-line");
+    let (code, stdout, stderr) = run(&["--nope"], &ws.path);
+    assert_eq!(code, 2);
+    assert!(stdout.is_empty(), "usage errors belong on stderr: {stdout:?}");
+    assert!(stderr.contains("usage: tzim [OPTIONS] <PATH>..."), "{stderr}");
+    assert!(stderr.contains("--nope"), "{stderr}");
+    assert!(stderr.contains("--help"), "{stderr}");
+}
+
+#[test]
+fn clustered_flags_work_end_to_end() {
+    let ws = Workspace::new("cluster");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    ws.write("sub/deep.png", &original);
+
+    // `-nr` == `-n -r`: a recursive dry run, nothing written.
+    let (code, stdout, stderr) = run(&["-nr", "sub"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("would optimize"), "{stdout}");
+    assert_eq!(std::fs::read(ws.file("sub/deep.png")).unwrap(), original);
+
+    // `-j2` == `-j 2`.
+    let (code, _, stderr) = run(&["-j2", "-n", "sub"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+}
+
+#[test]
+fn no_progress_flag_is_accepted_and_silent() {
+    let ws = Workspace::new("progress-off");
+    let spec = PngSpec {
+        width: 32,
+        height: 32,
+        level: 1,
+        ..Default::default()
+    };
+    ws.write("a.png", &build_png(&spec));
+
+    let (code, stdout, stderr) = run(&["--no-progress", "--dry-run", "a.png"], &ws.path);
+    assert_eq!(code, 0);
+    // stderr is a pipe here, so no animation either way; the flag must at least
+    // not add anything of its own.
+    assert!(!stderr.contains('\r'), "{stderr:?}");
+    assert!(!stdout.contains('\r'), "{stdout:?}");
+}
+
+/// Removes SGR sequences so two renderings can be compared.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip "[" and everything up to the final "m".
+            for next in chars.by_ref() {
+                if next == 'm' {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}

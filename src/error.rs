@@ -75,6 +75,12 @@ impl Error {
         matches!(self, Error::Verify(_))
     }
 
+    /// A usage error is answered with the usage line, not with a stack of
+    /// advice: it is the one class of failure the user can fix by retyping.
+    pub fn is_usage(&self) -> bool {
+        matches!(self, Error::Usage(_))
+    }
+
     pub fn parse(msg: impl Into<String>) -> Self {
         Error::Parse(msg.into())
     }

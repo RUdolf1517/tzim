@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::error::{Error, Result};
 use crate::formats::Allow;
+use crate::style::Choice as ColorChoice;
 
 /// Parsed command line.
 #[derive(Debug)]
@@ -40,6 +41,8 @@ pub struct Args {
     pub allow_hardlinks: bool,
     pub allow_root_ownership_change: bool,
     pub no_fsync: bool,
+    pub color: ColorChoice,
+    pub no_progress: bool,
 }
 
 pub const DEFAULT_MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
@@ -73,6 +76,8 @@ impl Default for Args {
             allow_hardlinks: false,
             allow_root_ownership_change: false,
             no_fsync: false,
+            color: ColorChoice::Auto,
+            no_progress: false,
         }
     }
 }
@@ -101,6 +106,9 @@ OPTIONS:
     -j, --jobs <N>             maximum files processed at once (default: min(cores, 4))
         --json                 newline-delimited JSON on stdout
     -q, --quiet                suppress per-file output
+        --color <WHEN>         colour the report: auto (default), always, never
+        --no-color             same as `--color=never`
+        --no-progress          no progress line on stderr
         --fail-fast            stop after the first failed file
         --include <EXT,...>    only files with these extensions
         --exclude <EXT,...>    skip files with these extensions
@@ -112,8 +120,8 @@ OPTIONS:
         --max-ratio <N>        refuse archives with a ratio above N:1 (default: 1000)
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
-        --formats <LIST>       only process these formats: png, gzip, zip, ico, jpeg
-                               JPEG is off by default: name it here to enable it
+        --formats <LIST>       only process these formats: png, gzip, zip, ico,
+                               jpeg, tiff; JPEG is off unless named here
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link
@@ -134,6 +142,16 @@ EXIT CODES:
     2  invalid usage; nothing was processed
     3  fatal error; the run could not be completed
     4  verification failure; the affected file was not replaced
+
+COLOUR:
+    On only when the stream is a terminal. `NO_COLOR` (non-empty), `CLICOLOR=0`
+    and `TERM=dumb` turn it off; `CLICOLOR_FORCE` turns it on. --json is never
+    coloured. The progress line follows the same rules and needs a terminal on
+    stderr.
+
+COMMAND-LINE CONVENTIONS:
+    Options may appear before, between or after paths; `-rq` and `-j4` are
+    accepted; `--` ends option parsing. Unknown options exit 2 and print usage.
 
 Tzim never removes metadata, never re-encodes lossily and never converts
 formats. If the result is not strictly smaller, the original is left alone.
@@ -208,15 +226,17 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "--allow-hardlinks" => out.allow_hardlinks = true,
             "--allow-root-ownership-change" => out.allow_root_ownership_change = true,
             "--no-fsync" => out.no_fsync = true,
-            "-j" | "--jobs" => {
+            "-j" | "--jobs" => out.jobs = parse_jobs(&take_value(inline)?)?,
+            "--color" => {
                 let v = take_value(inline)?;
-                out.jobs = v
-                    .parse::<usize>()
-                    .map_err(|_| Error::usage(format!("`--jobs` expects a number, got `{v}`")))?;
-                if out.jobs == 0 {
-                    return Err(Error::usage("`--jobs` must be at least 1"));
-                }
+                out.color = ColorChoice::parse(&v).ok_or_else(|| {
+                    Error::usage(format!(
+                        "`--color` expects auto, always or never, got `{v}`"
+                    ))
+                })?;
             }
+            "--no-color" => out.color = ColorChoice::Never,
+            "--no-progress" => out.no_progress = true,
             "--include" => {
                 let v = take_value(inline)?;
                 out.include.extend(split_list(&v));
@@ -254,7 +274,43 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "-i" | "--info" => return Ok(Command::Info),
             "--list-formats" => return Ok(Command::Formats),
             "--check-deps" => return Ok(Command::CheckDeps),
-            _ => return Err(Error::usage(format!("unknown option `{name}`"))),
+            _ => {
+                // Clustered short flags (`-rq`) and attached values (`-j4`), the
+                // way getopt has always allowed them. A long option never
+                // reaches this arm: `--color=never` was already split above.
+                if name.len() > 2 && !name.starts_with("--") {
+                    let letters: Vec<char> = name[1..].chars().collect();
+                    let mut index = 0;
+                    while index < letters.len() {
+                        match letters[index] {
+                            'r' => out.recursive = true,
+                            'n' => out.dry_run = true,
+                            'q' => out.quiet = true,
+                            'i' => return Ok(Command::Info),
+                            'h' => return Ok(Command::Help),
+                            'V' => return Ok(Command::Version),
+                            'j' => {
+                                let rest: String = letters[index + 1..].iter().collect();
+                                let value = if rest.is_empty() {
+                                    take_value(inline.clone())?
+                                } else {
+                                    rest
+                                };
+                                out.jobs = parse_jobs(&value)?;
+                                // An option that takes a value consumes the rest
+                                // of the cluster: `-j4x` is not `-j 4 -x`.
+                                break;
+                            }
+                            other => {
+                                return Err(Error::usage(format!("unknown option `-{other}`")))
+                            }
+                        }
+                        index += 1;
+                    }
+                    continue;
+                }
+                return Err(Error::usage(format!("unknown option `{name}`")));
+            }
         }
     }
 
@@ -266,6 +322,16 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
     }
 
     Ok(Command::Optimize(out))
+}
+
+fn parse_jobs(value: &str) -> Result<usize> {
+    let jobs = value
+        .parse::<usize>()
+        .map_err(|_| Error::usage(format!("`--jobs` expects a number, got `{value}`")))?;
+    if jobs == 0 {
+        return Err(Error::usage("`--jobs` must be at least 1"));
+    }
+    Ok(jobs)
 }
 
 fn parse_u64(name: &str, value: &str) -> Result<u64> {
@@ -372,6 +438,55 @@ mod tests {
     fn rejects_zero_jobs() {
         let args: Vec<OsString> = ["--jobs", "0", "x"].iter().map(OsString::from).collect();
         assert!(parse(args.into_iter()).is_err());
+    }
+
+    #[test]
+    fn clustered_short_flags_expand() {
+        let args = parse_ok(&["-rq", "dir"]);
+        assert!(args.recursive && args.quiet);
+        let args = parse_ok(&["-rn", "dir"]);
+        assert!(args.recursive && args.dry_run);
+        // Order inside the cluster does not matter.
+        let args = parse_ok(&["-qr", "dir"]);
+        assert!(args.recursive && args.quiet);
+    }
+
+    #[test]
+    fn attached_short_values_expand() {
+        assert_eq!(parse_ok(&["-j4", "x"]).jobs, 4);
+        assert_eq!(parse_ok(&["-j", "4", "x"]).jobs, 4);
+        assert_eq!(parse_ok(&["-j=4", "x"]).jobs, 4);
+        // A value consumes the rest of the cluster: `-j4x` is not `-j4 -x`.
+        let args: Vec<OsString> = ["-j4x", "x"].iter().map(OsString::from).collect();
+        assert!(parse(args.into_iter()).is_err());
+    }
+
+    #[test]
+    fn an_unknown_letter_in_a_cluster_is_named() {
+        let args: Vec<OsString> = ["-rz", "dir"].iter().map(OsString::from).collect();
+        match parse(args.into_iter()) {
+            Err(Error::Usage(message)) => assert!(message.contains("-z"), "{message}"),
+            other => panic!("expected a usage error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn colour_is_a_three_word_choice() {
+        assert_eq!(parse_ok(&["x"]).color, ColorChoice::Auto);
+        assert_eq!(parse_ok(&["--color=always", "x"]).color, ColorChoice::Always);
+        assert_eq!(parse_ok(&["--color", "never", "x"]).color, ColorChoice::Never);
+        assert_eq!(parse_ok(&["--no-color", "x"]).color, ColorChoice::Never);
+        let args: Vec<OsString> = ["--color=sometimes", "x"].iter().map(OsString::from).collect();
+        match parse(args.into_iter()) {
+            Err(Error::Usage(message)) => assert!(message.contains("auto, always or never"), "{message}"),
+            other => panic!("expected a usage error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn progress_is_on_unless_turned_off() {
+        assert!(!parse_ok(&["x"]).no_progress);
+        assert!(parse_ok(&["--no-progress", "x"]).no_progress);
     }
 
     #[test]

@@ -200,11 +200,14 @@ tzim [OPTIONS] <PATH>...
                              not affect the content (not lossless, see below)
       --nested               optimize supported files inside archives
       --max-depth <N>        nesting limit (default: 3)
-      --formats <LIST>       png, gzip, zip, ico, jpeg
+      --formats <LIST>       png, gzip, zip, ico, jpeg, tiff
       --zopfli               use the slower, stronger encoder
       --follow-symlinks      resolve and follow symbolic links
       --allow-hardlinks      process files with more than one hard link
       --no-fsync             skip fsync (faster, less durable)
+      --color <WHEN>         auto (default), always, never
+      --no-color             same as --color=never
+      --no-progress          no progress line on stderr
 
   -i, --info                 what this program is: version, promise, links
       --list-formats         the handlers compiled into this build
@@ -216,6 +219,23 @@ tzim [OPTIONS] <PATH>...
 Full reference: [docs/cli.md](docs/cli.md).
 
 </details>
+
+## The terminal
+
+Output is plain text when it is not going to a terminal, which is why the examples above survive being
+pasted into a file. On a terminal the same report is coloured — green for a rewrite, dim for "nothing to
+do", yellow for a skip, red for a failure — and a run that takes longer than a moment draws one progress
+line on stderr:
+
+```
+/ 137/694 files  3.42 s  1.80 MiB saved
+```
+
+Colour and animation are presentation, never behaviour, and both follow the established rules instead of
+inventing their own: `NO_COLOR` (set and non-empty), `CLICOLOR=0` and `TERM=dumb` turn colour off,
+`CLICOLOR_FORCE` turns it on through a pipe, and `--color=auto|always|never` and `--no-progress` decide it
+explicitly. `--json` is never coloured. The reasoning, the palette and the rules for when a line is drawn
+are in [docs/cli.md §10](docs/cli.md#10-colour-and-progress).
 
 ## Information
 
@@ -231,9 +251,9 @@ documentation is checked against:
 
 ```
 $ tzim -i
-tzim 0.7.1 — shrink the file, never the information
+tzim 0.8.0 — shrink the file, never the information
 ...
-Formats in this build: PNG, gzip, ICO/CUR, JPEG, ZIP
+Formats in this build: PNG, gzip, ICO/CUR, JPEG, TIFF, ZIP
 ...
   G4  metadata removed on request, and only with --strip-metadata
 ```
@@ -312,7 +332,7 @@ list is in [docs/safety.md](docs/safety.md#3-metadata).
 | Nested containers | v0.3 | **implemented**, opt-in | Optimize supported files inside ZIP archives (`--nested`) | G3 |
 | JPEG | v0.4 | **implemented**, opt-in | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only | G3 |
 | TIFF (classic, strips) | v0.7 | **implemented** | Recompress strips (or compress uncompressed ones); every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
-| FLAC | v0.8+ | research | not specified yet — no contract, no claim | — |
+| FLAC | v0.9+ | **contract written, not implemented** | Lossless re-encode; metadata blocks, stream MD5 and seek points preserved — [contract](docs/guarantees.md#49-flac--contract-written-not-implemented), [audit](docs/flac-audit.md) | — |
 | PDF, WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **not planned** | — | — |
 
 Progressive, arithmetic-coded, lossless, hierarchical and 12-bit JPEGs are refused with a precise reason
@@ -337,7 +357,8 @@ rather than approximated. Why the other formats are refused is in
 | --- | --- |
 | [docs/guarantees.md](docs/guarantees.md) | Guarantee classes, per-format contracts, verification |
 | [docs/formats.md](docs/formats.md) | Format matrix, admission criteria, refused formats |
-| [docs/cli.md](docs/cli.md) | Command-line interface, exit codes, JSON schema |
+| [docs/cli.md](docs/cli.md) | Command-line interface, exit codes, JSON schema, colour, conformance |
+| [docs/flac-audit.md](docs/flac-audit.md) | The FLAC audit behind the contract: what can be verified, what it costs |
 | [docs/safety.md](docs/safety.md) | Replacement algorithm, atomicity, failure modes |
 | [docs/dependencies.md](docs/dependencies.md) | Every dependency and why it exists |
 | [docs/size-budget.md](docs/size-budget.md) | Binary size budget and measurement |
@@ -347,7 +368,7 @@ rather than approximated. Why the other formats are refused is in
 | [docs/roadmap.md](docs/roadmap.md) | Versions, gates, risks |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test and submit changes |
 
-The static Linux binary measures **900 KiB**; the smallest useful build, PNG and gzip only, is 688 KiB. The real-file corpus run saves **9.75 %** over 694 files from
+The static Linux binary measures **920 KiB**; the smallest useful build, PNG and gzip only, is 708 KiB. The real-file corpus run saves **9.75 %** over 694 files from
 four pinned upstream projects and changes nothing on a second pass. Both numbers, and the comparisons
 against oxipng, optipng and jpegtran, are in [docs/benchmarks.md](docs/benchmarks.md).
 
