@@ -111,6 +111,15 @@ containers built from them with `gzip -9` and `zip -9`. CI job `corpus`, one pas
 The table was produced again for v0.10.0 (`corpus` job on the same pull request) and is identical, digit for
 digit: no handler changed in this release, and that is the test of it.
 
+**The table above is the v0.10.0 measurement, and no longer describes a run of the current code.** v0.12.1
+began refusing twelve of Pillow's negative APNG fixtures, which until then were rewritten and counted as
+`optimized` (#49, and the entries carry the reason in `.github/corpus-allowlist.txt`). A run of 0.12.1
+therefore has **32** failed files rather than 20, **425** optimized rather than 437, and **340** changed PNGs
+rather than 352; the byte totals are lower by whatever those twelve files contributed, and that is a number to
+measure, not to subtract. Until the `corpus` job of the release that changed the count is copied here, the
+percentages in this table — including the 9.75 % quoted again in §3.2 — are the last measurement rather than
+today's.
+
 Saved bytes by format, over the files that changed: PNG 352 files, JPEG 46 files, TIFF 39 files. The TIFF
 bytes dominate the total because uncompressed scans are the one thing in this corpus that still has room;
 the PNG and JPEG rows are unchanged from v0.6.0, which is what "no handler changed" should look like.

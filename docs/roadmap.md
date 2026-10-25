@@ -283,14 +283,18 @@ The tag was cut from `main` after those tests failed before the fix and passed a
   and a 70-level tree. The cycle test disproved a sentence in `cli.md` on its first run: what stops a cycle is
   the kernel's `ELOOP`, not the 64-level guard.
 
-### v0.12.2 — the memory budget — **planned**
+### v0.12.2 — the memory budget, and the room the JPEG decoder needs — **planned**
 
 - **A memory budget** (#51): the limit becomes bytes rather than files, and a file above it is `skipped` with a
   reason instead of being read. `--jobs` bounds how many files are in flight, not how many bytes they need,
   and [safety §7.1](safety.md#71-memory--an-upper-bound-not-a-budget) says so until this lands.
+- **The progress line is drawn by hand** (#53): `indicatif` + `console` leave the tree for 92–96 KiB, and what
+  replaces them is prettier, not merely cheaper — a partial-cell bar, a rate, an ETA. This is the item that
+  pays for the independent JPEG decoder in #39, which is why it comes first: the decoder is a few hundred
+  bytes of verification that this project wants and does not yet pay for.
 
-Neither is a size change, so the release is a patch. The tag is cut from `main` only after each test fails
-before its fix and passes after it.
+The memory budget is not a size change; the progress line is the only one, and it is the one that buys the
+room for #39. The tag is cut from `main` only after each test fails before its fix and passes after it.
 
 ### v0.13+ — the queue after this
 

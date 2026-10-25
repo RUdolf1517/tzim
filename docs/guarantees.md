@@ -411,11 +411,13 @@ unchanged.
 **Verification:** decode every frame of both files independently and compare frame metadata and pixel bytes;
 compare all control chunks byte for byte.
 
-**Refused (failed, exit 1):** malformed frame sequences — `fcTL` and `fdAT` number themselves 0, 1, 2, … in
-file order with no gaps, and the number of `fcTL` chunks must be the frame count `acTL` declares. This is
-checked structurally on the input before anything is written; the `png` crate refuses such a file while
-decoding too, but a decode that stops on both sides of a comparison is indistinguishable from the end of the
-frame loop, so the crate is not something this program may rely on for that verdict (#49).
+**Corrupt (failed, exit 1):** malformed frame sequences — `fcTL` and `fdAT` number themselves 0, 1, 2, … in
+file order with no gaps, and the number of `fcTL` chunks must be the frame count `acTL` declares — and a frame
+whose data does not inflate. The sequence is checked structurally on the input before anything is written
+(#49); the `png` crate refuses such a file while decoding too, but a decode that stops on both sides of a
+comparison is indistinguishable from the end of the frame loop, so the crate is not something this program may
+rely on for that verdict. "Corrupt", not "refused": a broken animation is invalid input and exits `1`, while
+this document reserves `refused` for a valid file the run declines to rewrite.
 
 **Verification:** the candidate is re-parsed, every non-`IDAT`/`fdAT` chunk is compared byte for byte, the
 `fdAT` count and sequence numbers are compared, and every frame is decoded from both files and compared for
