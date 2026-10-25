@@ -2,7 +2,7 @@
 .\" .rpm, the Homebrew formula and the release archives. `tests/packaging.rs`
 .\" fails when an option in `tzim --help` is missing here, so the page cannot
 .\" drift into describing a different program.
-.TH TZIM 1 "2026-10-25" "tzim 0.12.1" "User Commands"
+.TH TZIM 1 "2026-10-25" "tzim 0.13.0" "User Commands"
 .SH NAME
 tzim \- shrink a file without ever losing information
 .SH SYNOPSIS
@@ -108,6 +108,14 @@ decompression-bomb guard.
 .TP
 .B \-\-max\-ratio \fIN\fR
 Refuse archives whose expansion ratio is above N:1 (default: 1000).
+.TP
+.B \-\-memory\-budget \fIBYTES\fR
+Skip a file whose worst-case memory cost would exceed this, before it is read.
+The default is derived from the other limits, so it never skips a file that
+\fB\-\-max\-size\fR, \fB\-\-max\-pixels\fR and \fB\-\-max\-uncompressed\fR
+admit; set it to what the machine has. The budget is per file, so
+\fB\-\-jobs\fR files can be charged at once. A file above it is skipped, not
+failed, and is left untouched.
 .TP
 .B \-\-strip\-metadata
 Remove a fixed, documented list of embedded metadata: text chunks and
