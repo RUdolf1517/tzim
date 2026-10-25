@@ -2335,7 +2335,11 @@ fn t_gz_02_fhcrc_is_preserved_and_still_valid() {
     let out = std::fs::read(&path).unwrap();
     assert_eq!(out[3] & 0x02, 0x02, "FHCRC flag must survive");
     let header_len = 10 + 9 + 2;
-    assert_eq!(&out[..header_len], &original[..header_len], "header verbatim");
+    assert_eq!(
+        &out[..header_len],
+        &original[..header_len],
+        "header verbatim"
+    );
     let recomputed = (crc32fast::hash(&out[..header_len - 2]) & 0xffff) as u16;
     assert_eq!(
         u16::from_le_bytes([out[header_len - 2], out[header_len - 1]]),
@@ -2362,7 +2366,10 @@ fn t_zip_09_an_unknown_compression_method_is_refused() {
 #[test]
 fn t_zip_09_a_multi_disk_archive_is_refused() {
     let ws = Workspace::new("row-zip-09-disk");
-    let original = build_zip(&[ZipEntrySpec::deflated("a.txt", &compressible(2000), 1)], b"");
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(2000), 1)],
+        b"",
+    );
     let mut damaged = original.clone();
     let eocd = damaged.len() - 22;
     assert_eq!(
@@ -2387,7 +2394,10 @@ fn t_zip_09_a_multi_disk_archive_is_refused() {
 #[test]
 fn t_zip_12_max_uncompressed_is_enforced() {
     let ws = Workspace::new("row-zip-12");
-    let original = build_zip(&[ZipEntrySpec::deflated("big.txt", &compressible(200_000), 9)], b"");
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("big.txt", &compressible(200_000), 9)],
+        b"",
+    );
     let path = ws.write("big.zip", &original);
 
     let (code, stdout, stderr) = run(&["big.zip", "--max-uncompressed", "1000"], &ws.path);
