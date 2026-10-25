@@ -396,6 +396,28 @@ fn info_answers_without_touching_anything() {
     }
 }
 
+/// #66: `--info` is the only place a user can learn which verification a JPEG
+/// candidate gets, and the answer is a property of the build. Cargo compiles the
+/// test binary and the tested binary with the same feature flags, so `cfg!` here
+/// describes the binary that `run` executes.
+#[test]
+fn info_names_the_jpeg_verification_level_of_this_build() {
+    let ws = Workspace::new("info-jpeg-v1");
+    let (code, stdout, stderr) = run(&["--info"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    if cfg!(feature = "jpeg-v1") {
+        assert!(stdout.contains("independent decoder (V1)"), "{stdout}");
+    } else if cfg!(feature = "jpeg") {
+        assert!(
+            stdout.contains("the codec in this build only (V3)"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("--features jpeg-v1"), "{stdout}");
+    } else {
+        assert!(!stdout.contains("JPEG verification"), "{stdout}");
+    }
+}
+
 #[test]
 fn check_deps_reports_that_nothing_is_needed() {
     let ws = Workspace::new("deps");

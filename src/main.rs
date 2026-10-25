@@ -120,6 +120,20 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
             "JPEG is not compiled into this build."
         }
     )?;
+    // Which verification a JPEG candidate gets is a property of the build, and
+    // this is the only place a user can ask (docs/guarantees.md §2.6, #66).
+    if cfg!(feature = "jpeg") {
+        writeln!(
+            out,
+            "{}",
+            if cfg!(feature = "jpeg-v1") {
+                "JPEG verification: an independent decoder (V1) plus the codec in this build (V3)."
+            } else {
+                "JPEG verification: the codec in this build only (V3); build with --features \
+                 jpeg-v1 for an independent check."
+            }
+        )?;
+    }
     writeln!(out)?;
     writeln!(out, "Guarantees:")?;
     writeln!(out, "  G1  byte-identical, wherever nothing was written")?;
