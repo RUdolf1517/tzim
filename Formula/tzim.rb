@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.9.0"
+  version "0.10.0"
   license "MIT"
 
   livecheck do
@@ -27,15 +27,15 @@ class Tzim < Formula
   # those, and a formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.9.0/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "7575229dda936b8f9fb092f00025baeb85ae1e8706d40d5b4cce1d17d8cc588b"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.10.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "9767e2b902decfed7cc864e686af3c46bc730538bf20dc4d35823b8288e74abf"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.9.0/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "731e1e103f96a19465b1bf7df72c9813fedb2edf418d6304d94a2f496f934252"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.10.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "1b10c4b2d93cd9ee76bc71fedfa560bf95ab5146f88fab37c4e13fd3b3882367"
     end
   end
 
@@ -45,7 +45,7 @@ class Tzim < Formula
 
   def caveats
     <<~EOS
-      Formats: PNG, APNG, gzip, the ZIP family, ICO/CUR, baseline JPEG and TIFF.
+      Formats: PNG, APNG, gzip, the ZIP family, ICO/CUR, baseline JPEG, TIFF and zlib.
       JPEG is opt-in: tzim photo.jpg --formats jpeg
 
       No runtime dependencies. The binary is statically linked and opens no sockets.

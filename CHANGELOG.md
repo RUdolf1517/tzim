@@ -57,6 +57,13 @@ in CI, in the benchmarks, in the README, and on the progress line.
   [benchmarks §1](docs/benchmarks.md#1-binary-size--measured), per-feature table in
   [size-budget §3](docs/size-budget.md#3-feature-matrix).
 
+### Packaging
+
+- `Formula/tzim.rb` and `packaging/winget/0.10.0/` are pinned to the published v0.10.0 artifacts and their
+  SHA-256, copied from the release notes after the build.
+- The release build runs with `--locked` too: the published bytes come from the dependency set that was
+  reviewed, not from whatever resolves on the day of the release.
+
 ### Fixed
 
 - **The `musl` check accepted only the older `file` wording.** The musl target now links position-independent
