@@ -276,7 +276,8 @@ re-litigate them from memory. A row with a number attached would say so; none ha
 The `binary size` job in `.github/workflows/ci.yml` runs on every pull request — there is no path filter,
 because a handler change can move the size just as a `Cargo.toml` change can:
 
-1. builds the shipping profile (default features) for `x86_64-unknown-linux-musl`;
+1. builds the shipping profile (default features) for `x86_64-unknown-linux-musl`, and fails unless `file`
+   reports it as static (`static-pie linked` since the musl target links position-independent);
 2. fails when `stat -c %s` exceeds the `full` budget in §1;
 3. builds every feature combination in §3 in the same job and prints the table, so a pull request cannot
    claim a size saving without the number;

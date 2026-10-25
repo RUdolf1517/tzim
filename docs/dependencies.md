@@ -173,10 +173,10 @@ carry a bar and a spinner that redraw from several worker threads — §2.9 is w
 
 - **Version:** 0.18.x (0.18.6 in the lock) · **Licence:** MIT · **Unconditional** · **Granted v0.10**
 - **Why:** the line is now a spinner and a bar, redrawn while several worker threads run. That is three
-  problems we were solving badly by hand: a redraw rate shared with the terminal, a cursor that has to be
-  restored before the report prints, and the width of glyphs that are not ASCII. `indicatif` is the
-  maintained crate for exactly this (it is what `cargo`-adjacent tooling uses), it is small, and it is pure
-  Rust at the API level we touch.
+  problems the hand-rolled version was not solving: a redraw rate shared with the terminal, a cursor that has
+  to be restored before the report prints, and the width of glyphs that are not ASCII. `indicatif` is the
+  crate the console-rs project maintains for exactly this, MIT-licensed, with a plain synchronous API — no
+  runtime, no macros, no `build.rs`.
 - **Configuration:** `default-features = false`. That drops `unicode-width` — a width table for text we never
   truncate, where every glyph in the line (`⠋`, `█`, `░`) is one cell wide — and `wasmbind`, a clock for WASM
   targets that have no meaning for a native binary.
@@ -185,17 +185,19 @@ carry a bar and a spinner that redraw from several worker threads — §2.9 is w
   [size-budget §5.3](size-budget.md#53-what-is-left-and-why-it-is-not-taken)), and any colour decision:
   the SGR rules stay in `src/style.rs` and reach the spinner as a template string.
 - **What stays ours:** the two templates, the `mm:ss` clock (`{t}`, a `ProgressTracker`), the rule that the
-  line never appears in a pipe, and the 150 ms delay before the first frame. `src/progress.rs` is the same
-  size it was; what it no longer contains is the animation thread and the terminal handling.
+  line never appears in a pipe, and the 150 ms delay before the first frame. `src/progress.rs` grows from 204
+  to 263 lines and shrinks in responsibility: the animation thread, the frame rotation and the terminal
+  handling are gone, the tests that used to check frame text now check that the templates parse.
 - **Transitive additions:** `console` 0.16 (ANSI parsing and the Windows console, `ansi-parsing` and `std`
   only), `portable-atomic`, `unit-prefix`; `console` in turn brings `encode_unicode`, `libc` and, on Windows,
-  `windows-sys` with `windows-link`. Eight new lock entries, of which four compile into a Linux binary.
+  `windows-sys` with `windows-link`. Eight new lock entries, of which five compile into a Linux binary.
 - **`unsafe`:** `console` and `portable-atomic` contain `unsafe` — Windows console calls and fallback atomics.
   Our code still forbids it (`#![forbid(unsafe_code)]`), and the reviewed surface is terminal I/O and a
   counter; nothing there parses file content.
-- **Cost:** measured, not estimated — [size-budget §3](size-budget.md#3-feature-matrix) has the per-feature
-  table and the delta every row took. It is charged against the budget like any other growth, and the budget
-  was not raised in advance.
+- **Cost:** measured, not estimated: **96 KiB** in the shipping binary, 112 KiB before `indicatif` and
+  `console` were moved to `opt-level = "s"` ([size-budget §5.2](size-budget.md#52-earlier-trials-in-the-same-pass)).
+  That is a tenth of the binary for the progress line, and it is charged against the budget like any other
+  growth — the budget was re-computed from the measurement afterwards, not raised in advance.
 - **Alternatives rejected:** keeping the hand-rolled line (that is what v0.8 shipped: ASCII frames, no bar,
   no spinner); `pbr` and `progress_bar` (unmaintained); `linya` (less maintained, narrower); `console` alone
   (gives a spinner, not the bar/clock plumbing, so the animation thread would have stayed ours);

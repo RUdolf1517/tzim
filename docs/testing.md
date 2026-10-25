@@ -303,7 +303,7 @@ Fuzz artefacts are not committed; `fuzz/corpus` and `fuzz/artifacts` are ignored
 | `fmt` | ubuntu-latest | `cargo fmt --all`; formats the tree and commits the result (§4.1) |
 | `deny` | ubuntu-latest | `cargo deny check` — licences, advisories, duplicate versions, sources |
 | `audit` | ubuntu-latest | `cargo audit` against the RustSec database |
-| `size` | ubuntu-latest | static `x86_64-unknown-linux-musl` build, `file` reports "statically linked", size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
+| `size` | ubuntu-latest | `x86_64-unknown-linux-musl` build that `file` reports as `static-pie linked` (no interpreter, no libc), size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
 | `corpus` | ubuntu-latest | downloads the pinned corpus, runs the binary over it twice, gates on §3 |
 | `fuzz` | ubuntu-latest, nightly | 60 s per target on pull requests that touch `src/` or `fuzz/`; weekly on `main` |
 | `bench` | ubuntu-latest | comparative benchmarks, by `bench` label, weekly, or on dispatch |
