@@ -175,6 +175,7 @@ they are everywhere else ([docs/cli.md §10](docs/cli.md#10-colour-and-progress)
 | [testing](docs/testing.md) | Test strategy, real-file corpus, fuzzing, CI |
 | [benchmarks](docs/benchmarks.md) | Measured ratios, timings and memory against the alternatives |
 | [releases](docs/releases.md) · [roadmap](docs/roadmap.md) | Artifacts and channels · versions and gates |
+| [audits](docs/audits/) | Frozen independent audits: what was checked, what was found, and the evidence |
 | [CONTRIBUTING](CONTRIBUTING.md) | How to build, test and submit a change |
 
 ## The name
