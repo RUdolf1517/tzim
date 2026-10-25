@@ -101,7 +101,7 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
-| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so `--jobs` no longer has to be lowered to protect memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
