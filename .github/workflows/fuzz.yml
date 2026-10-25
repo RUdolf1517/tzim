@@ -58,10 +58,14 @@ jobs:
           echo "35fec2e1ddfb05ecf6d93e50bc57c1e54bc81c16d611ddf6eff73fff266d8285  $work/libjpeg-turbo.tar.gz" | sha256sum -c --quiet -
           tar xzf "$work/libpng.tar.gz" -C "$work"
           tar xzf "$work/libjpeg-turbo.tar.gz" -C "$work"
-          mkdir -p fuzz/corpus/roundtrip fuzz/corpus/jpeg_decode
+          # `strip` gets the same images: it is the target that exercises the
+          # `--strip-metadata` path, and it had no seeds at all (#36).
+          mkdir -p fuzz/corpus/roundtrip fuzz/corpus/jpeg_decode fuzz/corpus/strip
           cp "$work"/libpng-1.6.44/contrib/pngsuite/*.png fuzz/corpus/roundtrip/
           cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/roundtrip/
           cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/jpeg_decode/
+          cp "$work"/libpng-1.6.44/contrib/pngsuite/*.png fuzz/corpus/strip/
+          cp "$work"/libjpeg-turbo-3.1.0/testimages/*.jpg fuzz/corpus/strip/
           echo "seeds: $(find fuzz/corpus -type f | wc -l)"
 
       - name: Run targets

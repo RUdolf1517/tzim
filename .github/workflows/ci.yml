@@ -44,6 +44,24 @@ jobs:
         shell: bash
         run: exit 1
 
+  docs:
+    name: docs (links and anchors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A link to a renamed heading is a documentation bug that survives review
+      # because nobody clicks 226 links. This job clicks them (#46).
+      - name: Check Markdown links and anchors
+        shell: bash
+        run: |
+          out="$(python3 .github/scripts/md-links.py)"
+          echo "$out"
+          case "$out" in
+            *"broken: 0"*) ;;
+            *) echo "::error::broken links or anchors; see the lines above"; exit 1 ;;
+          esac
+
   msrv:
     name: msrv (1.88)
     runs-on: ubuntu-latest

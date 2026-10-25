@@ -20,8 +20,9 @@
 `oxipng`, `jpegoptim` and `advzip` make a file smaller. Tzim makes it smaller **or leaves it alone** — and when
 it cannot prove the result is the same information, it refuses and says why. Every format has a written
 contract, every candidate is checked by an independent decoder against that contract, and a file is replaced
-only if the new one is strictly smaller. There is no quality setting, no "visually lossless" mode and no
-automatic fallback to a lossy path, because none of them are in the program.
+only if the new one is smaller — metadata is removed only if you type `--strip-metadata`. There is no quality
+setting, no "visually lossless" mode and no automatic fallback to a lossy path, because none of them are in
+the program.
 
 ```bash
 $ tzim ./photos -r

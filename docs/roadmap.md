@@ -30,6 +30,12 @@ planning aids, not commitments.
 
 ## 2. Releases
 
+**Read the status notes as history, not as a description of the binary you have.** Each one was written when
+that release shipped, and it keeps the numbers of that release: the test counts, the sizes and the corpus
+figures below are frozen at the version they belong to. Today's numbers are in CI — the `size` job prints the
+real binary, `corpus` prints the real-file totals — and in [benchmarks](benchmarks.md). A note that disagrees
+with the tree is a historical note, not a lie, as long as it says which release it describes.
+
 ### v0.1 — foundation, PNG, gzip
 
 **Contents**

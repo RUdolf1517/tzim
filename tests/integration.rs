@@ -517,6 +517,115 @@ fn permissions_and_mtime_survive_the_replacement() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_file_is_skipped_unless_allowed() {
+    let ws = Workspace::new("hardlink");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("linked.png", &original);
+    let twin = ws.path.join("twin.png");
+    std::fs::hard_link(&path, &twin).expect("the fixture directory supports hard links");
+
+    let (code, stdout, stderr) = run(&["linked.png"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("hard link") && stdout.contains("--allow-hardlinks"),
+        "the reason must name the flag: {stdout}"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(&twin).unwrap(), original);
+
+    // With the flag the replacement happens, and it breaks the link on purpose:
+    // that is the documented consequence, which is why the flag is opt-in.
+    let (code, stdout, stderr) = run(&["linked.png", "--allow-hardlinks"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(std::fs::read(&path).unwrap().len() < original.len());
+    assert_eq!(
+        std::fs::read(&twin).unwrap(),
+        original,
+        "the other name keeps the old inode and its bytes"
+    );
+}
+
+// Linux only, on purpose: ext4, xfs and btrfs store names as bytes, while APFS
+// rejects a name that is not valid UTF-8 with EILSEQ — the fixture cannot even be
+// created there. Windows has the same restriction through UTF-16. The code path
+// under test (`path_raw_b64`, a lossy human field) exists for the filesystems that
+// do allow it.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_path_that_is_not_valid_utf8_is_optimized() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let ws = Workspace::new("non-utf8");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    // "pic-<0xFF>.png": a valid filename that is not valid UTF-8, which is what
+    // every Unix filesystem allows and a lossy `to_string_lossy` would mangle.
+    let mut name = b"pic-".to_vec();
+    name.push(0xff);
+    name.extend_from_slice(b".png");
+    let path = ws.path.join(OsStr::from_bytes(&name));
+    std::fs::write(&path, &original).unwrap();
+
+    let (code, stdout, stderr) = run_os(
+        &[
+            std::ffi::OsString::from("--json"),
+            std::ffi::OsString::from(OsStr::from_bytes(&name)),
+        ],
+        &ws.path,
+    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        std::fs::read(&path).unwrap().len() < original.len(),
+        "the file must be optimized through its raw bytes"
+    );
+    // The human field is lossy on purpose; the raw bytes are in the record.
+    assert!(stdout.contains("\"path_raw_b64\":"), "{stdout}");
+    assert!(stdout.contains("\"status\":\"optimized\""), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_socket_is_skipped_and_never_opened_for_writing() {
+    use std::os::unix::fs::FileTypeExt;
+
+    // A Unix socket is the one non-regular file type the standard library can
+    // create without libc, and it is enough: the walk must not try to read it.
+    //
+    // The directory is named by hand rather than by `Workspace`: `sun_path` is
+    // limited to about a hundred bytes, and a macOS temporary directory plus a
+    // workspace label gets uncomfortably close to that.
+    let dir = std::env::temp_dir().join(format!("tzims{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("talk.sock");
+    let _listener = std::os::unix::net::UnixListener::bind(&path).expect("bind a socket");
+
+    let (code, stdout, stderr) = run(&["talk.sock"], &dir);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("not a regular file"), "{stdout}");
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_socket(),
+        "the socket must still be there"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn symlinks_are_not_followed_by_default() {
     #[cfg(unix)]
@@ -1614,6 +1723,151 @@ fn strip_metadata_drops_zip_comments_and_keeps_extra_fields() {
     );
 }
 
+/// The `time`/`date` pair of every central directory record, in order.
+fn zip_central_stamps(archive: &[u8]) -> Vec<(u16, u16)> {
+    let eocd = (0..archive.len() - 21)
+        .rev()
+        .find(|&at| {
+            u32::from_le_bytes([
+                archive[at],
+                archive[at + 1],
+                archive[at + 2],
+                archive[at + 3],
+            ]) == ZIP_EOCD_SIG
+        })
+        .expect("no end-of-central-directory record");
+    let mut pos = u32::from_le_bytes([
+        archive[eocd + 16],
+        archive[eocd + 17],
+        archive[eocd + 18],
+        archive[eocd + 19],
+    ]) as usize;
+    let mut out = Vec::new();
+    while u32::from_le_bytes([
+        archive[pos],
+        archive[pos + 1],
+        archive[pos + 2],
+        archive[pos + 3],
+    ]) == ZIP_CENTRAL_SIG
+    {
+        out.push((
+            u16::from_le_bytes([archive[pos + 12], archive[pos + 13]]),
+            u16::from_le_bytes([archive[pos + 14], archive[pos + 15]]),
+        ));
+        let name_len = u16::from_le_bytes([archive[pos + 28], archive[pos + 29]]) as usize;
+        let extra_len = u16::from_le_bytes([archive[pos + 30], archive[pos + 31]]) as usize;
+        let comment_len = u16::from_le_bytes([archive[pos + 32], archive[pos + 33]]) as usize;
+        pos += 46 + name_len + extra_len + comment_len;
+    }
+    out
+}
+
+/// The local header's `time`/`date` pair for the entry at `offset`.
+fn zip_local_stamp(archive: &[u8], offset: usize) -> (u16, u16) {
+    (
+        u16::from_le_bytes([archive[offset + 10], archive[offset + 11]]),
+        u16::from_le_bytes([archive[offset + 12], archive[offset + 13]]),
+    )
+}
+
+#[test]
+fn strip_metadata_equal_size_zip_is_optimized() {
+    let ws = Workspace::new("strip-zip-equal");
+    // A stored entry is never recompressed and the archive carries no comment, so
+    // the only thing `--strip-metadata` can do is zero four bytes of timestamps:
+    // the candidate is exactly as long as the input. This is the class of result
+    // that invariant I2 accepts and that the pipeline used to call an internal
+    // error (#26).
+    let entry = ZipEntrySpec::stored("a.txt", b"stored bytes are never recompressed");
+    let original = build_zip(&[entry], b"");
+    let path = ws.write("equal.zip", &original);
+    let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+    let (code, stdout, stderr) = run(&["equal.zip", "--strip-metadata"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        !stdout.contains("internal") && !stderr.contains("internal"),
+        "an equal-size rewrite is a result, not a bug: stdout={stdout} stderr={stderr}"
+    );
+    assert!(stdout.contains("metadata stripped"), "{stdout}");
+
+    let stripped = std::fs::read(&path).unwrap();
+    assert_eq!(
+        stripped.len(),
+        original.len(),
+        "zeroing a timestamp removes no bytes"
+    );
+    assert_ne!(
+        stripped, original,
+        "the file must have been rewritten with the metadata removed"
+    );
+
+    let before = parse_zip(&original);
+    assert_eq!(zip_central_stamps(&original), vec![(0x6000, 0x5a21)]);
+    assert_eq!(
+        zip_central_stamps(&stripped),
+        vec![(0, 0)],
+        "the central record must lose its timestamps"
+    );
+    assert_eq!(
+        zip_local_stamp(&stripped, before[0].local_offset as usize),
+        (0, 0),
+        "the local header must lose its timestamps too"
+    );
+    assert_eq!(
+        parse_zip(&stripped)[0].decompressed(&stripped),
+        b"stored bytes are never recompressed"
+    );
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        mtime_before,
+        "the filesystem mtime is not metadata inside the file"
+    );
+}
+
+#[test]
+fn strip_metadata_equal_size_gzip_is_not_a_failure() {
+    let ws = Workspace::new("strip-gzip-equal");
+    // No FNAME, no FEXTRA, no FCOMMENT and a non-zero MTIME, so stripping the
+    // header can only zero four bytes. The body is written at level 9 and the
+    // handler recompresses at level 9, so on this fixture the candidate is the
+    // same length as the input (#26). Even if the recompression does gain a byte,
+    // the contract is the same: never larger, and the header is stripped.
+    let payload = compressible(20_000);
+    let original = build_gzip(&payload, None, None, 0, 9);
+    let path = ws.write("stamped.gz", &original);
+
+    let (code, stdout, stderr) = run(&["stamped.gz", "--strip-metadata"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        !stdout.contains("internal") && !stderr.contains("internal"),
+        "stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("metadata stripped"),
+        "the fixture must actually be rewritten: {stdout}"
+    );
+
+    let stripped = std::fs::read(&path).unwrap();
+    assert!(
+        stripped.len() <= original.len(),
+        "a stripping rewrite never grows a file: {} -> {}",
+        original.len(),
+        stripped.len()
+    );
+    assert_eq!(
+        &stripped[..4],
+        &[0x1f, 0x8b, 0x08, 0x00],
+        "flags must be zero"
+    );
+    assert_eq!(&stripped[4..8], &[0, 0, 0, 0], "MTIME must be zero");
+
+    let (payload_before, crc_before) = inflate_member(&original);
+    let (payload_after, crc_after) = inflate_member(&stripped);
+    assert_eq!(payload_before, payload_after);
+    assert_eq!(crc_before, crc_after);
+}
+
 #[test]
 fn strip_metadata_is_reported_and_dry_run_writes_nothing() {
     let ws = Workspace::new("strip-dry");
@@ -1909,6 +2163,77 @@ fn tiff_strip_metadata_removes_only_textual_tags() {
 }
 
 #[test]
+fn png_is_skipped_when_only_gzip_is_enabled() {
+    let ws = Workspace::new("png-disabled");
+    let spec = PngSpec {
+        width: 64,
+        height: 64,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let path = ws.write("photo.png", &original);
+    // A gzip file in the same run proves the policy is per format and not a
+    // refusal of the whole invocation.
+    let gz = build_gzip(&b"payload".repeat(500), None, None, 0, 1);
+    let other = ws.write("blob.gz", &gz);
+
+    let (code, stdout, stderr) = run(&["--formats", "gzip", "photo.png", "blob.gz"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    // `unsupported` would mean "no handler for this content"; `failed` would mean
+    // "corrupt". A disabled handler is a policy decision, and it has to say so.
+    // The summary always prints every counter, so the assertions are on the
+    // per-file line and on the two counters that decide the exit code.
+    assert!(
+        stdout.contains("skipped: PNG is not enabled for this run"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("0 unsupported"), "{stdout}");
+    assert!(stdout.contains("0 failed"), "{stdout}");
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a policy skip must leave the file alone"
+    );
+    assert!(
+        std::fs::read(&other).unwrap().len() < gz.len(),
+        "the format that is enabled must still be processed"
+    );
+}
+
+#[test]
+fn nested_children_inherit_the_formats_allowlist() {
+    let ws = Workspace::new("nested-allow");
+    let png_spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let inner_png = build_png(&png_spec);
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("images/logo.png", &inner_png, 1)],
+        b"",
+    );
+    let path = ws.write("archive.zip", &original);
+
+    // `zip` is enabled, `png` is not: the archive is still recompressed, but its
+    // child is left byte for byte alone even though `--nested` is on.
+    let (code, stdout, stderr) = run(&["archive.zip", "--nested", "--formats", "zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let out = std::fs::read(&path).unwrap();
+    assert!(out.len() <= original.len());
+    let entry = parse_zip(&out).remove(0);
+    assert_eq!(
+        entry.decompressed(&out),
+        inner_png,
+        "a child outside the allowlist must not be rewritten"
+    );
+    assert_eq!(entry.crc, crc32fast::hash(&inner_png));
+}
+
+#[test]
 fn tiff_is_skipped_when_the_format_is_not_enabled() {
     let ws = Workspace::new("tiff-disabled");
     let original = build_tiff(&TiffSpec::default());
@@ -1918,6 +2243,196 @@ fn tiff_is_skipped_when_the_format_is_not_enabled() {
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("skipped"), "{stdout}");
     assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+// ---------------------------------------------------------------------------
+// Traceability rows that had no test (#49). Each name starts with the row id.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn t_png_09_zopfli_is_at_least_as_good_as_the_default() {
+    let ws = Workspace::new("row-png-09");
+    let spec = PngSpec {
+        width: 96,
+        height: 96,
+        level: 1,
+        ..Default::default()
+    };
+    let original = build_png(&spec);
+    let plain = ws.write("plain.png", &original);
+    let strong = ws.write("strong.png", &original);
+
+    let (code, _, stderr) = run(&["plain.png"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = run(&["strong.png", "--zopfli"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+
+    let plain_out = std::fs::read(&plain).unwrap();
+    let strong_out = std::fs::read(&strong).unwrap();
+    assert!(plain_out.len() < original.len());
+    assert!(
+        strong_out.len() <= plain_out.len(),
+        "--zopfli must never be worse: {} > {}",
+        strong_out.len(),
+        plain_out.len()
+    );
+    // The candidate is still a PNG with identical pixels, whichever candidate won.
+    let (_, _, p1) = decode_pixels(&original).unwrap();
+    let (_, _, p2) = decode_pixels(&strong_out).unwrap();
+    assert_eq!(p1, p2);
+}
+
+#[test]
+fn t_gz_01_a_comment_is_preserved() {
+    let ws = Workspace::new("row-gz-01");
+    let payload = b"comment-carrying payload".repeat(200);
+    let bare = build_gzip(&payload, None, None, 0, 1);
+    // build_gzip writes FNAME and FEXTRA but not FCOMMENT, so set flag bit 4 and
+    // splice the NUL-terminated comment in after the ten-byte header.
+    let mut original = bare[..10].to_vec();
+    original[3] |= 0x10;
+    original.extend_from_slice(b"written by a test\0");
+    original.extend_from_slice(&bare[10..]);
+    let path = ws.write("comment.gz", &original);
+
+    let (code, stdout, stderr) = run(&["comment.gz"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let out = std::fs::read(&path).unwrap();
+    assert!(out.len() < original.len());
+    assert!(
+        out.windows(18).any(|w| w == b"written by a test\0"),
+        "FCOMMENT must survive verbatim"
+    );
+    let header_len = 10 + b"written by a test\0".len();
+    assert_eq!(
+        &out[..header_len],
+        &original[..header_len],
+        "the header, comment included, is copied verbatim"
+    );
+}
+
+#[test]
+fn t_gz_02_fhcrc_is_preserved_and_still_valid() {
+    let ws = Workspace::new("row-gz-02");
+    let payload = b"header checksum payload".repeat(200);
+    let bare = build_gzip(&payload, Some(b"name.txt"), None, 0, 1);
+    // FLG |= FHCRC, and the two CRC-16 bytes are the low half of the header's
+    // CRC-32, which is what the format defines.
+    let mut original = bare[..10].to_vec();
+    original[3] |= 0x02;
+    let mut with_name = original.clone();
+    with_name.extend_from_slice(b"name.txt\0");
+    let crc16 = (crc32fast::hash(&with_name) & 0xffff) as u16;
+    original.extend_from_slice(&with_name[10..]);
+    original.extend_from_slice(&crc16.to_le_bytes());
+    original.extend_from_slice(&bare[10 + 9..]);
+    let path = ws.write("fhcrc.gz", &original);
+
+    let (code, stdout, stderr) = run(&["fhcrc.gz"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+    let out = std::fs::read(&path).unwrap();
+    assert_eq!(out[3] & 0x02, 0x02, "FHCRC flag must survive");
+    let header_len = 10 + 9 + 2;
+    assert_eq!(
+        &out[..header_len],
+        &original[..header_len],
+        "header verbatim"
+    );
+    let recomputed = (crc32fast::hash(&out[..header_len - 2]) & 0xffff) as u16;
+    assert_eq!(
+        u16::from_le_bytes([out[header_len - 2], out[header_len - 1]]),
+        recomputed,
+        "the stored CRC-16 must still match the header it covers"
+    );
+}
+
+#[test]
+fn t_zip_09_an_unknown_compression_method_is_refused() {
+    let ws = Workspace::new("row-zip-09");
+    let mut spec = ZipEntrySpec::deflated("odd.bin", &compressible(2000), 1);
+    spec.method = 12; // bzip2: valid in the format, not implemented here
+    let original = build_zip(&[spec], b"");
+    let path = ws.write("odd.zip", &original);
+
+    let (code, stdout, stderr) = run(&["odd.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("skipped"), "{stdout}");
+    assert!(stdout.contains("compression method"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn t_zip_09_a_multi_disk_archive_is_refused() {
+    let ws = Workspace::new("row-zip-09-disk");
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("a.txt", &compressible(2000), 1)],
+        b"",
+    );
+    let mut damaged = original.clone();
+    let eocd = damaged.len() - 22;
+    assert_eq!(
+        u32::from_le_bytes([
+            damaged[eocd],
+            damaged[eocd + 1],
+            damaged[eocd + 2],
+            damaged[eocd + 3]
+        ]),
+        ZIP_EOCD_SIG
+    );
+    // "number of this disk" = 1: the archive claims to be the second of a set.
+    damaged[eocd + 4] = 1;
+    let path = ws.write("split.zip", &damaged);
+
+    let (code, stdout, stderr) = run(&["split.zip"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("multi-disk"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
+}
+
+#[test]
+fn t_zip_12_max_uncompressed_is_enforced() {
+    let ws = Workspace::new("row-zip-12");
+    let original = build_zip(
+        &[ZipEntrySpec::deflated("big.txt", &compressible(200_000), 9)],
+        b"",
+    );
+    let path = ws.write("big.zip", &original);
+
+    let (code, stdout, stderr) = run(&["big.zip", "--max-uncompressed", "1000"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("--max-uncompressed"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+
+    // The same archive is fine with the default limit.
+    let (code, _, stderr) = run(&["big.zip"], &ws.path);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(std::fs::read(&path).unwrap().len() <= original.len());
+}
+
+#[test]
+fn t_ico_04_a_directory_that_runs_past_the_file_is_refused() {
+    let ws = Workspace::new("row-ico-04");
+    let entry = IcoEntrySpec {
+        width: 16,
+        height: 16,
+        bit_count: 32,
+        payload: bmp_icon_payload(64),
+    };
+    let original = build_ico(1, &[entry]);
+    // The directory claims two images, and the file is cut short of the second
+    // record. The count stays inside the range detection accepts, so the file is
+    // an ICO with a broken directory rather than an unknown format: `failed`,
+    // not `unsupported`.
+    let mut damaged = original[..32].to_vec();
+    damaged[4..6].copy_from_slice(&2u16.to_le_bytes());
+    let path = ws.write("directory.ico", &damaged);
+
+    let (code, stdout, stderr) = run(&["directory.ico"], &ws.path);
+    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("truncated directory"), "{stdout}");
+    assert_eq!(std::fs::read(&path).unwrap(), damaged);
 }
 
 // ---------------------------------------------------------------------------

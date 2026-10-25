@@ -2,7 +2,7 @@
 .\" .rpm, the Homebrew formula and the release archives. `tests/packaging.rs`
 .\" fails when an option in `tzim --help` is missing here, so the page cannot
 .\" drift into describing a different program.
-.TH TZIM 1 "2026-10-25" "tzim 0.11.0" "User Commands"
+.TH TZIM 1 "2026-10-25" "tzim 0.12.0" "User Commands"
 .SH NAME
 tzim \- shrink a file without ever losing information
 .SH SYNOPSIS
@@ -15,10 +15,13 @@ tzim \- shrink a file without ever losing information
 .B tzim
 rewrites files into a smaller and equivalent form. It never performs a lossy or
 irreversible transformation: no quality, resolution, bit depth or frame
-reduction, no metadata, comment or attachment removal, and no conversion to
-another format. Every candidate is verified against a per-format contract
-before it replaces anything, and a candidate that is not strictly smaller is
-discarded, leaving the original byte for byte as it was.
+reduction, no conversion to another format, and no metadata, comment or
+attachment removal unless \fB\-\-strip\-metadata\fR asks for a fixed,
+documented list to be removed. Every candidate is verified against a
+per-format contract before it replaces anything, and a candidate that is not
+strictly smaller is discarded, leaving the original byte for byte as it was.
+With \fB\-\-strip\-metadata\fR an equal-size rewrite is accepted, because
+zeroing a timestamp removes information without removing bytes.
 .PP
 Each path is an input object: a single file, a directory, or both mixed in one
 run. A bare file path is complete on its own, so a single file never needs a

@@ -22,7 +22,10 @@ libfuzzer-sys = "0.4"
 [dependencies.tzim]
 path = ".."
 default-features = false
-features = ["png", "gzip", "zip", "ico", "jpeg", "fuzz-api"]
+# Every handler, so that `roundtrip`/`strip` reach the real code for a detected
+# format instead of the `internal` arm. tiff and zlib were missing, which meant
+# two parsers were never fuzzed (#36).
+features = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "fuzz-api"]
 
 [workspace]
 members = ["."]

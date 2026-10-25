@@ -105,14 +105,21 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
         out,
         "verify that nothing else changed, and leaves every file it cannot"
     )?;
-    writeln!(
-        out,
-        "improve byte for byte alone: no metadata removal, no re-encoding by"
-    )?;
-    writeln!(out, "loss, no format conversion.")?;
+    writeln!(out, "improve alone, byte for byte.")?;
     writeln!(out)?;
     writeln!(out, "Formats in this build: {}", format_names())?;
-    writeln!(out, "JPEG is opt-in: name it with `--formats jpeg`.")?;
+    // Both of these depend on how the binary was compiled, so both are read
+    // from the build rather than asserted (`--features png` is a supported
+    // build, and it has no JPEG and no Zopfli).
+    writeln!(
+        out,
+        "{}",
+        if cfg!(feature = "jpeg") {
+            "JPEG is opt-in: name it with `--formats jpeg`."
+        } else {
+            "JPEG is not compiled into this build."
+        }
+    )?;
     writeln!(out)?;
     writeln!(out, "Guarantees:")?;
     writeln!(out, "  G1  byte-identical, wherever nothing was written")?;
@@ -158,7 +165,12 @@ fn print_check_deps(out: &mut dyn Write) -> io::Result<()> {
     writeln!(out, "  formats    {}", format_names())?;
     writeln!(
         out,
-        "  optional   --zopfli is compiled in, not an external encoder"
+        "{}",
+        if cfg!(feature = "zopfli") {
+            "  optional   --zopfli is compiled into this build, not an external encoder"
+        } else {
+            "  optional   --zopfli is not compiled into this build"
+        }
     )?;
     writeln!(out)?;
     writeln!(
@@ -181,12 +193,18 @@ fn print_formats(out: &mut dyn Write) -> io::Result<()> {
     writeln!(out)?;
     writeln!(
         out,
-        "Tzim removes no metadata and never converts a file to another format."
+        "Tzim removes no metadata unless --strip-metadata is given, and never"
+    )?;
+    writeln!(out, "converts a file to another format.")?;
+    writeln!(
+        out,
+        "A result that is not smaller is discarded and the original kept; with"
     )?;
     writeln!(
         out,
-        "A result that is not strictly smaller is discarded and the original kept."
-    )
+        "--strip-metadata an equal-size result is accepted, because zeroing a"
+    )?;
+    writeln!(out, "timestamp removes metadata without removing bytes.")
 }
 
 fn run_optimize(args: &cli::Args) -> i32 {
