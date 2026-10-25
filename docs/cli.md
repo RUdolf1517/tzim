@@ -373,8 +373,8 @@ message. The second is a batch: the clock, the bar and the position, in the orde
   the first result is printed, so the report never shares a row with it;
 - it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
   into noise. The position, the clock and the bar are the information;
-- the spinner and the bar are coloured by the same decision as the report — the stderr probe of §above —
-  and are plain when colour is off, so `NO_COLOR=1` produces no escape sequence anywhere;
+- the spinner and the bar are coloured by the same decision as the rest of stderr (the table above) and are
+  plain when colour is off, so `NO_COLOR=1` produces no escape sequence anywhere;
 - it is written to stderr only. stdout carries the report, one result per line, and nothing else.
 
 It is drawn only when **all** of these hold: stderr is a terminal, the run has at least one file, and

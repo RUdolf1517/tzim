@@ -38,22 +38,31 @@ mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/sets/tiff" "$work/sets/zlib" 
 find "$work/corpus/images" -type f -iname '*.png' -size "-${max_bytes}c" -exec cp {} "$work/sets/png/" \;
 find "$work/corpus/images" -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/jpeg/" \;
 find "$work/corpus/images" -type f \( -iname '*.tif' -o -iname '*.tiff' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/tiff/" \;
-# No corpus ships raw zlib streams, and a zlib stream is DEFLATE with a header:
-# wrapping real payloads at the default level is what a .zz file in the wild
-# looks like. Written with the same python3 the report below already needs.
-python3 - "$work/corpus/images" "$work/sets/zlib" <<'ZT'
+# No corpus ships raw zlib streams, and a zlib stream is DEFLATE with a header.
+# The payloads are the pinned sources themselves — real text, compressed at the
+# default level, which is what a .zz file in the wild looks like. Compressing a
+# PNG into zlib would measure the one case where nothing can be won: the input
+# is already DEFLATE output.
+python3 - "$work/src" "$work/sets/zlib" <<'ZT'
 import os
 import sys
 import zlib
 
 src, dst = sys.argv[1], sys.argv[2]
-names = sorted(os.listdir(src))
-payloads = [n for n in names if n.lower().endswith((".png", ".jpg", ".jpeg"))][:12]
-for name in payloads:
-    with open(os.path.join(src, name), "rb") as fh:
+picked = []
+for root, _dirs, names in os.walk(src):
+    for name in sorted(names):
+        if not name.endswith((".c", ".h", ".py", ".md", ".txt")):
+            continue
+        path = os.path.join(root, name)
+        if 8_000 <= os.path.getsize(path) <= 200_000:
+            picked.append(path)
+for index, path in enumerate(sorted(picked)[:12]):
+    with open(path, "rb") as fh:
         data = fh.read()
-    with open(os.path.join(dst, name.rsplit(".", 1)[0] + ".zlib"), "wb") as fh:
+    with open(os.path.join(dst, f"{index:02d}-{os.path.basename(path)}.zlib"), "wb") as fh:
         fh.write(zlib.compress(data, 6))
+print(f"  zlib payloads: {min(len(picked), 12)} source files at level 6")
 ZT
 echo "png set:  $(find "$work/sets/png" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 echo "jpeg set: $(find "$work/sets/jpeg" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
