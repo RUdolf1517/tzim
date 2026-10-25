@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.12.1"
+  version "0.13.0"
   license "MIT"
 
   livecheck do
@@ -27,23 +27,23 @@ class Tzim < Formula
   # formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.12.1/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "eb838193fd8dcab5b5e45df44faaaed0da0b24ae84160546ab92b61f8b388d46"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.13.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "11c126848b53bad1a6f0caa406d4141c78df30051b74b8f952348ecdd210d21e"
     end
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.12.1/tzim-x86_64-apple-darwin.tar.gz"
-      sha256 "f8e235ea10a5167c29fc6476f5907e64f92c9ee58527035e7f862f7eafef2ece"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.13.0/tzim-x86_64-apple-darwin.tar.gz"
+      sha256 "0d36d70dd52d8bc049ca090c944ddc22b70b8e98cf2c2357758d2ca32c46d59b"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.12.1/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "091f7c6e81a43606d7f425dd1f2159828f6e6213f65e9c1f26d1788b01cd2d5d"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.13.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "44d818aba7403f6cd6a5f4b85fe70653e938caf3bea204dd3b3c0d466935bfb6"
     end
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.12.1/tzim-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "958871fdd16190f88d5b25f2ba196f2add74c2bdd7b638bf1a3f95da81c4dcf7"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.13.0/tzim-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "c51d4321e305a0ae9f477b150a7d3e7308da0dca2a4336c0d0cec34fedfcb126"
     end
   end
 
