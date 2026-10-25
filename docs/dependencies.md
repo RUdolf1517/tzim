@@ -125,6 +125,45 @@ instead of using a vetted crate.
   it. The residual risk (a bug shared by encoder and decoder) is recorded in
   [guarantees](guarantees.md#47-jpeg--v04-opt-in) and [benchmarks](benchmarks.md).
 
+### 2.7 FLAC: the crates it would need, and why they are not in `Cargo.toml`
+
+The FLAC contract is written ([guarantees §4.9](guarantees.md#49-flac--contract-written-not-implemented)) and the
+audit behind it is [flac-audit.md](flac-audit.md). The implementation is blocked on the dependency rule in §1:
+these are the three crates it needs, and none of them is added.
+
+| Crate | Version at audit | Licence | Size | Role | Why it is the right one |
+| --- | --- | --- | --- | --- | --- |
+| `flacenc` | 0.5.1 | Apache-2.0 | ~10 k lines | encoder | the only maintained pure-Rust FLAC encoder; no C, no `build.rs` beyond `built`; with `default-features = false` the `log`, `serde` and `crossbeam-channel` features are dropped, which leaves `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro` |
+| `claxon` | 0.4.3 | Apache-2.0 | ~2.2 k lines | verification decoder | a different implementation by a different author, with no dependencies of its own — the independence requirement of [guarantees §2.6](guarantees.md#26-verification-independence) |
+| `md-5` | 0.10.6 | MIT OR Apache-2.0 | ~400 lines | stream MD5 | RustCrypto; already a dependency of `flacenc`, so it adds no crate to the tree |
+
+`flacenc` can decode as well, and using its own decoder for verification is explicitly rejected: the encoder
+would be confirming itself, which is the failure mode the independence rule exists to prevent. The same
+reasoning rejects `flacenc`'s `decode` feature even as a convenience.
+
+Binary cost is unmeasured, and the budget will not be raised in advance: the feature matrix in
+[size-budget §3](size-budget.md#3-feature-matrix) is where the number will appear.
+
+---
+
+### 2.8 Colour and progress: why they are not dependencies
+
+This is the one part of the interface that looks like it needs a crate and does not.
+
+- **Colour** is six byte strings (`\x1b[1m`, `\x1b[2m`, `\x1b[31m`, `\x1b[32m`, `\x1b[33m`, `\x1b[0m`) and
+  one `bool`. What is worth getting right is *when* to emit them — the terminal check, `NO_COLOR`,
+  `CLICOLOR`, `CLICOLOR_FORCE`, `TERM=dumb`, the Windows console question — and that is a pure function of a
+  probe struct, tested without a terminal (`src/style.rs`).
+- **Detection** uses `std::io::IsTerminal`, stable since 1.70, which is why `atty` and `is-terminal` are
+  unnecessary.
+- **Progress** is one line on stderr, redrawn by a thread that lives exactly as long as the run
+  (`src/progress.rs`). A framework would give us bars, spinners, multi-bars and terminal-width queries; the
+  line here needs none of them, and a terminal-width query needs a platform call that `forbid(unsafe_code)`
+  rules out.
+
+The cost is roughly 300 lines of code with tests, against a dependency tree that would grow the binary by
+more than the feature is worth.
+
 ---
 
 ## 3. Rejected dependencies
@@ -144,6 +183,9 @@ instead of using a vetted crate.
 | `image` | a large umbrella crate; we need one decoder for one format |
 | `libc` / `windows-sys` | not needed: `std` exposes permissions, timestamps and rename; platform-specific metadata we do not preserve anyway (see [safety](safety.md#3-metadata)) |
 | `log` / `env_logger` | a small stderr printer is enough; logging frameworks are not part of the binary |
+| `owo-colors`, `colored`, `anstream`, `termcolor` | five SGR sequences and a `bool` are the whole feature; the decision logic is 60 lines of tested code, and a crate costs more bytes than the strings it hides (§2.8) |
+| `indicatif`, `console`, `crossterm` | the progress line is one `write!` per 100 ms to stderr from one thread; a progress-bar framework brings terminal-width detection, styling and a dependency tree |
+| `atty` / `is-terminal` | `std::io::IsTerminal` has been stable since Rust 1.70, and the floor here is 1.88 |
 
 ---
 

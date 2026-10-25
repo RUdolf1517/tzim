@@ -21,6 +21,7 @@ These hold for every format and are tested as properties, not as anecdotes.
 | I6 | Verification uses an independent decoder | architecture test: the writer modules do not appear in the verification path |
 | I7 | Replacement is atomic where the platform allows | instrumented test in `replace`: the rename is the last operation; failure before it leaves the original intact |
 | I8 | Unparseable input is refused, never repaired | corpus of truncated/corrupted files; assert `failed` and no output |
+| I9 | Presentation never changes results | the same file rendered with `--color=always` and `--color=never` is identical once SGR sequences are stripped; `--json --color=always` contains no escape sequence; the real-file corpus reports the same "bytes written" total as the previous release |
 
 Idempotence is also a property: running Tzim twice on the same tree must produce zero changes the second
 time.
@@ -131,6 +132,11 @@ not done until every row passes in CI.
 - gzip header parse/serialise round-trip, including all flags.
 - ZIP structure reader/writer: offsets, descriptors, EOCD, comments.
 - Dedup and traversal policy.
+- Colour detection (`src/style.rs`): a pure function of a probe struct, so `NO_COLOR`, `CLICOLOR`,
+  `CLICOLOR_FORCE`, `TERM=dumb`, a pipe and a non-ANSI console are all covered without a terminal, and the
+  three-way `--color` flag is tested against each of them.
+- Progress line text (`src/progress.rs`): frame rotation, wrapping, the saved total appearing only when
+  there is one, and a hard limit on the length of the line so it cannot wrap in a narrow terminal.
 
 ### Integration tests
 
@@ -153,6 +159,11 @@ The command line has its own contract, because it is what every other test goes 
 | `tzim x.tif --strip-metadata` | textual tags gone, `Orientation`, resolution and every strip untouched |
 | `tzim x.png --strip-metadata --dry-run --json` | nothing written; `metadata_stripped` in the record and `strip_metadata` in the summary |
 | `tzim x.png` (no flag) | text chunks still there, whatever the encoder does |
+| `tzim -rq`, `tzim -nr sub`, `tzim -j2` | clustered short flags and attached values behave as the long forms |
+| `tzim --nope` | exit `2`, a `usage:` line, the offending flag and `--help` on stderr, nothing on stdout |
+| `tzim --color=always x.png` | escape sequences appear, and stripping them gives exactly what `--color=never` printed |
+| `tzim --json --color=always x.png` | the JSON contains no escape sequence |
+| `tzim -r .` with stdout closed | exit code unchanged, no panic and no `failed printing` on stderr |
 
 ### Fixture corpus
 

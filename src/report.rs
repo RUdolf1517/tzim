@@ -1,8 +1,10 @@
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::detect::Format;
 use crate::error::Error;
+use crate::style::{Pen, Style};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Status {
@@ -147,14 +149,28 @@ pub fn exit_code(outcomes: &[Outcome]) -> i32 {
     0
 }
 
-pub fn print_human(
+/// Everything the human report needs from the command line.
+pub struct Human<'a> {
+    pub quiet: bool,
+    pub dry_run: bool,
+    pub strip_metadata: bool,
+    pub style: Style,
+    pub summary: &'a Summary,
+}
+
+/// Writes the per-file lines and then the summary.
+///
+/// The sink is a parameter rather than `stdout!()` so that a closed pipe comes
+/// back as an `io::Error` the caller can recognise, instead of a panic inside
+/// `println!` — which, with `panic = "abort"`, kills the process with a
+/// backtrace-shaped message the user cannot act on.
+pub fn print_human<W: Write + ?Sized>(
+    out: &mut W,
     outcomes: &[Outcome],
-    summary: &Summary,
-    quiet: bool,
-    dry_run: bool,
-    strip_metadata: bool,
-) {
-    if !quiet {
+    opts: &Human<'_>,
+) -> io::Result<()> {
+    let style = opts.style;
+    if !opts.quiet {
         let width = outcomes
             .iter()
             .map(|o| display_width(&o.path.to_string_lossy()))
@@ -164,76 +180,120 @@ pub fn print_human(
 
         for o in outcomes {
             let path = o.path.to_string_lossy();
-            let padded = format!("{path:<width$}");
-            let format = o
-                .format
-                .map(|f| f.name())
-                .unwrap_or("-")
-                .to_string();
-            let detail = match o.status {
-                Status::Optimized | Status::WouldOptimize => {
-                    let mut suffix = String::new();
-                    if o.status == Status::WouldOptimize {
-                        suffix.push_str("  (dry run)");
-                    }
-                    if strip_metadata {
-                        // The only status where the output is not a faithful copy
-                        // of the input's metadata, so it is named on every line.
-                        suffix.push_str("  (metadata stripped)");
-                    }
-                    // A gain is printed as a negative number, exactly as the old
-                    // float formatting did, including "-0.0" when nothing moved.
-                    let (sign, tenths) = match o.before {
-                        0 => ('-', 0),
-                        _ if o.after <= o.before => (
-                            '-',
-                            round_half_even((o.before - o.after) as u128 * 1000, o.before as u128),
-                        ),
-                        _ => (
-                            '+',
-                            round_half_even((o.after - o.before) as u128 * 1000, o.before as u128),
-                        ),
-                    };
-                    format!(
-                        "{} -> {}  {sign}{}.{}%{suffix}",
-                        size(o.before),
-                        size(o.after),
-                        tenths / 10,
-                        tenths % 10
-                    )
-                }
-                _ => match (&o.note, &o.error) {
-                    (_, Some(e)) if o.status == Status::Failed => format!("failed: {e}"),
-                    (Some(note), _) => format!("{}: {}", o.status.human(), note),
-                    _ => o.status.human().to_string(),
-                },
-            };
-            println!("{padded}  {format:<5}  {detail}");
+            let mut line = String::with_capacity(path.len() + 72);
+            line.push_str(&format!("{path:<width$}"));
+            line.push_str("  ");
+            // The format column is context, not a result: dimming it keeps the
+            // eye on the status and the number.
+            let name = o.format.map(|f| f.name()).unwrap_or("-");
+            style.paint_into(&mut line, Pen::Dim, &format!("{name:<5}"));
+            line.push_str("  ");
+            push_detail(&mut line, o, opts.dry_run, opts.strip_metadata, style);
+            writeln!(out, "{line}")?;
         }
     }
-
-    let action = if dry_run { "would optimize" } else { "optimized" };
-    let hundredths = (summary.elapsed.as_micros() + 5_000) / 10_000;
-    println!(
-        "Summary: {} files, {} {action}, {} saved, {} already optimal, {} unsupported, {} skipped, {} failed, {}.{:02} s",
-        summary.files,
-        summary.optimized + summary.would_optimize,
-        size(summary.before.saturating_sub(summary.after)),
-        summary.already_optimal,
-        summary.unsupported,
-        summary.skipped,
-        summary.failed,
-        hundredths / 100,
-        hundredths % 100
-    );
+    push_summary(out, opts.summary, opts.dry_run, style)
 }
 
-pub fn print_json(
+/// One line per file, with colour only on the outcome.
+fn push_detail(into: &mut String, o: &Outcome, dry_run: bool, strip_metadata: bool, style: Style) {
+    if matches!(o.status, Status::Optimized | Status::WouldOptimize) {
+        // A gain is printed as a negative number, exactly as the old float
+        // formatting did, including "-0.0" when nothing moved.
+        let (sign, tenths) = match o.before {
+            0 => ('-', 0),
+            _ if o.after <= o.before => (
+                '-',
+                round_half_even((o.before - o.after) as u128 * 1000, o.before as u128),
+            ),
+            _ => (
+                '+',
+                round_half_even((o.after - o.before) as u128 * 1000, o.before as u128),
+            ),
+        };
+        into.push_str(&format!("{} -> {}  ", size(o.before), size(o.after)));
+        let percent = format!("{sign}{}.{}%", tenths / 10, tenths % 10);
+        let pen = if o.after < o.before {
+            Pen::Green
+        } else {
+            Pen::Dim
+        };
+        style.paint_into(into, pen, &percent);
+        if o.status == Status::WouldOptimize {
+            style.paint_into(into, Pen::Dim, "  (dry run)");
+        }
+        if strip_metadata {
+            // The only status where the output is not a faithful copy of the
+            // input's metadata, so it is named on every line.
+            style.paint_into(into, Pen::Dim, "  (metadata stripped)");
+        }
+        return;
+    }
+
+    let pen = match o.status {
+        Status::Failed => Pen::Red,
+        Status::Skipped => Pen::Yellow,
+        _ => Pen::Dim,
+    };
+    style.paint_into(into, pen, o.status.human());
+    if let (Status::Failed, Some(e)) = (&o.status, &o.error) {
+        into.push_str(&format!(": {e}"));
+        return;
+    }
+    if let Some(note) = &o.note {
+        into.push_str(&format!(": {note}"));
+    }
+}
+
+/// The summary is the last thing on screen, so it carries the numbers that
+/// decide whether the run was worth it: the count that moved and the bytes.
+fn push_summary<W: Write + ?Sized>(
+    out: &mut W,
+    summary: &Summary,
+    dry_run: bool,
+    style: Style,
+) -> io::Result<()> {
+    let action = if dry_run { "would optimize" } else { "optimized" };
+    let saved = summary.before.saturating_sub(summary.after);
+    let hundredths = (summary.elapsed.as_micros() + 5_000) / 10_000;
+
+    let mut line = String::with_capacity(160);
+    style.paint_into(&mut line, Pen::Bold, "Summary:");
+    line.push_str(&format!(
+        " {} files, {} {action}, ",
+        summary.files,
+        summary.optimized + summary.would_optimize
+    ));
+    let saved_text = format!("{} saved", size(saved));
+    if saved > 0 {
+        style.paint_into(&mut line, Pen::Green, &saved_text);
+    } else {
+        line.push_str(&saved_text);
+    }
+    line.push_str(&format!(
+        ", {} already optimal, {} unsupported, {} skipped, ",
+        summary.already_optimal, summary.unsupported, summary.skipped
+    ));
+    let failed_text = format!("{} failed", summary.failed);
+    if summary.failed > 0 {
+        style.paint_into(&mut line, Pen::Red, &failed_text);
+    } else {
+        line.push_str(&failed_text);
+    }
+    line.push_str(&format!(", {}.{:02} s", hundredths / 100, hundredths % 100));
+    writeln!(out, "{line}")
+}
+
+/// Newline-delimited JSON. Never coloured, whatever `--color` says: the schema
+/// is for programs, and an escape sequence inside a JSON string is a bug in the
+/// producer, not a feature of the consumer.
+pub fn print_json<W: Write + ?Sized>(
+    out: &mut W,
     outcomes: &[Outcome],
     summary: &Summary,
     dry_run: bool,
     strip_metadata: bool,
-) {
+) -> io::Result<()> {
     for o in outcomes {
         let mut line = String::with_capacity(256);
         line.push_str("{\"type\":\"file\",\"path\":");
@@ -271,10 +331,11 @@ pub fn print_json(
             _ => line.push_str("null"),
         }
         line.push('}');
-        println!("{line}");
+        writeln!(out, "{line}")?;
     }
 
-    println!(
+    writeln!(
+        out,
         "{{\"type\":\"summary\",\"schema\":1,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
         summary.files,
         summary.optimized,
@@ -289,7 +350,7 @@ pub fn print_json(
         summary.elapsed.as_millis(),
         dry_run,
         strip_metadata
-    );
+    )
 }
 
 fn display_width(s: &str) -> usize {

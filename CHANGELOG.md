@@ -9,6 +9,44 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
+## [0.8.0] - 2026-10-25 — the terminal, and a contract for FLAC
+
+No output byte changed and no file is treated differently: this release is the interface around the same
+work. The corpus still writes 379 177 bytes.
+
+### Added
+
+- **Colour**, on a terminal only: the status word, the saving percentage and the two summary numbers.
+  Controlled by `--color=auto|always|never` and `--no-color`, and following `NO_COLOR`, `CLICOLOR=0`,
+  `CLICOLOR_FORCE` and `TERM=dumb`. `--json` is never coloured. Windows terminals that cannot interpret
+  ANSI sequences are detected and left alone.
+- **A progress line** on stderr for runs that take longer than a moment: ASCII frames, the file counter,
+  the clock and the running total. Drawn only when stderr is a terminal; `--no-progress` turns it off.
+- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--contract-written-not-implemented)),
+  written before any code as every contract here is, with the audit behind it in
+  [docs/flac-audit.md](docs/flac-audit.md). No FLAC support is claimed: the handler and its tests do not
+  exist, and the implementation is blocked on three crates that have not been approved.
+- [cli §10](docs/cli.md#10-colour-and-progress) and [cli §11](docs/cli.md#11-conformance-with-cli-conventions):
+  the colour rules, and an audit against the CLI guidelines that found four defects — all fixed below.
+
+### Fixed
+
+- **A closed pipe no longer aborts the process.** `tzim . -r | head -1` used to fail with `EPIPE` inside
+  `println!` and, under `panic = "abort"`, kill the process with an unhelpful message. The report now writes
+  to a sink, and a closed stdout ends it quietly with the exit code the run had earned.
+- **Clustered short flags and attached values** (`-rq`, `-nr`, `-j4`) are accepted, as every getopt-based
+  tool accepts them; before they were rejected as unknown options.
+- **Usage errors print the usage line**, not only a hint to read `--help`.
+- **`--help` matches the binary**: the `--formats` list now names `tiff`, and the colour, progress and
+  command-line convention sections are part of it.
+
+### Documentation
+
+- The example in [cli §3](docs/cli.md#3-human-output) showed one decimal and a percentage in the summary,
+  neither of which the program has ever printed. The text now matches the binary.
+- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-need-and-why-they-are-not-in-cargotoml)
+  record the FLAC crates that are not added and why colour and progress are not dependencies.
+
 ## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter
 
 No format, flag, guarantee or output byte changed. The corpus writes 379 177 bytes in

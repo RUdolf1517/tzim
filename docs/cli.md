@@ -3,8 +3,10 @@
 Related: [guarantees](guarantees.md) · [safety](safety.md) · [formats](formats.md)
 
 The interface is deliberately small. There are no config files, no environment variables of our own, no
-daemon, no stdin/stdout streaming, and no colour output. Everything is decided by the arguments and by the
-files on disk, so a command that worked yesterday behaves the same today.
+daemon and no stdin/stdout streaming. Everything that decides *what happens to a file* is an argument or is
+on disk, so a command that worked yesterday behaves the same today. Two things decide only how the report
+*looks* — whether colour is on and whether the progress line is drawn — and both are off unless a terminal
+is attached (see [§10](#10-colour-and-progress)).
 
 ```
 tzim [OPTIONS] <PATH>...
@@ -81,6 +83,9 @@ reproducible and diffable.
 | `-j, --jobs <N>` | `min(cores, 4)`; with `--zopfli` `min(cores, 2)` | maximum number of files processed concurrently; `1` disables parallelism |
 | `--json` | off | emit newline-delimited JSON on stdout (see §4) |
 | `-q, --quiet` | off | suppress human output; errors still go to stderr |
+| `--color <WHEN>` | `auto` | `auto`, `always` or `never`; see [§10](#10-colour-and-progress) |
+| `--no-color` | — | same as `--color=never` |
+| `--no-progress` | — | never draw the progress line, even on a terminal |
 | `--fail-fast` | off | stop after the first failed file |
 | `--include <EXT,...>` | all | only files with these extensions (case-insensitive, repeatable, comma-separated) |
 | `--exclude <EXT,...>` | none | skip files with these extensions; wins over `--include` |
@@ -117,6 +122,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | ZIP | archive comment, entry comments, DOS timestamps | names, extra fields, attributes, order, method |
 | JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
+| FLAC (when implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 | TIFF | `ImageDescription`, `DocumentName`, `Make`, `Model`, `Software`, `DateTime`, `HostComputer`, `InkNames`, `Copyright`, IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
@@ -137,26 +143,33 @@ All options above are frozen from v0.3; the JPEG switch is the only behavioural 
 Per-file line on stdout, then a summary:
 
 ```
-photo.png        PNG     1.2 MiB -> 1.05 MiB   -15.3%
-logo.svgz        GZIP    18.2 KiB -> 16.9 KiB   -7.1%
-notes.txt        -       skipped: unsupported format
-scan.tif         -       skipped: unsupported format
-Summary: 4 files, 2 optimized, 211.3 KiB saved (-13.9%), 2 skipped, 0 failed, 0.8 s
+photo.png        PNG    1.20 MiB -> 1.05 MiB  -12.5%
+logo.svgz        GZIP   18.20 KiB -> 16.90 KiB  -7.1%
+notes.txt        -      skipped: unsupported format
+scan.tif         TIFF   already optimal
+Summary: 4 files, 2 optimized, 211.30 KiB saved, 1 already optimal, 0 unsupported, 1 skipped, 0 failed, 0.80 s
 ```
 
 Rules:
 
-- sizes are binary units (`KiB`, `MiB`, `GiB`) with one decimal; exact bytes are always available in JSON;
+- sizes are binary units (`KiB`, `MiB`, `GiB`) with two decimals — the arithmetic is integer, so the digits
+  are exact rather than merely rounded; exact bytes are always available in JSON;
 - `->` is used instead of a Unicode arrow so output survives naive terminals;
 - alignment is fixed-width per column based on the longest path in the run, capped to keep lines readable;
 - files that were not changed are still listed, so a run is never silent about what it skipped;
 - `-q` suppresses all of the above; errors and warnings remain on stderr;
 - stdout is results only; diagnostics, warnings and errors always go to stderr. Piping stdout to a file
-  therefore yields clean, machine-readable data even in human mode.
+  therefore yields clean, machine-readable data even in human mode;
+- the summary is the last line, because that is where the eye goes after a long run.
 
-Statuses shown to humans: `optimized`, `already optimal`, `skipped: <reason>`, `failed: <reason>`.
+Statuses shown to humans: `optimized`, `would optimize` (dry run), `already optimal`, `unsupported`,
+`skipped: <reason>`, `failed: <reason>`.
 
----
+In a terminal, colour marks the outcome and nothing else: the status word (green for a rewrite, dim for
+"nothing to do", yellow for a skip, red for a failure), the saving percentage, and the saved total in the
+summary. The format column is dimmed, and `(dry run)` / `(metadata stripped)` are dimmed suffixes. Nothing
+else is coloured — headings, tables and `--help` stay plain, because reference text is pasted into issues
+and piped into files.
 
 ## 4. JSON output
 
@@ -203,6 +216,11 @@ and enum values are stable; new optional fields may be added in minor versions.
 | `3` | Fatal error: the run could not be completed (unreadable input root, out of memory, stdout closed). |
 | `4` | **A verification failure occurred.** The affected file was not replaced; the run is aborted. |
 | `130` | Interrupted by `SIGINT`; produced by the shell/OS, not by Tzim. |
+
+A **closed stdout** is not a failure and does not change the result. When the reader of a pipe goes away —
+`tzim . -r | head -1` — the write fails with `EPIPE`; Tzim says nothing further and exits with the code the
+run had already earned (`0`, `1` or `4`), because losing the report should not turn a failed file into a
+success. Any other write error on stdout (a full disk, a broken redirect) is a fatal error and exits `3`.
 
 Precedence when several conditions apply: `2` (immediate) → `4` → `3` → `1` → `0`.
 
@@ -267,6 +285,8 @@ tzim "Photo 2024 (копия).png" "иконки/логотип.svgz"
 ## 9. Stability policy
 
 - Existing flags, their defaults and the exit codes are frozen from v0.1.
+- Human output may gain colour, alignment or a progress line in a minor version; machine output (`--json`)
+  may not change shape without a `schema` bump.
 - New flags are additive and default to the previous behaviour.
 - Removing or renaming a flag, or changing an exit code, requires a major version bump.
 - The JSON schema is versioned with `schema`; fields may be added, not removed or repurposed.
@@ -280,3 +300,131 @@ interface became simpler and it was worth the break once, at 0.x, rather than ne
 written against 0.1–0.4 breaks. `tzim formats` survives the same way as an alias of `--list-formats`. Both
 are compatibility shims, not documented commands, and they will be removed only when a major version makes
 that free.
+
+---
+
+## 10. Colour and progress
+
+Both are *presentation*: they change how the report looks, never what happens to a file. Both are off unless
+a terminal is attached, and both have a flag that forces the decision.
+
+### Colour
+
+The report is coloured when its stream is an interactive terminal. `stdout` and `stderr` are probed
+separately: `tzim . > report.txt` writes plain text to the file and still colours the errors it prints on
+screen, which is the behaviour that makes a redirected report readable and a terminal diagnosis possible at
+the same time.
+
+| Source | Effect |
+| --- | --- |
+| `--color=always`, `--color=never` | the decision, in both directions; wins over everything below |
+| `--no-color` | same as `--color=never` |
+| `NO_COLOR` (set and non-empty) | off — [no-color.org](https://no-color.org/) |
+| `CLICOLOR_FORCE` (set, not `0`) | on, even through a pipe — what CI job logs are for |
+| `CLICOLOR=0` | off |
+| `TERM=dumb` | off |
+| not a terminal | off |
+
+`--json` is never coloured, whatever the flag says: escape sequences inside a JSON string would be a bug in
+the producer, not a feature for the consumer.
+
+On Windows the console only interprets ANSI sequences on Windows 10 and later, and only when the program
+asks it to — which would mean either `unsafe` or a dependency. Colour is therefore offered only in terminals
+that advertise it (`WT_SESSION`, `TERM`, `ANSICON`, `TERM_PROGRAM`), and `--color=always` overrides that for
+somebody who knows their terminal. Printing `[32m` into an old `cmd.exe` is worse than no colour.
+
+What is coloured, and with what:
+
+| Element | Attribute | Why |
+| --- | --- | --- |
+| `optimized` / `would optimize` | green | the run did something |
+| the saving percentage | green, dim when nothing moved | the number people look for |
+| `already optimal` | dim | nothing to do, nothing to worry about |
+| `skipped` / `unsupported` | yellow / dim | not an error |
+| `failed` | red | the only thing that is one |
+| saved total, failed count in the summary | green / red | the two numbers the summary exists for |
+| the format column | dim | context, not a result |
+| `tzim:` prefix of a diagnostic | red | errors are on stderr and are rare |
+
+Only SGR codes `1`, `2`, `31`, `32`, `33` and a `0` reset are used: no 256-colour, no truecolor. A terminal
+that cannot render the palette should get clean text, not approximations of it. `--help`, `--info`,
+`--list-formats` and `--check-deps` are never coloured — they are reference text that gets pasted into issues
+and piped into files.
+
+### Progress
+
+Runs of a few hundred files can take minutes, and a program that prints nothing for a minute looks broken.
+While the work is in progress Tzim draws one line on **stderr**:
+
+```
+/ 137/694 files  3.42 s  1.80 MiB saved
+```
+
+- frames are ASCII, `|/-\`, for the same reason the report prints `->` instead of an arrow;
+- the line is redrawn every 100 ms and only after the run has lasted 150 ms, so a fast run does not flash;
+- it contains no path: a path makes the line as wide as the deepest directory and turns a status indicator
+  into noise. The counters, the clock and the running total are the information;
+- the saved total counts the files that have finished, so it only grows;
+- it is erased before the first result is printed, so the report never shares a row with it.
+
+It is drawn only when **all** of these hold: stderr is a terminal, the run has at least one file, and
+`--quiet`, `--json` and `--no-progress` are absent. A line of `\r` frames belongs on a terminal; in a log
+file or a CI transcript it is noise that hides the lines around it.
+
+The progress line is not a measurement. `Summary:` is.
+
+---
+
+## 11. Conformance with CLI conventions
+
+Measured against [Command Line Interface Guidelines](https://clig.dev/) and the POSIX utility syntax
+guidelines, from the behaviour of the binary rather than from intent. Each row is a convention, whether this
+tool follows it, and what was done about it.
+
+### 11.1 Followed
+
+| Convention | Where |
+| --- | --- |
+| `--help` and `--version` exist, go to stdout, exit `0` | `-h/--help`, `-V/--version` |
+| usage errors go to stderr, print `usage:` and exit `2` | [§5](#5-exit-codes) |
+| distinct, documented exit codes; success is `0` | [§5](#5-exit-codes) |
+| results on stdout, diagnostics on stderr; either can be redirected alone | [§3](#3-human-output) |
+| machine-readable output is a separate mode with its own schema | `--json`, [§4](#4-json-output) |
+| options may appear before, between or after paths; `--` ends parsing | [§2](#2-options) |
+| `--opt=value` and `--opt value` are both accepted | [§2](#2-options) |
+| no interactive prompts, no pager, no config file, no hidden state | everywhere |
+| a single action needs no subcommand | paths are the command, [§1](#1-input-objects) |
+| long and short forms for everything used often (`-r`, `-n`, `-q`, `-j`) | [§2](#2-options) |
+| colour and animation only on a terminal, `NO_COLOR` honoured, `--no-color` offered | [§10](#10-colour-and-progress) |
+| `SIGINT` works: no signal handlers, no half-written files | [safety](safety.md#5-failure-modes) |
+| errors name the thing that failed and the flag that fixes it | `--allow-hardlinks`, `--follow-symlinks` |
+
+### 11.2 Fixed in v0.8.0 — four real violations
+
+These were found by writing this section, and every one of them was a user-visible defect:
+
+| Problem | What it looked like | Fix |
+| --- | --- | --- |
+| **A closed pipe aborted the process.** Rust ignores `SIGPIPE`, so `println!` failed with `EPIPE` and panicked; with `panic = "abort"` that is an abort, a core-shaped message and exit `134`. | `tzim . -r \| head -1` printed `thread 'main' panicked at ... failed printing to stdout` | the report writes to a sink and returns `io::Result`; `EPIPE` ends the report quietly with the run's own exit code ([§5](#5-exit-codes)) |
+| **No short-flag clustering.** Every getopt-based tool accepts `-rq`; this one answered `unknown option`. | `tzim -rq .` failed | clusters expand, and `-j4` is accepted as `-j 4` |
+| **No usage line on a usage error.** The message named the bad flag and then said "try `tzim --help`", leaving the shape of the command to be guessed. | `tzim: unknown option \`--colour\`` | the same error now prints `usage: tzim [OPTIONS] <PATH>...` |
+| **No way to control colour or animation** — the tool could not be made to colour a log or to stop animating, and ignored `NO_COLOR`. | nothing to type | `--color`, `--no-color`, `--no-progress`, [§10](#10-colour-and-progress) |
+
+A fifth was found and fixed in the documentation rather than the code: §3 showed output with one decimal and
+a percentage inside the summary line, neither of which the binary has ever printed. The text now matches the
+binary, and the binary was left alone — its format is frozen and two decimals are more precise.
+
+### 11.3 Deliberate deviations
+
+Documented rather than planned for removal. Each is a place where the convention and the guarantee pull in
+different directions.
+
+| Deviation | Why |
+| --- | --- |
+| **`-` is not stdin.** A path of `-` is a file literally named `-`. | The tool replaces files in place and verifies against the original on disk; a stream has no original to compare with, so a stdin mode could not offer the guarantee that defines the program. |
+| **`optimize` and `formats` as first words** shadow files with those names (frozen, removed at 1.0). | Compatibility with 0.1–0.4. `tzim -- optimize` already works for the file. |
+| **No "did you mean" suggestions.** | A table of every flag costs bytes in a binary whose size is a requirement, and a guess is wrong often enough to be worse than silence. The usage line is one line away. |
+| **`--jobs 0` is rejected** rather than meaning "choose for me". | Zero means "decide for me" only if it is documented as such; an explicit number, including `1`, is unambiguous. |
+| **No `--progress=always`.** | The only reason to want progress in a pipe is to read it later, and what is worth reading later is the summary. |
+| **`tzim` with no arguments prints the usage error, not the help.** | A missing path is a mistake, not a request for documentation; the error carries the usage line and the hint. |
+| **No shell completions or man page are shipped.** | They are another surface to keep in step with the flags; `--help` is generated from no source and cannot drift. If they are added, they will be generated from the parser in the same commit. |

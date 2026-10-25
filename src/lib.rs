@@ -13,8 +13,10 @@ pub mod error;
 pub mod formats;
 pub mod pipeline;
 pub mod pool;
+pub mod progress;
 pub mod replace;
 pub mod report;
+pub mod style;
 pub mod walk;
 
 #[cfg(feature = "fuzz-api")]
