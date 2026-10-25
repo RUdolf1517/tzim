@@ -34,20 +34,20 @@ time.
 ## 2. Traceability
 
 Each contract clause has an ID and the tables below state the assertion behind it. The IDs are the checklist
-used in review; a format is not done until every row has a test that passes in CI. Nine rows do not have one
-today and are marked **no test** rather than left to look covered:
+used in review; a format is not done until every row has a test that passes in CI. Where a row has a test, the
+row names it. A row whose assertion has **no** test says so in the row itself rather than looking covered: the
+table is evidence, not a plan.
+
+Six rows that said nothing at all in 0.11.0 now name the test that pins them — `--zopfli` never worse than the
+default (`T-PNG-09`), gzip `FCOMMENT` (`T-GZ-01`) and `FHCRC` (`T-GZ-02`), ZIP unknown methods and multi-disk
+archives (`T-ZIP-09`), `--max-uncompressed` (`T-ZIP-12`) and a directory that runs past the end of an ICO
+(`T-ICO-04`). Three still have no test:
 
 | Row | What is missing |
 | --- | --- |
 | `T-PNG-04` | no interlaced fixture exists, so "recompression only" is never observed |
-| `T-PNG-09` | `--zopfli` is parsed and propagated but no test runs it end to end |
-| `T-GZ-01` | `FCOMMENT` cannot be produced by `build_gzip`; the test covers `FNAME` and `FEXTRA` |
-| `T-GZ-02` | `FHCRC` is copied verbatim by design and no test builds a header that carries it |
-| `T-ZIP-09` | ZIP64 and encryption are refused in tests; multi-disk and unknown methods are not |
-| `T-ZIP-12` | `--max-ratio` is tested; `--max-uncompressed` is not |
-| `T-APNG-05` | inconsistent frame sequences are refused by the parser and no fixture triggers it |
-| `T-NEST-04` | `--max-depth` is tested; the parent's size budget for expansion is not |
-| `T-ICO-04` | out-of-range offsets are tested; a directory whose declared count disagrees with its size is not |
+| `T-APNG-05` | inconsistent frame sequences are refused by the `png` crate before the handler sees them, and no fixture gets past that |
+| `T-NEST-04` | `--max-depth` is tested; the per-entry size budget for nested expansion is not |
 
 ### PNG
 
@@ -55,20 +55,20 @@ today and are marked **no test** rather than left to look covered:
 | --- | --- |
 | `T-PNG-01` | All non-IDAT chunks (including an unknown/private chunk) are byte-identical, in the same order |
 | `T-PNG-02` | IHDR payload is byte-identical |
-| `T-PNG-03` | Decoded pixels are identical for the images the fixture builder produces: 8-bit RGBA, non-interlaced. Other colour types and bit depths are not tested, and the filter unit test uses bytes-per-pixel 4 only |
-| `T-PNG-04` | Interlaced images: recompression only, pixels identical |
+| `T-PNG-03` | Decoded pixels are identical for the images the fixture builder produces: 8-bit RGBA, non-interlaced. Other colour types and bit depths are not tested — gray, gray+alpha, RGB, palette at 1/2/4/8 bits and 16-bit are rewritten by the corpus without complaint, but nothing re-decodes them. The filter unit test covers bytes-per-pixel 1 to 8 (`filters_roundtrip_for_all_types`), not only RGBA8's four |
+| `T-PNG-04` | Interlaced images: recompression only, pixels identical. **No test**: `PngSpec` cannot write an interlaced file |
 | `T-PNG-05` | APNG: `acTL`/`fcTL`/`fdAT` untouched; default image pixels identical |
 | `T-PNG-06` | Corrupted inputs (bad CRC, truncated, missing IEND, bytes after IEND) are refused |
 | `T-PNG-07` | A candidate that is not smaller is discarded; file unchanged, status `already_optimal` |
 | `T-PNG-08` | The output parses strictly and all chunk CRCs are valid |
-| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified |
+| `T-PNG-09` | With `--zopfli`, the smallest of all candidates is chosen and verified — `t_png_09_zopfli_is_at_least_as_good_as_the_default` runs both and requires the strong one to be no larger |
 
 ### gzip
 
 | ID | Assertion |
 | --- | --- |
-| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` |
-| `T-GZ-02` | `FHCRC` preserved and still valid |
+| `T-GZ-01` | Header preserved with `FEXTRA`, `FNAME`, `FCOMMENT` — `t_gz_01_a_comment_is_preserved` splices a comment in and compares the header byte for byte |
+| `T-GZ-02` | `FHCRC` preserved and still valid — `t_gz_02_fhcrc_is_preserved_and_still_valid` builds the CRC-16 the format defines and re-checks it in the output |
 | `T-GZ-03` | Payload identical; trailer (`CRC32`, `ISIZE`) unchanged |
 | `T-GZ-04` | Multi-member and trailing-garbage inputs are refused |
 | `T-GZ-05` | Truncated or bad-trailer inputs are refused |
@@ -86,10 +86,10 @@ today and are marked **no test** rather than left to look covered:
 | `T-ZIP-06` | Stored entries stay stored |
 | `T-ZIP-07` | Signed archives are refused (JAR `META-INF` signatures, APK signing block, `_xmlsignatures/`, `package/services/digital-signature/`) |
 | `T-ZIP-08` | ODF/EPUB archives are accepted and keep `mimetype` stored first |
-| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused |
+| `T-ZIP-09` | ZIP64, multi-disk, encrypted and unknown-method archives are refused — `t_zip_09_an_unknown_compression_method_is_refused` (method 12) and `t_zip_09_a_multi_disk_archive_is_refused` (a non-zero disk number) for the two that had no test |
 | `T-ZIP-10` | Truncated archives and inconsistent local headers are refused |
 | `T-ZIP-11` | Every entry's decompressed bytes and CRC are identical |
-| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) |
+| `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) — `t_zip_12_max_uncompressed_is_enforced`, and the ratio limit in an earlier test |
 
 ### ICO / APNG / nested / JPEG
 
@@ -98,16 +98,16 @@ today and are marked **no test** rather than left to look covered:
 | `T-ICO-01` | Directory header and entry order preserved |
 | `T-ICO-02` | Embedded PNGs satisfy the PNG contract and decode identically |
 | `T-ICO-03` | BMP/DIB entries are byte-identical |
-| `T-ICO-04` | Malformed directories and out-of-range offsets are refused |
+| `T-ICO-04` | Malformed directories and out-of-range offsets are refused — `t_ico_04_a_directory_that_runs_past_the_file_is_refused`. A declared count outside 1..=256 is never refused by the handler, because detection does not call such a file an ICO at all: it is reported `unsupported`, exit 0 |
 | `T-APNG-01` | `acTL` payload preserved |
 | `T-APNG-02` | Every `fcTL` preserved, in order |
 | `T-APNG-03` | Every frame decodes identically (pixels and frame metadata) |
 | `T-APNG-04` | The default image is optimized and verified |
-| `T-APNG-05` | Inconsistent frame sequences are refused |
+| `T-APNG-05` | Inconsistent frame sequences are refused. **No test**: the `png` crate refuses them first, so the handler's own check is unreachable from a fixture |
 | `T-NEST-01` | A child that fails verification is stored unmodified |
 | `T-NEST-02` | Optimized children satisfy their own contracts |
 | `T-NEST-03` | `--max-depth` is enforced |
-| `T-NEST-04` | Nested expansion respects the parent's size budget |
+| `T-NEST-04` | Nested expansion respects the parent's size budget. **No test**: `--max-depth` is tested, the per-entry budget is not |
 | `T-JPG-01` | Marker inventory (type, order, payload) preserved; Exif and `COM` payloads survive |
 | `T-JPG-02` | `DQT` and `SOF0` payloads byte-identical |
 | `T-JPG-03` | Every DCT coefficient identical after the rewrite (stronger than comparing pixels) |
@@ -149,6 +149,33 @@ input that exercises the overflow bound.
 | `T-TIF-09` | Truncated or inconsistent files fail with exit 1 and the original is untouched |
 | `T-TIF-10` | `--strip-metadata` removes the textual tags only; geometry, colour and ICC survive |
 | `T-TIF-11` | `--formats png` reports a TIFF as skipped, not failed |
+
+### The verifiers are tested against corrupted candidates
+
+Every traceability row above says what the *handler* produces. The other half of the contract is that the
+verifier refuses what it must, and until this existed no test called `verify` with a bad candidate: a verifier
+that accepted everything would have passed the whole suite.
+
+`tests/verification.rs` builds a valid original, builds a candidate that differs in exactly one field the
+contract names, and requires `Err`:
+
+| Test | Format | Corruption | The check it pins |
+| --- | --- | --- | --- |
+| `verification_rejects_changed_pixels` | PNG | one byte of one pixel, CRC recomputed | `decoded pixels differ` |
+| `verification_rejects_a_dropped_chunk` | PNG | `tEXt` removed by hand, no `--strip-metadata` | chunk inventory |
+| `verification_rejects_a_kept_filename` | gzip | `FNAME` kept under the flag | the stripped header |
+| `verification_rejects_a_changed_stored_entry` | ZIP | one byte of a stored entry, CRC left alone | payload comparison |
+| `verification_rejects_a_surviving_comment` | ZIP | archive comment put back under the flag | comment removal |
+| `verification_rejects_a_changed_tag_value` | TIFF | an ASCII tag's value changed, geometry untouched | tag values |
+| `verification_rejects_a_changed_bitmap_entry` | ICO | one byte of a BMP entry | payload comparison |
+| `verification_rejects_changed_trailing_bytes` | JPEG | bytes appended after `EOI` | the trailing-bytes rule |
+| `verification_rejects_a_larger_candidate` | all | candidate longer than the input | G3 clause 4, in the dispatcher |
+| `verification_accepts_an_equal_size_candidate_only_when_stripping` | all | equal length, with and without the flag | the flag half of I2 |
+
+Each corruption is chosen so that the other checks in the same function cannot see it — that is the point of
+the file. Two rules are therefore **not** covered, and the reason is in the module comment: the APNG `fdAT`
+sequence check (the `png` crate refuses a broken sequence first) and the JPEG coefficient comparison (a
+corrupted entropy stream usually fails to parse, so the test would pass for the wrong reason).
 
 ### Filesystem, replacement and idempotence
 
@@ -251,7 +278,7 @@ What each builder can produce today:
 | Builder | Covers | Does not cover |
 | --- | --- | --- |
 | `build_png` / `PngSpec` | 8-bit RGBA, non-interlaced; either scanline filter; compression level; arbitrary extra chunks (including unknown ones and `tEXt`); an APNG with `acTL` and frames | other color types, bit depths other than 8, interlaced images, palette with `tRNS` |
-| `build_gzip` | payload of any size; optional `FNAME` and `FEXTRA`; `XFL`; a deliberately non-zero MTIME | `FCOMMENT`, `FHCRC`, multi-member streams, trailing garbage |
+| `build_gzip` | payload of any size; optional `FNAME` and `FEXTRA`; `XFL`; a deliberately non-zero MTIME | `FCOMMENT` and `FHCRC` are spliced into the built header by the two tests that need them, not produced by the builder; multi-member streams and trailing garbage are built by hand in the refusal tests |
 | `build_zip` / `ZipEntrySpec` | `store` and `deflate` per entry; level; data descriptors with and without signature; local and central extra fields; entry and archive comments; non-UTF-8 names | ZIP64, encryption, prepended stubs, signed JAR/APK/OOXML |
 | `build_ico` | ICO and CUR directors with PNG or bitmap payloads of any size | — |
 | `build_jpeg` | baseline and greyscale; restart intervals; trailing bytes; an Exif `APP1` payload | progressive, CMYK, arithmetic coding, 12-bit |
@@ -273,17 +300,18 @@ Covered today, each by an integration test that asserts the original file is byt
 | same file via three paths | processed once | `duplicates_are_processed_once` |
 | permissions and mtime | preserved across the replacement | `permissions_and_mtime_survive_the_replacement` |
 | second run on the optimized tree | zero changes | `second_run_is_a_no_op` and the per-format equivalents |
+| hard-linked file | `skipped` with a reason naming `--allow-hardlinks`; with the flag the link is broken on purpose and the other name keeps the old bytes | `a_hard_linked_file_is_skipped_unless_allowed` |
+| Unix socket | `skipped` as not a regular file, never opened for writing, still there afterwards | `a_socket_is_skipped_and_never_opened_for_writing` |
+| path that is not valid UTF-8 (Linux only) | optimized through the raw bytes; the JSON record carries `path_raw_b64`. APFS and Windows refuse to create such a name, so the fixture cannot exist there | `a_path_that_is_not_valid_utf8_is_optimized` |
 
 **Not covered yet.** These are promises in [safety](safety.md) or consequences of it that no test exercises;
 they are tracked as work in issue #35, not silently assumed:
 
 | Scenario | Why it matters |
 | --- | --- |
-| path that is not valid UTF-8 (Unix) | the JSON `path_raw_b64` field exists for it and only a unit test touches the encoder |
 | read-only directory | the candidate cannot be created; the expected outcome is `failed` with the original intact |
 | symlink loop in a tree | the depth guard should terminate the walk; nothing asserts the message or the exit code |
-| hard-linked file | `skipped` by default, processed with `--allow-hardlinks`; the branch is untested |
-| FIFO / socket / device | must be skipped and never opened for writing |
+| FIFO / device node | must be skipped and never opened for writing |
 | disk full (small tmpfs) | `failed`, original intact, no temporary file left |
 | file modified during processing | `failed`, original intact (the I5 path) |
 | `SIGKILL` during processing | original intact; a `.tzim-*.tmp` may remain |
@@ -360,10 +388,10 @@ no release build enables:
 | `roundtrip` | detection, the handler for the detected format, and verification of the candidate |
 | `strip` | the same round trip with `--strip-metadata`: the removal paths and the checks that the removed structures are gone |
 
-The build enables `png, gzip, zip, ico` and `jpeg` (`fuzz/Cargo.toml:25`); `tiff` and `zlib` are **not**
-compiled into the fuzz build, so those two parsers are reached only by the unit and integration tests. Seeds
-are the pngsuite PNGs and the libjpeg-turbo test JPEGs, copied into `fuzz/corpus/roundtrip` and
-`fuzz/corpus/jpeg_decode` (`.github/workflows/fuzz.yml:62-64`); the `strip` target starts without seeds.
+The build enables **all seven** handlers (`png, gzip, zip, ico, jpeg, tiff, zlib`), so a detected TIFF or zlib
+stream reaches its real parser instead of the "format not compiled" arm. Seeds are the pngsuite PNGs and the
+libjpeg-turbo test JPEGs, copied into `fuzz/corpus/roundtrip` and `fuzz/corpus/jpeg_decode`, and the `strip`
+target is seeded from the same sets.
 
 The properties are: no panic, no unbounded allocation, no integer overflow, termination inside a time budget,
 and — for `roundtrip` and `strip` — that any candidate reported as accepted is no larger than the input and

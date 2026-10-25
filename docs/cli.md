@@ -61,9 +61,10 @@ With `--follow-symlinks`:
 
 - a symlink to a regular file is resolved and the **target** is optimized;
 - symlinked directories are descended;
-- a cycle does not hang the run: directory nesting is capped at 64 levels and anything deeper is refused with a
-  reason. The cycle itself is not detected, and no `(device, inode)` set is kept for directories — only files
-  are de-duplicated, by identity, so a file reachable through several paths is processed once;
+- cycles are stopped by a **depth limit of 64 directories**: the walk keeps no visited set of
+  `(device, inode)` pairs, so a loop is not recognised as a loop — it runs out of depth and the subtree below
+  it is reported as refused (`directory nesting deeper than 64 levels; refused`, status `skipped`, exit 0).
+  The limit exists for exactly this reason, and it is also what protects the stack;
 - broken links are reported as failures.
 
 ### Ordering
@@ -93,7 +94,7 @@ reproducible and diffable.
 | `--exclude <EXT,...>` | none | skip files with these extensions; wins over `--include` |
 | `--min-size <BYTES>` | `0` | skip smaller files |
 | `--max-size <BYTES>` | `2147483648` (2 GiB) | skip larger files |
-| `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the size of one strip instead) |
+| `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
 | `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
@@ -133,9 +134,24 @@ timestamp removes metadata without removing bytes, and the point of the flag is 
 that is *larger* is still refused under every flag.
 
 `--formats` is an allowlist, not an addition: `--formats jpeg` processes JPEG and nothing else, and
-`--formats png,jpeg` processes both. Formats that are detected but not enabled are reported as `skipped`
-with the reason, and the run still exits 0. Nested files inherit the same allowlist, so a PNG inside a ZIP
-is left alone unless `png` is enabled.
+`--formats png,jpeg` processes both. Nested files inherit the same allowlist, so a PNG inside a ZIP is left
+alone unless `png` is enabled.
+
+### `--formats` is a policy, not a filter
+
+A filter would decide *whether a path is looked at*. A policy decides *what may happen to it*, and the
+difference is visible in the report and in the exit code. Exactly one of three words describes every input,
+and they are never interchangeable:
+
+| Word | Meaning | Exit |
+| --- | --- | --- |
+| `unsupported` | there is no handler for this content at all — a text file, or a format this build does not carry | `0` |
+| `skipped` | a handler exists, and the run declines: `--formats` does not enable it, a policy refused the input (a signed archive, ZIP64, a progressive JPEG), or a limit was reached | `0` |
+| `failed` | the content claims to be a supported format and is corrupt, or the filesystem refused the operation | `1` |
+
+So `--formats gzip` over a directory of PNGs reports every PNG as `skipped: PNG is not enabled for this
+run (use --formats; enabled: gzip)` and touches nothing. It is not `unsupported` (this build has a PNG
+handler) and it is not `failed` (nothing is wrong with the file).
 
 All options above are frozen from v0.3; the JPEG switch is the only behavioural change in v0.4.
 
@@ -148,7 +164,7 @@ Per-file line on stdout, then a summary:
 ```
 photo.png        PNG    1.20 MiB -> 1.05 MiB  -12.5%
 logo.svgz        GZIP   18.20 KiB -> 16.90 KiB  -7.1%
-notes.txt        -      unsupported: unsupported format
+notes.txt        -      unsupported
 scan.tif         TIFF   already optimal
 Summary: 4 files, 2 optimized, 211.30 KiB saved, 1 already optimal, 1 unsupported, 0 skipped, 0 failed, 0.80 s
 ```
@@ -166,7 +182,8 @@ Rules:
 - the summary is the last line, because that is where the eye goes after a long run.
 
 Statuses shown to humans: `optimized`, `would optimize` (dry run), `already optimal`, `unsupported`,
-`skipped: <reason>`, `failed: <reason>`.
+`skipped: <reason>`, `failed: <reason>`. Only the last two carry a reason; the others are the whole message,
+and a note that merely repeated the status word (`unsupported: unsupported format`) was removed.
 
 In a terminal, colour marks the outcome and nothing else: the status word (green for a rewrite, dim for
 "nothing to do", yellow for a skip, red for a failure), the saving percentage, and the saved total in the
@@ -181,7 +198,7 @@ object. Nothing else is written to stdout. Warnings and errors still appear on s
 
 ```json
 {"type":"file","path":"photo.png","format":"png","status":"optimized","before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"note":null,"error":null}
-{"type":"file","path":"notes.txt","format":null,"status":"unsupported","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":"unsupported format","error":null}
+{"type":"file","path":"notes.txt","format":null,"status":"unsupported","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":null,"error":null}
 {"type":"summary","schema":1,"files":2,"optimized":1,"would_optimize":0,"already_optimal":0,"unsupported":1,"skipped":0,"failed":0,"before":1258332,"after":1065041,"saved":193291,"duration_ms":414,"dry_run":false}
 ```
 
@@ -192,7 +209,7 @@ Field rules:
 | `type` | string | `file` or `summary` |
 | `path` | string | lossy UTF-8 rendering of the path, for humans |
 | `path_raw_b64` | string, optional | base64 of the raw path bytes; present on Unix only when the path is not valid UTF-8 |
-| `format` | string or null | handler id: `png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`. There is no `apng` id: an APNG is reported as `png` |
+| `format` | string or null | handler id, from `Format::id`: `png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`. An APNG is reported as `png`, because the PNG handler is what rewrites it |
 | `status` | string | `optimized`, `would_optimize`, `already_optimal`, `unsupported`, `skipped`, `failed` |
 | `before`, `after` | integer | file sizes in bytes; equal for every non-optimizing outcome |
 | `saved` | integer | `before - after` |
@@ -200,7 +217,7 @@ Field rules:
 | `metadata_stripped` | bool | present and `true` only when `--strip-metadata` rewrote this file |
 | `duration_ms` | integer | wall time spent on this file |
 | `note` | string or null | why the file landed in this status: the refusal reason for `skipped`, the filesystem reason for a skipped replacement |
-| `error` | object or null | `{"kind": "...", "message": "..."}`; `kind` is one of `io`, `parse`, `limit`, `refused`, `verify`, `internal` (a `usage` error exits before any file record exists); `refused` and `limit` accompany a `skipped` status, meaning the input is valid but Tzim declines it |
+| `error` | object or null | present **only** with `"status":"failed"`, otherwise `null`: `{"kind": "...", "message": "..."}`. `kind` is one of `io`, `parse`, `verify`, `internal` — there is no `unsupported`, `limit` or `refused` kind in this object, because those inputs are not failures: a refusal is a `skipped` status with the reason in `note`, and an unsupported format is the `unsupported` status with no note |
 | `schema` | integer | present in the summary only; bumped on breaking schema changes |
 | `dry_run` | boolean | present in the summary only |
 
@@ -243,8 +260,8 @@ A dry run still creates a candidate in the destination directory (verification a
 real bytes) and removes it afterwards. It never opens an existing file for writing, and it never replaces
 anything, so every outcome is still G1.
 
-Statuses in dry-run: `would_optimize` (a strictly smaller, verified candidate exists) or `already_optimal`
-(no candidate was smaller).
+Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — or an equal-size one under
+`--strip-metadata`) or `already_optimal` (nothing to gain).
 
 ---
 

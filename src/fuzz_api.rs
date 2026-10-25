@@ -36,14 +36,15 @@ pub fn roundtrip(data: &[u8]) -> bool {
     let Some(format) = detect(data) else {
         return false;
     };
+    let opts = options();
     let mut candidate = Vec::new();
-    if formats::optimize(format, data, &mut candidate, &options()).is_err() {
+    if formats::optimize(format, data, &mut candidate, &opts).is_err() {
         return false;
     }
-    if candidate.is_empty() || candidate.len() >= data.len() {
+    if !formats::size_ok(data.len(), candidate.len(), opts.strip_metadata) {
         return false;
     }
-    formats::verify(format, data, &candidate, &options()).is_ok()
+    formats::verify(format, data, &candidate, &opts).is_ok()
 }
 
 /// The JPEG marker parser, analysis and entropy decoder, without writing.
@@ -64,7 +65,9 @@ pub fn roundtrip_strip(data: &[u8]) -> bool {
     if formats::optimize(format, data, &mut candidate, &opts).is_err() {
         return false;
     }
-    if candidate.is_empty() || candidate.len() > data.len() {
+    // The same predicate the binary uses, including the flag: the fuzzer has to
+    // be able to see the input class that the size rule decides (#44).
+    if !formats::size_ok(data.len(), candidate.len(), opts.strip_metadata) {
         return false;
     }
     formats::verify(format, data, &candidate, &opts).is_ok()

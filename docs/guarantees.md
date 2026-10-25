@@ -63,10 +63,12 @@ G3 is the only class used for real optimizations. It is always verified by:
 2. decoding both input and candidate and comparing content — with an independent library where one exists,
    and with this repository's own reader where it does not ([§2.6](#26-verification-independence));
 3. comparing the inventory of significant properties and preserved byte ranges;
-4. accepting the candidate only when it is not larger than the input (strictly smaller unless
-   `--strip-metadata` removed something, see [§2.7](#27-g4--metadata-removed-on-request)). This rule is
-   enforced where the candidate is accepted — in the handler and, as the last word, in the pipeline — not
-   inside `verify()`, which compares content and not size.
+4. accepting the candidate only when it is not larger than the input — one function, `formats::size_ok`
+   in `src/formats/mod.rs`, called from `formats::verify` and again from `src/pipeline.rs` before the
+   temporary file is read back, and by both fuzz targets (strictly smaller unless `--strip-metadata`
+   removed something, see [§2.7](#27-g4--metadata-removed-on-request); never larger, under any flag).
+   The rule lives here because it is a property of the candidate, not of a format, and a second copy of it
+   in a caller is how the equal-size case became an internal error in 0.11.0.
 
 ### G4 — metadata removed on request
 
@@ -95,7 +97,7 @@ would suggest more than any of these delivers.
 | zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
-| TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; shared `flate2` for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none |
+| TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; **shared `flate2`** for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none, so one `flate2` decode is compared with another `flate2` decode |
 | JPEG | V3 | **V3** — coefficients are decoded and re-encoded by the same codec | A defect that is *symmetric* in the encoder and the decoder: a wrong symbol mapping used in both directions round-trips "successfully" while the pixels change |
 
 **The honest consequence for JPEG.** Its verification is the weakest of the seven, and it cannot be
@@ -105,6 +107,12 @@ coefficient-level comparison (stronger than comparing pixels, which a second dec
 fixtures and the real-file corpus, and a fuzz target for the entropy reader. None of that is a proof. A
 symmetric codec defect would pass every check in this repository. This is the main reason JPEG is opt-in and
 why its gain is not oversold.
+
+**For TIFF** the content comparison is independent only while the strips are uncompressed: `optimize` turns
+compression `1` into Deflate, and for that path the original is raw bytes read without a decoder. A TIFF whose
+strips were *already* Deflate is re-compressed and compared `flate2` against `flate2`, and TIFF has no
+per-strip checksum of its own — so a symmetric defect in the inflater would survive. The structure is compared
+field by field (V3), which is where a layout mistake would show up, and the fuzz target covers the parser.
 
 **For ZIP** the risk is smaller than it sounds: the structure is copied, not synthesized, so most bytes are
 compared literally; the payload of every entry is inflated independently and its CRC-32 recomputed from the
@@ -145,7 +153,7 @@ These hold for every format, in addition to the per-format contract.
 | ID | Invariant |
 | --- | --- |
 | **I1** | The original file is never modified unless a candidate has passed every check. |
-| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field ([§2.7](#27-g4--metadata-removed-on-request)). A larger candidate is never accepted, under any flag. |
+| **I2** | A candidate is only used if `candidate.len() < original.len()`. A larger or equal candidate is discarded, with one exception: under `--strip-metadata`, an equal-size candidate is accepted when the only change is a removed metadata field ([§2.7](#27-g4--metadata-removed-on-request)). A larger candidate — or an empty one — is never accepted, under any flag. Implemented once, as `formats::size_ok`, so the pipeline, the verifier and the fuzz targets cannot disagree. |
 | **I3** | No metadata, comment, attachment, vendor chunk, private field or unknown structure is removed or normalized. The single exception is the explicit `--strip-metadata` request, which removes the fixed list in §2.7 and nothing beyond it. |
 | **I4** | No lossy transformation, no format conversion, no quality, resolution, rate or bit-depth change. |
 | **I5** | If the input changes on disk between the initial stat and the replacement, the operation is aborted. |
@@ -594,6 +602,37 @@ then:
 
 What the shared reader cannot catch is a structural field both sides misread; the strip bytes themselves
 are compared through an independent inflater, so a content change cannot hide behind it.
+
+**Removed by `--strip-metadata`.** Only the tags in this table, and only the entry itself: the tag
+disappears from the IFD and its out-of-line value stops being written. The list is a constant in the code
+(`tiff::STRIPPED_TAGS`) and a unit test compares the two, so a tag cannot be added to one without the other.
+
+| Tag | Name | Why it is metadata |
+| --- | --- | --- |
+| 269 | `DocumentName` | the name of the scanned document |
+| 270 | `ImageDescription` | free text about the image |
+| 271 | `Make` | camera or scanner manufacturer |
+| 272 | `Model` | camera or scanner model |
+| 305 | `Software` | the program that wrote the file |
+| 306 | `DateTime` | when the file was written |
+| 315 | `Artist` | the person who made the image |
+| 316 | `HostComputer` | the machine that produced the file |
+| 333 | `InkNames` | the ink set of a separated file |
+| 33432 | `Copyright` | the copyright notice |
+| 33723 | `IPTC/NAA` | IPTC caption, keywords, credit |
+| 34377 | `Photoshop` | Photoshop image resources (also carries IPTC) |
+| 37510 | `UserComment` | free text |
+| 37724 | `ImageSourceData` | Photoshop layer data |
+| 40091 | `XPTitle` | Windows title |
+| 40092 | `XPComment` | Windows comment |
+| 40093 | `XPAuthor` | Windows author |
+| 40094 | `XPKeywords` | Windows keywords |
+| 40095 | `XPSubject` | Windows subject |
+| 42112 | `GDAL_NODATA` | the nodata marker of a geospatial raster |
+
+Everything else is kept, in particular `Orientation` (274), `XResolution`/`YResolution` (282/283),
+`ResolutionUnit` (296), `ColorMap` (320), `ICCProfile` (34675), the XMP packet (700), `GeoKeyDirectory`
+(34735) and the private tags. `42113` (`GDAL_METADATA`) is **kept** on purpose: it is not in the list.
 
 **Refused (skipped, exit 0):** BigTIFF, tiles, more than one IFD, planar `2`, predictor other than `1`/
 absent, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable non-zero bytes,

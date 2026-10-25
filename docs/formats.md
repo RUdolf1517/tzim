@@ -80,7 +80,8 @@ Two independent data points, both from the stage-1 analysis:
 Consequences for the design, all of which are implemented rather than advertised:
 
 1. Tzim always computes several candidates and keeps the smallest — never "apply level N and hope".
-2. Tzim never writes a candidate that is not strictly smaller.
+2. Tzim never writes a candidate that is not strictly smaller — or, with `--strip-metadata` and nothing to
+   remove but a timestamp, one that is the same size. Never a larger one.
 3. Zopfli is opt-in (`--zopfli`), because on already-compressed files it costs minutes and buys little.
 4. Documentation must not promise large savings. **Tzim's value is breadth, trust and a small binary, not
    the best possible ratio for PNG** — for that, `oxipng -o max` is a better tool and is named as such.

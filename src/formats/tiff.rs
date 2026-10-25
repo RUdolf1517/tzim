@@ -95,29 +95,38 @@ const DATA_TAGS: &[u16] = &[
 ];
 
 /// Textual and descriptive tags removed by `--strip-metadata`.
+///
+/// Exactly this list and nothing else: `docs/guarantees.md` §4.8 reproduces it
+/// and a test pins it, because G4 is defined as "a fixed, documented list". A
+/// tag that is not here — colour, geometry, `Orientation` (274), resolution
+/// (282/283), ICC (34675), the colour map (320), strips, private tags — is kept
+/// byte for byte.
+pub const STRIPPED_TAGS: [u16; 20] = [
+    269,   // DocumentName
+    270,   // ImageDescription
+    271,   // Make
+    272,   // Model
+    305,   // Software
+    306,   // DateTime
+    315,   // Artist
+    316,   // HostComputer
+    333,   // InkNames
+    33432, // Copyright
+    33723, // IPTC/NAA
+    34377, // Photoshop image resources
+    37510, // UserComment
+    37724, // ImageSourceData
+    40091, // XPTitle
+    40092, // XPComment
+    40093, // XPAuthor
+    40094, // XPKeywords
+    40095, // XPSubject
+    42112, // GDAL_NODATA
+];
+
+/// Textual and descriptive tags removed by `--strip-metadata`.
 pub fn is_stripped(tag: u16) -> bool {
-    matches!(
-        tag,
-        269 | 270
-            | 271
-            | 272
-            | 305
-            | 306
-            | 315
-            | 316
-            | 333
-            | 33432
-            | 33723
-            | 34377
-            | 37510
-            | 37724
-            | 40091
-            | 40092
-            | 40093
-            | 40094
-            | 40095
-            | 42112
-    )
+    STRIPPED_TAGS.contains(&tag)
 }
 
 fn survives(tag: u16, strip: bool) -> bool {
@@ -966,6 +975,31 @@ mod tests {
         assert!(!is_stripped(TAG_IMAGE_WIDTH));
         assert!(!is_stripped(34675), "ICC changes how pixels are read");
         assert!(!is_stripped(320), "the colour map is content, not metadata");
+    }
+
+    /// The list is normative: `docs/guarantees.md` §4.8 prints it, and a user is
+    /// entitled to know which tags `--strip-metadata` deletes. Pinning it twice
+    /// — here and in the contract — is deliberate: a tag added to the code
+    /// without the document fails this test, and the message says where to look.
+    #[test]
+    fn the_stripped_tag_list_is_the_documented_one() {
+        let documented: [u16; 20] = [
+            269, 270, 271, 272, 305, 306, 315, 316, 333, 33432, 33723, 34377, 37510, 37724, 40091,
+            40092, 40093, 40094, 40095, 42112,
+        ];
+        assert_eq!(
+            STRIPPED_TAGS, documented,
+            "update docs/guarantees.md §4.8 in the same commit"
+        );
+        // 42113 (GDAL_METADATA, structured XML) is deliberately *not* here: it is
+        // a description of the data set rather than of the person who made it,
+        // and adding it would be a behaviour change, not a documentation fix.
+        assert!(!is_stripped(42113));
+        assert!(
+            !is_stripped(274),
+            "Orientation decides how the image is shown"
+        );
+        assert!(!is_stripped(282) && !is_stripped(283), "resolution is kept");
     }
 
     #[cfg(feature = "zopfli")]

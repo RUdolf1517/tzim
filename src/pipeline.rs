@@ -112,8 +112,10 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
     let format = match detect::detect_path(path)? {
         Some(f) => f,
         None => {
+            // No note: the status word already carries the whole message, and
+            // "unsupported: unsupported format" was a wart in every line and
+            // every JSON record.
             outcome.status = Status::Unsupported;
-            outcome.note = Some("unsupported format".to_string());
             return Ok(());
         }
     };
@@ -195,9 +197,12 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         Cand::Written(n) => n,
     };
 
-    if written == 0 || written >= snapshot.len {
+    // The same rule the verifier applies, from the same function: with
+    // `--strip-metadata` an equal-size candidate is the requested result when
+    // the change is a removed metadata field (guarantees I2).
+    if !formats::size_ok(snapshot.len as usize, written as usize, cfg.strip_metadata) {
         return Err(Error::internal(
-            "a candidate was accepted that is not strictly smaller",
+            "a candidate was accepted that is larger than the original",
         ));
     }
 

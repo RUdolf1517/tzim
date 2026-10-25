@@ -9,60 +9,89 @@ commits, were tested in CI, and were never tagged or packaged. Everything in the
 Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packaging policy is in
 [docs/releases.md](docs/releases.md).
 
-## [Unreleased]
+## [0.12.0] - 2026-10-25 — the audit
 
-Documentation only: no handler changed, no file is treated differently, and the binary is the same. What
-changed is that several documents stop claiming more than the code does.
+An independent audit of 0.10.0 and 0.11.0 produced twenty-three issues. This release answers them, with the
+rule the audit itself states: `docs/guarantees.md` is the contract, so a divergence between the code and the
+document is a bug in one of them, and every fix ships with a test that fails before it. Nothing here changes
+what a supported file turns into, and the single exception is a defect being removed. The binary measures the
+same 1 049 440 bytes.
 
 ### Fixed
 
-- **`docs/safety.md` §1 no longer describes a snapshot "from the open handle".** The snapshot comes from
-  `lstat`, and a file is opened twice — once to detect the format, once to read it — not once. §2 now gives
-  the real temporary-file name (`.tzim-<pid>-<nanos>-<attempt>.tmp`) and says that a successful run renames
-  the candidate instead of deleting it, and §8 describes the ownership rule as it is: a file owned by another
-  user is skipped with a reason, on Unix only, and nothing is "warned" about root.
-- **`docs/guarantees.md` G1 is no longer "verified by a content hash".** No hash exists in the program; G1
-  holds because nothing is written on those paths, and the only comparison made is the re-check of
-  `(device, inode, length, mtime)` before replacement. G3 clause 4 now attributes the size rule to the place
-  that enforces it — the handler and the pipeline — instead of implying that `verify()` compares sizes.
-- **The TIFF `--strip-metadata` list now exists.** `guarantees.md` §2.7 pointed at §4.8 for a list that was
-  not there; §4.8 now carries both lists it referred to: the tags whose out-of-line values may be moved, and
-  the exact tags the flag removes. `docs/cli.md` gains `Artist` (315) and states that GDAL nodata (`42113`) is
-  kept.
-- **`guarantees.md` §2.6 has a TIFF row.** The independence table listed six formats and silently omitted the
-  seventh, and the prose called JPEG "the weakest of the five". TIFF's row states what is true: independent
-  for strips that were uncompressed, a shared inflater for strips that were already Deflate, and no external
-  checksum to anchor the original side.
-- **`docs/cli.md` matches the output.** The human example shows `unsupported: unsupported format` (the status,
-  then the note), the JSON example shows `"status":"unsupported"` with `"error":null`, the format ids are the
+- **`--strip-metadata` no longer turns an equal-size result into a failure.** A ZIP with a stored entry and
+  non-zero timestamps, or a gzip member with a non-zero `MTIME`, can be rewritten to exactly the same length:
+  zeroing a timestamp removes metadata without removing bytes. The handlers accepted that candidate and the
+  pipeline then called it an internal error and exited 1. The rule now lives in one function,
+  `formats::size_ok` (strictly smaller, or the same length under the flag, never larger, never empty), and it
+  is called by the pipeline, by the verification dispatcher and by both fuzz targets, so the three cannot
+  disagree again.
+- **G3 clause 4 ("the candidate is not larger") is checked in verification**, as the contract says, instead
+  of being implied by whichever caller remembered it.
+- **`--info`, `--list-formats` and `--check-deps` describe the build they are in.** They claimed that metadata
+  is never removed (untrue since the flag exists) and named JPEG and Zopfli unconditionally, which is wrong
+  for `--features png`. Both are now read from `cfg!`.
+- **`unsupported: unsupported format`** — the note repeated the status word on every such line and in every
+  JSON record. The status is the message, so the note is `null`.
+- **`docs/safety.md` §1 describes the algorithm the code runs.** The snapshot comes from `lstat` and the file
+  is opened twice, not "from the open handle" and not once; the temporary file is
+  `.tzim-<pid>-<nanos>-<attempt>.tmp` and a successful run renames it rather than deleting it; §8's
+  ownership rule is Unix-only and says "skipped with a reason", not "warned". The step order now matches
+  `pipeline::run` — size limits, hard links and read-only before detection, `--formats` before the candidate
+  exists.
+- **G1 is no longer "verified by a content hash".** No hash exists in the program; G1 holds because nothing is
+  written on those paths, and the only comparison made is the re-check of `(device, inode, length, mtime)`
+  before replacement.
+- **The TIFF `--strip-metadata` list is in the contract.** `guarantees.md` §2.7 pointed at §4.8 for a list
+  that was not there. §4.8 now carries both lists — the tags whose out-of-line values may be moved and the
+  exact tags the flag removes — and `the_stripped_tag_list_is_the_documented_one` fails if the constant in
+  the code moves without the section, with a message that says so.
+  `cli.md` gains `Artist` (315) and states that GDAL nodata (`42113`) is kept.
+- **A path with CJK or emoji characters no longer breaks the column alignment**: the report measures display
+  cells, not characters, and a combining mark counts as zero.
+- **`docs/cli.md` matches the output.** The human example showed `unsupported: unsupported format` (the
+  status, then the note), the JSON example carried a note that no longer exists, the format ids are now the
   ones `Format::id()` emits (no `apng`, `zlib` included), `--max-pixels` is marked as applying to PNG and
-  JPEG, and the symlink section says what really protects a walk: a 64-level depth limit, not a visited set of
-  directories.
+  JPEG, and the symlink section says what really protects a walk: a 64-level depth limit, not a visited set
+  of directories.
 - **`docs/testing.md` stops promising mechanisms that do not exist.** The failure-injection hooks
   (`TZIM_TEST_*`), the `proptest` suite, the committed `tests/fixtures/` corpus and the "refused set"
-  baseline are gone; the fixture section describes the builders in `tests/common/mod.rs` and what each one
-  actually covers, and the filesystem table is split into what a test covers and what it does not. The fuzz
-  section says that `tiff` and `zlib` are not in the fuzz build and that the `strip` target has no seeds.
-- **Eight broken internal links and anchors are fixed** (`CHANGELOG.md`, `docs/flac-audit.md`,
-  `docs/roadmap.md`), including one that the 0.11.0 release notes introduced themselves, and `CONTRIBUTING.md`
-  no longer names a `png_reader` fuzz target or a `tests/fixtures/generate/` directory that do not exist.
-- **`docs/roadmap.md` marks the v0.1 numbers as history** instead of letting "41 unit and 21 integration
-  tests" and "832 KiB" read as the current state.
+  baseline are gone or explicitly marked as not implemented; the fixture section describes the builders and
+  what each one actually covers.
+- **Eight broken internal links and anchors** are fixed (`CHANGELOG.md`, `docs/flac-audit.md`,
+  `docs/roadmap.md`), and `CONTRIBUTING.md` no longer names a `png_reader` fuzz target or a
+  `tests/fixtures/generate/` directory that do not exist.
+- **The Adler-32 test comment** derived the wrong numbers for an all-zero input (it summed 0..9999 instead of
+  the bytes). The value was right; the explanation would have led the next reader to break the code.
 
 ### Added
 
-- **`docs/guarantees.md` §3.1 states what "verified" compares**, format by format: which bytes, which fields,
-  which decoded pixels, and what is deliberately not compared. It says plainly that there is no semantic model
-  — two byte-identical APNG frames swapped is not detected and is not a defect — that the comparison is strict
-  rather than semantic, and that a defect symmetric in the encoder and the decoder passes every check here.
-- **`T-FS-01…10` and `T-STRIP-01…08` in `docs/testing.md` §2.** The filesystem, replacement and
-  `--strip-metadata` tests had no ids, so the traceability table `CONTRIBUTING.md` refers to did not cover the
-  promises that protect the original file. Every row names a test that exists; the scenarios with no test stay
-  in the "not covered" table and in #35.
-- **`docs/safety.md` §5 gained a `Test` column** and §1 a pointer to the `T-FS-*` ids, so a reader can see
-  which step of the algorithm is pinned and which is only described.
+- **`tests/verification.rs`**: one negative test per verifier. Until this, `png::verify`, `jpeg::verify`,
+  `tiff::verify`, `zip::verify`, `gzip::verify` and `verify_icon` were never called by a test, so a verifier
+  that accepted everything passed the suite. Two rules are deliberately not covered, and the module says
+  which and why: a test that survives the deletion of the check it guards is decoration.
+- **`docs/guarantees.md` §3.1 states what "verified" compares**, format by format: which bytes, which
+  fields, which decoded pixels, and what is deliberately not compared — including that two byte-identical
+  APNG frames swapped is not detected, that the comparison is strict rather than semantic, and that a defect
+  symmetric in the encoder and the decoder passes every check here.
+- **`T-FS-01…10` and `T-STRIP-01…08` in `docs/testing.md` §2**: the filesystem, replacement and
+  `--strip-metadata` tests now have ids, so the traceability table covers the promises that protect the
+  original file.
+- **Seven traceability rows that had no test now have one**: `--zopfli` never worse than the default, gzip
+  `FCOMMENT` and `FHCRC`, ZIP unknown-method and multi-disk archives, `--max-uncompressed`, and an ICO
+  directory that runs past the end of the file. Three rows say **no test** in the row itself and give the
+  reason: an interlaced PNG (the fixture writer cannot produce one), an inconsistent APNG sequence (the
+  `png` crate refuses it first) and the nested size budget.
+- **Tests for filesystem cases that had none**: a hard link (skipped, then broken on purpose with
+  `--allow-hardlinks`), a Unix socket, and — on Linux, where the filesystem allows the name — a path that is
+  not valid UTF-8, with `path_raw_b64` in the record.
+- **Tests that pin `--formats` as a policy rather than a filter**: a PNG under `--formats gzip` is `skipped`
+  with a reason, and a nested child inherits the allowlist.
+- **PNG scanline filters are round-tripped at every bytes-per-pixel value from 1 to 8**, not only RGBA8's
+  four.
+- The fuzz build compiles `tiff` and `zlib`, so those parsers are reachable, and the `strip` target has seeds.
 - **`docs/pdf-audit.md`, and PDF's contract in `docs/guarantees.md` §4.11.** The format stays refused, but from
-  now on it is refused by evidence rather than by opinion: the audit describes the one operation that would be
+  now on it is refused by evidence rather than by opinion: the audit describes the only operation that would be
   in scope (recompressing `FlateDecode` payloads inside a byte-preserved object graph — the existing zlib path
   in a new container, no new dependency), lists every construct that forces a refusal (encryption, signatures,
   linearization, incremental updates, object streams, any other filter), and fixes the decision rule **before**
@@ -72,13 +101,19 @@ changed is that several documents stop claiming more than the code does.
 
 ### Changed
 
-- **`docs/safety.md` §7.1 and `docs/cli.md` §7 no longer imply that `--jobs` bounds memory.** It bounds how
-  many files are in flight. With the defaults, four workers can reach several GiB on inputs of a few megabytes:
-  the whole file and its candidate are held in memory, and a 100 MPix PNG costs about 800 MiB of decoded
-  buffers on its own. The numbers are in §7.1, with the two flags that actually reduce them.
-- **`docs/roadmap.md` records the seven decisions taken after the 0.11.0 audit** and lists `v0.11.1` as
-  planned: the equal-size candidate (#26, #44), a weak signature no longer producing `failed` (#52), a computed
-  memory budget (#51), and the documentation in this release.
+- **`docs/safety.md` §7.1 no longer implies that `--jobs` bounds memory.** It bounds how many files are in
+  flight. With the defaults, four workers can reach several GiB on inputs of a few megabytes: the whole file
+  and its candidate are held in memory, and a 100 MPix PNG costs about 800 MiB of decoded buffers on its own.
+  The numbers are in §7.1, with the two flags that actually reduce them; a computed budget is issue #51.
+- **The symlink story is the real one**: a cycle is stopped by a depth limit of 64 directories, not by a
+  visited set of `(device, inode)` pairs.
+- **`docs/roadmap.md` marks every status note as history**, so its v0.1 test counts cannot be read as today's
+  state, and records the seven decisions taken after the audit.
+
+### Not in this release
+
+Two audit items are owner decisions, not defects, and stay open: what to cut to make the binary smaller
+(#38), and whether to verify JPEG with an independent decoder and a new dependency (#39).
 
 ## [0.11.0] - 2026-10-25 — distribution
 

@@ -46,11 +46,15 @@ cargo deny check
 cargo audit
 ```
 
-Fuzzing uses nightly and lives in its own workspace member:
+Fuzzing uses nightly and lives in its own workspace member. The three targets are `roundtrip` (detection,
+handler, verification), `strip` (the same with `--strip-metadata`) and `jpeg_decode` (the JPEG parsers without
+writing anything):
 
 ```sh
 cargo install cargo-fuzz --locked
-cd fuzz && cargo +nightly fuzz run roundtrip   # targets: roundtrip, strip, jpeg_decode
+cd fuzz && cargo +nightly fuzz run roundtrip
+cd fuzz && cargo +nightly fuzz run strip
+cd fuzz && cargo +nightly fuzz run jpeg_decode
 ```
 
 The build must work offline (`cargo build --offline`) and must not require a C compiler.
@@ -102,8 +106,9 @@ Every behavioural change needs a test. Specifically:
 - corrupted and refusal cases are as important as success cases;
 - tests must not touch the network, must not depend on the clock, and must clean up their temporary
   directories;
-- fixtures are built by code in `tests/common/mod.rs` at run time and are never committed, so a reviewer
-  can read what a test feeds the binary; large samples come from the downloaded corpus, not from the tree.
+- fixtures are built by code in `tests/common/mod.rs` at run time and are never committed, so a reviewer can
+  read what a test feeds the binary and a new case is a writer, not a blob; large samples come from the
+  downloaded corpus, not from the tree.
 
 If you find a case where Tzim produced a file that a real consumer rejects, **that is the highest-priority
 bug class in the project**. Please include the original file (or a minimised reproducer) and the consumer
