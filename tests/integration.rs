@@ -965,30 +965,39 @@ fn the_memory_budget_boundary_is_exact() {
     };
     let original = build_png(&spec);
     let cost = png_worst_case(&original, &spec);
-    let path = ws.write("at.png", &original);
+
+    // Two copies of the same file, because the charge is computed from the file
+    // as it is *now*: an optimized copy is smaller and would no longer be at the
+    // boundary. Each case starts from the original.
+    let at = ws.write("at.png", &original);
+    let above = ws.write("above.png", &original);
 
     // Exactly at the budget: processed as usual.
-    let at = cost.to_string();
-    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &at, "--json"], &ws.path);
+    let exact = cost.to_string();
+    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &exact, "--json"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("\"status\":\"optimized\""),
         "a file exactly at the budget must be processed: {stdout}"
     );
-    assert!(std::fs::read(&path).unwrap().len() < original.len());
+    assert!(
+        std::fs::read(&at).unwrap().len() < original.len(),
+        "the accepted file must actually be optimized"
+    );
 
-    // One byte above: skipped, and the optimized result from the first run is
-    // left alone (it is already smaller, so this also proves the skip does not
-    // rewrite anything).
-    let settled = std::fs::read(&path).unwrap();
-    let above = (cost + 1).to_string();
-    let (code, stdout, stderr) = run(&["at.png", "--memory-budget", &above, "--json"], &ws.path);
+    // One byte less than it needs: skipped before it is read, untouched.
+    let one_less = (cost - 1).to_string();
+    let (code, stdout, stderr) = run(&["above.png", "--memory-budget", &one_less, "--json"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(
         stdout.contains("\"status\":\"skipped\""),
-        "one byte above the budget must be skipped: {stdout}"
+        "one byte short of the budget must be skipped: {stdout}"
     );
-    assert_eq!(std::fs::read(&path).unwrap(), settled);
+    assert_eq!(
+        std::fs::read(&above).unwrap(),
+        original,
+        "a skipped file is byte-identical"
+    );
 }
 
 /// #51: the budget must not change the result for a file that fits. The default
@@ -3285,9 +3294,16 @@ fn a_coincidental_zlib_header_is_unsupported_and_never_written() {
     let (code, stdout, stderr) = run(&["fake.zlib"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert!(stdout.contains("unsupported"), "{stdout}");
+    // #62: the note used to say "this is not a zlib stream", which is false for
+    // a real stream cut to a few dozen bytes — the decoder cannot tell the two
+    // apart, so the message names both possibilities.
     assert!(
-        stdout.contains("not a zlib stream"),
+        stdout.contains("either the header was a coincidence or the stream is too short to tell"),
         "the note has to say what was decided and why: {stdout}"
+    );
+    assert!(
+        !stdout.contains("not a zlib stream"),
+        "the decoder cannot know that: {stdout}"
     );
     assert_eq!(std::fs::read(&path).unwrap(), data);
 }
