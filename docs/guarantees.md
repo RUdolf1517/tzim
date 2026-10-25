@@ -659,8 +659,11 @@ anything. A false positive costs one `failed` line and an untouched file, never 
 never at risk, only the line count.
 
 **Expected gain:** 0–10 %, and it depends entirely on who wrote the file. Streams from a default `zlib`
-level 6 — the level every library, HTTP client and PNG-less tool uses by accident — have 2–8 % left; streams
-already written at level 9 have nothing. `--zopfli` adds the usual 1–5 % at 10–100× the CPU cost.
+level 6 — the level every library, HTTP client and tool uses by accident — have something left, but on small
+inputs it is little: the measured set in [benchmarks §3.2](benchmarks.md#32-against-the-established-tools) is
+twelve real source files at level 6 and gains **0.88 %**. Streams already written at level 9 have nothing,
+and a stream from an old or lazy encoder has far more than a percent. `--zopfli` adds the usual 1–5 % at
+10–100× the CPU cost.
 
 **Raw DEFLATE is not supported, deliberately.** A bare DEFLATE stream has no header, no trailer and no
 signature: there is no byte sequence that identifies one, so a file cannot be recognised without trying to
