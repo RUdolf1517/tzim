@@ -188,7 +188,7 @@ pub fn print_human<W: Write + ?Sized>(
             let name = o.format.map(|f| f.name()).unwrap_or("-");
             style.paint_into(&mut line, Pen::Dim, &format!("{name:<5}"));
             line.push_str("  ");
-            push_detail(&mut line, o, opts.dry_run, opts.strip_metadata, style);
+            push_detail(&mut line, o, opts.strip_metadata, style);
             writeln!(out, "{line}")?;
         }
     }
@@ -196,7 +196,7 @@ pub fn print_human<W: Write + ?Sized>(
 }
 
 /// One line per file, with colour only on the outcome.
-fn push_detail(into: &mut String, o: &Outcome, dry_run: bool, strip_metadata: bool, style: Style) {
+fn push_detail(into: &mut String, o: &Outcome, strip_metadata: bool, style: Style) {
     if matches!(o.status, Status::Optimized | Status::WouldOptimize) {
         // A gain is printed as a negative number, exactly as the old float
         // formatting did, including "-0.0" when nothing moved.
