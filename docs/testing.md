@@ -156,7 +156,7 @@ input that exercises the overflow bound.
 | `T-TIF-04` | Uncompressed strips become Deflate; `Compression` may change `1 → 8` or `32946 → 8` and nothing else |
 | `T-TIF-05` | Little- and big-endian files both round-trip, byte order preserved |
 | `T-TIF-06` | A Deflate file with nothing to gain is left alone (`already optimal`) |
-| `T-TIF-07` | BigTIFF, tiles, multiple IFDs, planar `2` and predictors are refused with a reason, exit 0, file untouched |
+| `T-TIF-07` | BigTIFF, tiles, multiple IFDs, planar `2`, predictors and `FillOrder 2` are refused with a reason, exit 0, file untouched |
 | `T-TIF-08` | Unknown out-of-line tags are refused; unknown inline tags are copied untouched |
 | `T-TIF-09` | Truncated or inconsistent files fail with exit 1 and the original is untouched |
 | `T-TIF-10` | `--strip-metadata` removes the textual tags only; geometry, colour and ICC survive |
@@ -310,7 +310,7 @@ What each builder can produce today:
 | `build_zip` / `ZipEntrySpec` | `store` and `deflate` per entry; level; data descriptors with and without signature; local and central extra fields; entry and archive comments; non-UTF-8 names | ZIP64, encryption, prepended stubs, signed JAR/APK/OOXML |
 | `build_ico` | ICO and CUR directors with PNG or bitmap payloads of any size | — |
 | `build_jpeg` | baseline and greyscale; restart intervals; trailing bytes; an Exif `APP1` payload | progressive, CMYK, arithmetic coding, 12-bit |
-| `build_tiff` / `TiffSpec` | both byte orders; `none`/`deflate`; strips and rows per strip; planar and predictor settings; extra ASCII and SHORT tags; an optional tiled layout for refusal tests | LZW, JPEG-in-TIFF, multi-page, BigTIFF |
+| `build_tiff` / `TiffSpec` | both byte orders; `none`/`deflate`; strips and rows per strip; planar, predictor and `FillOrder` settings; extra ASCII and SHORT tags; an optional tiled layout for refusal tests | LZW, JPEG-in-TIFF, multi-page, BigTIFF |
 
 A format whose row above is thinner than the contract needs is a fixture gap, not a contract gap: the
 handler may well support it, but nothing in this repository proves it does.
@@ -451,6 +451,14 @@ and the reader round-trips "successfully" ([guarantees §2.6](guarantees.md#26-v
 The job fetches the same pinned corpus as §3, keeps a copy of the originals, runs tzim over the tree, and then
 compares each `optimized` file with its original. It is triggered by any change under `src/formats/`, weekly,
 and on dispatch.
+
+The split earns its keep: on its first run the job caught a real writer defect rather than a corpus quirk. Five
+Pillow test images — `tiff_gray_2_4_bpp_hopper{2,4,2I,4I}R.tif` and `16bit.r.tif` — were read fine by Pillow,
+rewritten by tzim, and then refused by Pillow with `decoder error -2`. Every one of them is `FillOrder 2`
+(reversed bit order) and uncompressed, and libtiff reverses the bits of a *compressed* strip before inflating
+it, so tzim's Deflate rewrite had been turning readable files into unreadable ones. The fix was a refusal
+([guarantees §4.8](guarantees.md#48-tiff-classic-baseline-strips--v07)) — the file is left alone and the reason
+is printed — plus `tiff_reversed_bit_order_is_skipped`, which fails on the writer as it was.
 
 Three outcomes per file, the same three `verify` has had since v0.13: **both decode and agree** is covered;
 **the original does not decode** is *no verdict* — a handful of corpus TIFFs and one APNG fixture are files

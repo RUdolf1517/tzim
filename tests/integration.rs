@@ -2480,6 +2480,38 @@ fn tiff_lzw_is_skipped_because_there_is_no_encoder() {
     assert_eq!(std::fs::read(&path).unwrap(), original);
 }
 
+/// Issue #54's job found this the hard way: `pillow-tiff_gray_2_4_bpp_hopper*R.tif`
+/// and `pillow-16bit.r.tif` were rewritten into files Pillow then refused with
+/// `decoder error -2`. The `R` suffix is the whole story — `FillOrder` 2, bits
+/// reversed inside each byte. libtiff reverses the bits of a compressed strip
+/// before it inflates it, so `FillOrder` 2 is decodable only while the strip is
+/// uncompressed: the rewrite was shrinking files by breaking them.
+#[test]
+fn tiff_reversed_bit_order_is_skipped() {
+    let ws = Workspace::new("tiff-fill-order");
+    let spec = TiffSpec {
+        // FillOrder 2 (lsb-to-msb). The fixture's bytes are not really
+        // reversed, so the refusal has to come from the tag.
+        fill_order: Some(2),
+        ..Default::default()
+    };
+    let original = build_tiff(&spec);
+    let path = ws.write("reversed.tif", &original);
+
+    let (code, stdout, stderr) = run(&["reversed.tif"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("FillOrder 2"), "{stdout}");
+    assert!(
+        stdout.contains("libtiff"),
+        "the message must say why, not just no: {stdout}"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        original,
+        "a refused file stays byte-identical"
+    );
+}
+
 #[test]
 fn tiff_predictor_is_skipped() {
     let ws = Workspace::new("tiff-predictor");

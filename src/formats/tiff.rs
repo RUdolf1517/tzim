@@ -14,6 +14,11 @@
 //!   tiles, interleaved samples, no predictor;
 //! - `Compression` 1 (none), 8 or 32946 (Deflate). LZW is refused because this
 //!   build has no LZW encoder, and a strip that does not decode is not a file;
+//! - `FillOrder` 1 only. A reversed bit order (2) is decodable only while the
+//!   strips are uncompressed — libtiff reverses the bits of a *compressed*
+//!   strip before inflating it, so a Deflate strip with `FillOrder` 2 is a file
+//!   the reference decoder rejects. Compressing it would shrink a file by
+//!   breaking it, so such a file is left alone;
 //! - every out-of-line value belongs to a tag known to carry plain data. An
 //!   unknown out-of-line tag may hold an absolute offset that the rebuild would
 //!   invalidate, so the file is refused instead. An unknown tag whose value fits
@@ -47,6 +52,7 @@ const TAG_IMAGE_WIDTH: u16 = 256;
 const TAG_IMAGE_LENGTH: u16 = 257;
 const TAG_BITS_PER_SAMPLE: u16 = 258;
 const TAG_COMPRESSION: u16 = 259;
+const TAG_FILL_ORDER: u16 = 266;
 const TAG_STRIP_OFFSETS: u16 = 273;
 const TAG_SAMPLES_PER_PIXEL: u16 = 277;
 const TAG_ROWS_PER_STRIP: u16 = 278;
@@ -399,6 +405,18 @@ fn plan<'a>(tiff: &'a Tiff<'a>) -> Result<Plan<'a>> {
     ) {
         return Err(Error::refused(format!(
             "tiff: compression {compression} is not rewritten by this build (only none and Deflate are)"
+        )));
+    }
+
+    // libtiff reverses the bits of a compressed strip before it inflates it, so
+    // `FillOrder` 2 survives only while the strip is uncompressed. Rewriting
+    // such a file as Deflate would produce one that Pillow/libtiff rejects with
+    // "incorrect header check" — a smaller file, and a broken one. Left alone.
+    let fill_order = tiff.scalar(TAG_FILL_ORDER, Some(1))?;
+    if fill_order != 1 {
+        return Err(Error::refused(format!(
+            "tiff: FillOrder {fill_order} (reversed bit order) is readable only while the \
+             strips are uncompressed; Deflate would make the file one libtiff rejects"
         )));
     }
 

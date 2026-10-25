@@ -560,6 +560,14 @@ otherwise:
 - `Compression` ∈ {`1`, `8`, `32946`}. LZW (`5`), JPEG (`6`, `7`), PackBits (`32773`), CCITT, and every
   other compression are refused: rewriting LZW needs an encoder this build does not have, and pretending
   otherwise would mean writing a file whose strips do not decode;
+- `FillOrder` absent or `1` (most significant bit first). `FillOrder = 2` — the bits of every sample
+  reversed, which is what the `R` in Pillow's `hopper2R.tif` means — is refused, because libtiff reverses
+  the bits of a *compressed* strip before it inflates it: a Deflate strip with `FillOrder 2` is a file the
+  reference decoder rejects with `incorrect header check`. Compressing such a file would shrink it by
+  breaking it. This one was found, not assumed: the third-party job of issue
+  [#54](https://github.com/RUdolf1517/tzim/issues/54) ran Pillow over the corpus and five files —
+  `pillow-tiff_gray_2_4_bpp_hopper{2,4,2I,4I}R.tif` and `pillow-16bit.r.tif` — came back unreadable
+  *after* tzim had rewritten them, every one of them `FillOrder 2` and uncompressed;
 - every out-of-line value belongs to a tag this build knows to be **plain data** (the list below). An
   unknown out-of-line tag is refused, because a value we cannot classify may be an absolute offset that
   the rewrite would invalidate. An unknown tag whose value fits in the entry's four value bytes is copied
@@ -673,8 +681,19 @@ Everything else is kept, in particular `Orientation` (274), `XResolution`/`YReso
 (34735) and the private tags. `42113` (`GDAL_METADATA`) is **kept** on purpose: it is not in the list.
 
 **Refused (skipped, exit 0):** BigTIFF, tiles, more than one IFD, planar `2`, predictor other than `1`/
-absent, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable non-zero bytes,
-`StripOffsets`/`StripByteCounts` with different counts. A file of this kind is valid and untouched.
+absent, `FillOrder 2`, LZW/JPEG/PackBits/CCITT compression, an unknown out-of-line tag, unplaceable
+non-zero bytes, `StripOffsets`/`StripByteCounts` with different counts. A file of this kind is valid and
+untouched.
+
+**Why `FillOrder 2` is refused rather than honoured.** The tag says the bits inside every byte are stored
+least significant first. Uncompressed, a decoder reverses them after reading and the file is fine.
+Compressed, libtiff reverses the bits of the *zlib stream itself* before inflating — the stream no longer
+starts with `78 9c`, and decoding stops at `incorrect header check`. That was checked by hand against
+Pillow 13/libtiff on `hopper2R.tif`: deflating it and keeping `FillOrder 2` reproduces `decoder error -2`,
+while the same file with `FillOrder 1`, or without the tag, reads back pixel-identical. Honouring the tag
+would mean reversing the sample bits and rewriting `FillOrder` to `1` — a legal, lossless transformation,
+but a change of representation this build has no test for. Refusing costs the compression of a handful of
+Pillow test images; guessing would cost the contract.
 
 **Corrupt (failed, exit 1):** bad byte order or magic, an IFD outside the file, an entry count that runs
 past the end, a strip outside the file, a zlib stream that does not decode, a decoded strip whose length

@@ -1080,6 +1080,8 @@ pub struct TiffSpec {
     pub samples_per_pixel: u16,
     pub bits_per_sample: u16,
     pub photometric: u16,
+    /// `FillOrder` (266); `None` leaves the tag out, which means 1.
+    pub fill_order: Option<u16>,
     /// 1 = none, 8 = Deflate (the strips are zlib-wrapped when read).
     pub compression: u16,
     pub rows_per_strip: u32,
@@ -1103,6 +1105,7 @@ impl Default for TiffSpec {
             samples_per_pixel: 1,
             bits_per_sample: 8,
             photometric: 1,
+            fill_order: None,
             compression: 1,
             rows_per_strip: 8,
             planar: 1,
@@ -1245,19 +1248,27 @@ pub fn build_tiff(spec: &TiffSpec) -> Vec<u8> {
             count: 1,
             raw: tiff_numbers(&[spec.photometric as u32], 3, big),
         },
-        TiffEntry {
-            tag: 277,
-            typ: 3,
-            count: 1,
-            raw: tiff_numbers(&[spec.samples_per_pixel as u32], 3, big),
-        },
-        TiffEntry {
-            tag: 284,
-            typ: 3,
-            count: 1,
-            raw: tiff_numbers(&[spec.planar as u32], 3, big),
-        },
     ];
+    if let Some(fill_order) = spec.fill_order {
+        entries.push(TiffEntry {
+            tag: 266,
+            typ: 3,
+            count: 1,
+            raw: tiff_numbers(&[fill_order as u32], 3, big),
+        });
+    }
+    entries.push(TiffEntry {
+        tag: 277,
+        typ: 3,
+        count: 1,
+        raw: tiff_numbers(&[spec.samples_per_pixel as u32], 3, big),
+    });
+    entries.push(TiffEntry {
+        tag: 284,
+        typ: 3,
+        count: 1,
+        raw: tiff_numbers(&[spec.planar as u32], 3, big),
+    });
     if let Some(predictor) = spec.predictor {
         entries.push(TiffEntry {
             tag: 317,
