@@ -34,11 +34,31 @@ rm -rf "$work"
 bash "$repo_root/.github/scripts/corpus-fetch.sh" "$work"
 
 # One set per format, so every tool is measured against files it can handle.
-mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/run"
+mkdir -p "$work/sets/png" "$work/sets/jpeg" "$work/sets/tiff" "$work/sets/zlib" "$work/run"
 find "$work/corpus/images" -type f -iname '*.png' -size "-${max_bytes}c" -exec cp {} "$work/sets/png/" \;
 find "$work/corpus/images" -type f \( -iname '*.jpg' -o -iname '*.jpeg' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/jpeg/" \;
+find "$work/corpus/images" -type f \( -iname '*.tif' -o -iname '*.tiff' \) -size "-${max_bytes}c" -exec cp {} "$work/sets/tiff/" \;
+# No corpus ships raw zlib streams, and a zlib stream is DEFLATE with a header:
+# wrapping real payloads at the default level is what a .zz file in the wild
+# looks like. Written with the same python3 the report below already needs.
+python3 - "$work/corpus/images" "$work/sets/zlib" <<'ZT'
+import os
+import sys
+import zlib
+
+src, dst = sys.argv[1], sys.argv[2]
+names = sorted(os.listdir(src))
+payloads = [n for n in names if n.lower().endswith((".png", ".jpg", ".jpeg"))][:12]
+for name in payloads:
+    with open(os.path.join(src, name), "rb") as fh:
+        data = fh.read()
+    with open(os.path.join(dst, name.rsplit(".", 1)[0] + ".zlib"), "wb") as fh:
+        fh.write(zlib.compress(data, 6))
+ZT
 echo "png set:  $(find "$work/sets/png" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 echo "jpeg set: $(find "$work/sets/jpeg" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
+echo "tiff set: $(find "$work/sets/tiff" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
+echo "zlib set: $(find "$work/sets/zlib" -type f | wc -l) files under $((max_bytes / 1024)) KiB"
 
 results="$work/results.tsv"
 : > "$results"
@@ -84,6 +104,12 @@ tzim_png_zopfli() {
 }
 tzim_jpeg() {
     "$bin" -r --formats jpeg --jobs 1 --json "$1" > /dev/null || true
+}
+tzim_tiff() {
+    "$bin" -r --formats tiff --jobs 1 --json "$1" > /dev/null || true
+}
+tzim_zlib() {
+    "$bin" -r --formats zlib --jobs 1 --json "$1" > /dev/null || true
 }
 
 # --- oxipng -----------------------------------------------------------------
@@ -135,6 +161,17 @@ echo "== jpeg =="
 measure tzim jpeg tzim_jpeg
 measure jpegtran jpeg jpegtran_optimize
 
+# TIFF and zlib have no packaged reference recompressor with the same contract:
+# `tiffcp -c deflate` rewrites the tag layout and the strip geometry, which Tzim
+# does not, and `advdef` handles gzip and ZIP but not a bare zlib stream. The
+# rows are therefore Tzim alone, and the report says so rather than pairing it
+# with a tool that would be measuring a different job.
+echo "== tiff =="
+measure tzim tiff tzim_tiff
+
+echo "== zlib =="
+measure tzim zlib tzim_zlib
+
 echo "== report =="
 python3 - "$results" "$work" <<'PY'
 import sys
@@ -163,10 +200,14 @@ labels = {
 }
 order = ["tzim", "tzim-jobs", "tzim-zopfli", "oxipng", "optipng", "jpegtran"]
 
-def table(title, set_name):
+def table(title, set_name, note=None):
     lines = [
         f"### {title}",
         "",
+    ]
+    if note:
+        lines += [note, ""]
+    lines += [
         "| Tool | Wall clock | Peak RSS | Bytes before | Bytes after | Saved |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
@@ -192,6 +233,16 @@ out.append("`oxipng -o max` needs minutes per megabyte. Copies of the same files
 out.append("")
 out += table("PNG", "png")
 out += table("JPEG", "jpeg")
+out += table(
+    "TIFF",
+    "tiff",
+    "No like-for-like reference tool: `tiffcp -c deflate` rewrites the tag layout and the strip geometry.",
+)
+out += table(
+    "zlib",
+    "zlib",
+    "No like-for-like reference tool: `advdef` covers gzip and ZIP, not a bare zlib stream.",
+)
 text = "\n".join(out)
 print(text)
 with open(f"{work}/summary.md", "w", encoding="utf-8") as fh:

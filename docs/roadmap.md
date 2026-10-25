@@ -207,7 +207,25 @@ Nothing here changes a byte of output:
 - **FLAC is refused after measurement** ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)):
   0.4 % on musical material, 0 % on files already written at `flac -8`, for ~150–300 KiB of binary.
 
-### v0.10+ — the queue after this
+### v0.10 — the claims around the code — **implemented**
+
+No handler changed and no byte written by the program is different. This release is about the sentences
+around the code that had stopped being true:
+
+- **CI is what [testing §4](testing.md#4-continuous-integration) says it is.** `msrv` (1.88.0), `fmt`, `deny`
+  (with a real `deny.toml`) and `audit` exist; every build runs `--locked`, which
+  [dependencies §6](dependencies.md#6-supply-chain) had been promising since the first release; the
+  `lockfile` job actually pushes, and [testing §4.1](testing.md#41-the-two-jobs-that-write-to-the-branch)
+  explains why two jobs write to the branch.
+- **The benchmarks are re-measured**, including the TIFF and zlib rows that the v0.4-era table predated, and
+  recorded with the run id ([benchmarks §3.2](benchmarks.md#32-against-the-established-tools)).
+- **The progress line is `indicatif`**, at the user's request: a spinner for one file, a clock, a bar and a
+  counter for a batch ([cli §10](cli.md#10-colour-and-progress)). It is the first dependency granted since
+  v0.1 and the only one not behind a feature ([dependencies §2.9](dependencies.md#29-indicatif--the-progress-line)).
+- **The README fits on one screen**: badges, five lines, the format table, and the pitch — contract and
+  refusal — where a stranger reads it first.
+
+### v0.11+ — the queue after this
 
 The queue is empty, and that is the result rather than an omission. What is left was examined and refused
 with a reason, so the next release does not start with "add another format":
