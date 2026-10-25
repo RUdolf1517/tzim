@@ -30,7 +30,9 @@ fn help_options() -> Vec<String> {
             .to_string();
         let valid = name.len() > 3
             && name.starts_with("--")
-            && name[2..].chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            && name[2..]
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if valid && seen.insert(name.clone()) {
             out.push(name);
         }
@@ -75,7 +77,10 @@ fn the_manual_page_is_for_this_version() {
         "tzim.1 says {header:?}, the crate is {}",
         env!("CARGO_PKG_VERSION")
     );
-    assert!(header.contains(" TZIM 1 "), "the page is section 1: {header:?}");
+    assert!(
+        header.contains(" TZIM 1 "),
+        "the page is section 1: {header:?}"
+    );
     // A man page without a NAME line is not installed by `man`.
     assert!(man.contains(".SH NAME"));
     assert!(man.contains(".SH SYNOPSIS"));
@@ -98,7 +103,10 @@ fn every_completion_knows_every_option() {
         .iter()
         .filter(|flag| !fish.contains(&format!("-l {}", &flag[2..])))
         .collect();
-    assert!(missing.is_empty(), "missing from completions/tzim.fish: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "missing from completions/tzim.fish: {missing:?}"
+    );
 }
 
 #[test]
@@ -133,7 +141,10 @@ fn the_linux_packages_carry_the_documentation() {
     // name; `man/tzim.1` is spelled out because the fallback for an older
     // archive uses the checkout's copy.
     for asset in ["man/tzim.1", "tzim.bash", "_tzim", "tzim.fish"] {
-        assert!(script.contains(asset), "the .deb and .rpm must ship {asset}");
+        assert!(
+            script.contains(asset),
+            "the .deb and .rpm must ship {asset}"
+        );
     }
     // Both architectures, because both binaries are built now.
     assert!(script.contains("arm64") && script.contains("amd64"));
@@ -151,7 +162,10 @@ fn the_formula_installs_more_than_a_binary() {
 #[test]
 fn the_installer_verifies_what_it_downloads() {
     let script = read("install.sh");
-    assert!(script.contains("SHA256SUMS"), "install.sh must fetch the checksums");
+    assert!(
+        script.contains("SHA256SUMS"),
+        "install.sh must fetch the checksums"
+    );
     assert!(
         script.contains("sha256sum") && script.contains("shasum"),
         "both Linux and macOS tools must be supported"
