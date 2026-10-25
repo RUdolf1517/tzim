@@ -118,7 +118,7 @@ Refusals are permanent design decisions, not a backlog. Each has a reason that f
 
 | Format | Why Tzim refuses |
 | --- | --- |
-| **PDF** | A useful rewrite requires rebuilding xref tables, object streams and incremental updates; encryption, linearization and digital signatures each add failure modes. A damaged PDF is unreadable, and there is no way to verify preservation without a renderer. Savings are real but the trust cost is not acceptable. |
+| **PDF** | A useful rewrite requires rebuilding xref tables, object streams and incremental updates; encryption, linearization and digital signatures each add failure modes. A damaged PDF is unreadable, and no object-level comparison proves that a document renders the same. **Under measurement**: a narrow slice — recompressing `FlateDecode` payloads inside a preserved object graph — is specified in [guarantees §4.11](guarantees.md#411-pdf--contract-written-not-implemented) and [pdf-audit](pdf-audit.md), with the decision rule fixed before the numbers. Until that run exists, the row stays refused. |
 | **WebP (lossless)** | No mature pure-Rust lossless encoder exists; a C dependency breaks static cross-platform builds. Re-encoding could also change the bitstream in ways we cannot independently verify sample-by-sample without the same library that produced it. |
 | **AVIF / HEIC / JPEG XL** | Same as WebP: no verifiable pure-Rust lossless re-encoder. Lossless JPEG transcoding to JXL is a format change (G2), which Tzim does not do. |
 | **MP4 / MOV / MKV / WebM / AVI** | The only available savings come from removing metadata or re-muxing, which changes data. Re-encoding is lossy. |

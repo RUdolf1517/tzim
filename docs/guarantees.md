@@ -772,6 +772,96 @@ the same reasoning.
 
 ---
 
+### 4.11. PDF — contract written, not implemented
+
+**Status: not implemented, and not yet justified.** No PDF code exists, `--list-formats` does not name the
+format, and `docs/formats.md` §5 records PDF as refused. This contract is written because it is the only way to
+make the question decidable: [pdf-audit](pdf-audit.md) pre-registers the measurement that would admit or refuse
+the format, and these are the clauses an implementation would have to satisfy if it did. Nothing here is a claim
+of support.
+
+The shape of the opportunity is different from FLAC's and worth stating: a `FlateDecode` payload **is** an
+RFC 1950 stream, so the transformation is the one this document already specifies in
+[§4.10](#410-zlib-rfc-1950--v09), applied inside a container. There is no PDF codec to write and no new
+dependency.
+
+**Transformation.** Inflate the payload of each `FlateDecode` stream, deflate it again at a higher level, and put
+a smaller stream back. Nothing else is re-encoded, renumbered or reordered.
+
+**Accepted subset** — a file is rewritten only when all of these hold, and is skipped with a reason otherwise:
+
+- the header is found within the first 1024 bytes, and everything before it is copied verbatim;
+- the cross-reference section parses: a classic `xref` table or a `/Type /XRef` stream, with every entry
+  resolving to an object header at the offset it names. A file that needed "repair" to be read is refused, not
+  repaired;
+- exactly one `%%EOF`, and no trailer `/Prev`: an incrementally updated file is refused, because flattening the
+  revisions is repacking;
+- no `/Encrypt` in the trailer;
+- no `/ByteRange` signature anywhere in the document;
+- no `/Linearized` dictionary and no hint streams;
+- every stream that is rewritten has `/Filter` equal to the single name `FlateDecode`, with no `/F`, and its
+  `/Length` agrees with `endstream`;
+- its payload is a well-formed RFC 1950 stream — `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, the check value valid and
+  the Adler-32 equal to the inflated bytes. Anything else is refused rather than repaired, as in §4.10;
+- objects held in an `ObjStm` are left alone: the container is copied verbatim. A file whose only compressed
+  payloads are inside object streams is therefore `already_optimal`, not an error.
+
+**Preserved, byte-identically:**
+
+- the header, the junk before it, and every byte between objects;
+- every object number, generation number, and the order in which objects appear;
+- every dictionary, including `/Info`, `/Metadata`, `/ID`, `/PieceInfo` and `/DecodeParms`, with one exception:
+  the value of `/Length` for a stream that was rewritten, when that length is a direct value;
+- every stream that was not rewritten;
+- the inflated content of every stream that was rewritten.
+
+**Allowed to change:**
+
+- the bytes of each rewritten `FlateDecode` stream, and their length;
+- the `/Length` value of those streams (direct, or the object holding it when it is an indirect reference);
+- the cross-reference section and `startxref`, because offsets move;
+- the total length of the file.
+
+`/ID` is **not** updated. The specification recommends changing its second element on an update; preserving it is
+the choice here, because a changed identifier is a changed document identity, and this project does not normalise
+metadata it was not asked to remove.
+
+**Verification** — structure **V3** (this repository's own reader, the same level as the ZIP structure), content
+**V1** (`flate2` inflates both sides, and the Adler-32 is recomputed by code in this repository):
+
+1. both files parse, and every xref entry points at an object header at the offset it names;
+2. the set of `(object number, generation)` pairs is identical, in the same order;
+3. every dictionary compares equal, except `/Length` of the rewritten streams;
+4. every rewritten stream inflates to bytes identical to the original's, and its recomputed Adler-32 equals the
+   original stream's;
+5. every other stream is byte-identical;
+6. `startxref` resolves to the xref section, and `/Root` and `/Info` name the same objects as before;
+7. `candidate.len() < input.len()`.
+
+Clause 4 is the one that carries the trust, and it is the same instrument §4.10 uses. What this cannot prove is
+stated in the audit rather than here: no object-level comparison proves that a document *renders* the same, and
+the rendering check lives in CI with a real renderer, not in the binary.
+
+**Refused (skipped, exit 0):** encryption, signatures, linearization, incremental updates, a broken xref, object
+streams as a rewrite target, any filter other than a single `FlateDecode`, a payload that is not a valid zlib
+stream, a `/Length` that disagrees with `endstream`, external stream data (`/F`), duplicate object numbers.
+
+**Corrupt (failed, exit 1):** a header that cannot be found within its bound, an object that runs past the end of
+the file, a trailer without `startxref`, a document whose `/Root` does not resolve. All leave the original
+untouched.
+
+**`--strip-metadata`** is not part of this contract. `/Info`, `/Metadata` and `/PieceInfo` are objects, not
+streams; removing them is [G4](#27-g4--metadata-removed-on-request) work with its own arguments and is not
+claimed here.
+
+**Expected gain:** unmeasured, and the audit says why (§3, §9). The honest expectation is that most heavy PDFs
+are scans whose streams are already entropy-coded, that a `FlateDecode` payload written at level 6 has a few
+percent in it, and that 0 % will be a common answer. The measurement in [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)
+fixes the threshold in advance: median ≥ 3 % with at least 10 % of the corpus accepted admits the format;
+median < 1 % refuses it with the numbers on record.
+
+---
+
 ## 5. What is not preserved
 
 Tzim replaces the file on the filesystem, not only its bytes. The following are **not** preserved and are

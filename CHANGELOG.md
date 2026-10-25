@@ -61,6 +61,14 @@ changed is that several documents stop claiming more than the code does.
   in the "not covered" table and in #35.
 - **`docs/safety.md` §5 gained a `Test` column** and §1 a pointer to the `T-FS-*` ids, so a reader can see
   which step of the algorithm is pinned and which is only described.
+- **`docs/pdf-audit.md`, and PDF's contract in `docs/guarantees.md` §4.11.** The format stays refused, but from
+  now on it is refused by evidence rather than by opinion: the audit describes the one operation that would be
+  in scope (recompressing `FlateDecode` payloads inside a byte-preserved object graph — the existing zlib path
+  in a new container, no new dependency), lists every construct that forces a refusal (encryption, signatures,
+  linearization, incremental updates, object streams, any other filter), and fixes the decision rule **before**
+  the numbers exist: median gain ≥ 3 % with ≥ 10 % of the corpus accepted admits the format, median < 1 %
+  refuses it with the measurement on record. No figure in it is measured, and every one is labelled as an
+  estimate.
 
 ### Changed
 

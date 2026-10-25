@@ -274,7 +274,7 @@ with a reason, so the next release does not start with "add another format":
 | --- | --- | --- |
 | FLAC | refused, measured | 0.4 % for a quarter of the binary |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
-| PDF | refused | no verifiable object-level comparison without a renderer |
+| PDF | refused, under measurement | no object-level comparison proves a rendering; the narrow `FlateDecode` slice is specified in [guarantees §4.11](guarantees.md#411-pdf--contract-written-not-implemented) and [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) fixes the decision rule in advance |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
 | raw DEFLATE | refused | no signature: recognition would be a guess |
 
