@@ -1,0 +1,185 @@
+name: fits-heasarc
+
+# The gate `docs/fits-audit.md` §8.3 and `docs/guarantees.md` §4.12 both name and
+# neither has run: `fitsverify` and `funpack` are HEASARC's own tools, and no
+# candidate produced by this program has ever been read by them (#71).
+#
+# This job is deliberately **not** a merge requirement yet: it is a release
+# gate, and a required check that has never been green is the failure mode #68
+# exists to prevent. It is also not allowed to be *quiet*: there is no
+# `continue-on-error` anywhere in it, and a tool that cannot be built, a warning
+# from `fitsverify` or a header that does not diff clean fails the run.
+#
+# The tools are built from one archive whose SHA-256 is pinned below, so the
+# provenance of the verifier is a hash and not a package manager's mood:
+# `fitsverify`, `fpack` and `funpack` are targets of CFITSIO's own build
+# (`utilities/`), and the CFITSIO commit is the same one the audit's corpus
+# pins. The conda-forge route is recorded as the alternative and is not used —
+# see the `HEASARC_NOTE` step.
+
+on:
+  pull_request:
+    paths:
+      - "src/formats/fits.rs"
+      - "tests/integration.rs"
+      - "tests/common/mod.rs"
+      - ".github/scripts/fits-heasarc.py"
+      - ".github/workflows/fits-heasarc.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # `ci-report.sh` publishes the failing log as a pull-request comment; a
+  # job-level `permissions` block replaces this one rather than adding to it.
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: never
+  # Pinned provenance. The SHA-256 values were computed from the archives this
+  # workflow downloads; the feedstock identity is what the alternative route
+  # would have installed.
+  CFITSIO_COMMIT: "113781d8aa44"
+  CFITSIO_SHA256: "cc5f1cc219b0de8f8d8500236b080bff13d2de12b9ed253c7a417b1b7d962509"
+  FITSVERIFY_FEEDSTOCK_COMMIT: "dc6109b2629c8e24c51ca7d2f042060a87fdd1f8"
+  FITSVERIFY_FEEDSTOCK_VERSION: "4.22"
+  FITSVERIFY_FEEDSTOCK_SHA256: "6c45e803a7e0edbcb7d13918615bae6361d2b333c292b849c509ec9bebdb18b4"
+
+jobs:
+  heasarc:
+    name: fitsverify gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Record the provenance of the tools
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/evidence"
+          {
+            echo "cfitsio archive: https://codeload.github.com/heasarc/cfitsio/tar.gz/${CFITSIO_COMMIT}"
+            echo "cfitsio archive sha256: ${CFITSIO_SHA256}"
+            echo "fitsverify, fpack and funpack are targets of that archive's build (utilities/)."
+            echo "alternative route not used: conda-forge fitsverify ${FITSVERIFY_FEEDSTOCK_VERSION}"
+            echo "  feedstock commit: ${FITSVERIFY_FEEDSTOCK_COMMIT}"
+            echo "  upstream tarball sha256 recorded there: ${FITSVERIFY_FEEDSTOCK_SHA256}"
+            echo "  reason: it needs two archives instead of one, and the CFITSIO build"
+            echo "  produces all three tools from the commit the corpus already pins."
+          } | tee "${RUNNER_TEMP}/evidence/provenance.txt"
+
+      - name: Fetch the pinned archive and verify its SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://codeload.github.com/heasarc/cfitsio/tar.gz/${CFITSIO_COMMIT}"
+          curl -fsSL --retry 3 --retry-delay 2 -o "${RUNNER_TEMP}/cfitsio.tar.gz" "$url"
+          echo "${CFITSIO_SHA256}  ${RUNNER_TEMP}/cfitsio.tar.gz" | sha256sum -c --strict -
+          sha256sum "${RUNNER_TEMP}/cfitsio.tar.gz" | tee "${RUNNER_TEMP}/evidence/cfitsio-archive.txt"
+
+      - name: Build fitsverify, fpack and funpack
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          tar xzf cfitsio.tar.gz
+          src="$(find . -maxdepth 1 -type d -name 'cfitsio-*' | head -1)"
+          cd "$src"
+          ./configure --prefix="${RUNNER_TEMP}/cfitsio-install" > configure.log
+          make -j"$(nproc)" > build.log 2>&1
+          # `make install` on some CFITSIO versions installs the library only, so
+          # the three tools are placed next to it explicitly rather than assumed:
+          # a missing `fitsverify` must be an error here, not a mystery later.
+          make install > install.log 2>&1
+          bindir="${RUNNER_TEMP}/cfitsio-install/bin"
+          mkdir -p "$bindir"
+          for tool in fitsverify fpack funpack; do
+            if [ ! -x "$bindir/$tool" ]; then
+              cp "$tool" "$bindir/$tool"
+            fi
+            test -x "$bindir/$tool" || { echo "::error::$tool was not built"; exit 1; }
+          done
+          echo "$bindir" >> "$GITHUB_PATH"
+          # The build logs are evidence: a verifier built from a patched tree is
+          # not the verifier the audit names.
+          cp configure.log build.log install.log "${RUNNER_TEMP}/evidence/"
+
+      - name: Show what was built
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "== which =="
+            command -v fitsverify fpack funpack
+            echo "== versions =="
+            # `fitsverify` exits with the number of errors plus warnings, and its
+            # usage text is not guaranteed to exit 0; the code is recorded and
+            # not asserted here. The harness makes the same distinction.
+            for tool in fitsverify fpack funpack; do
+              echo "--- $tool"
+              "$tool" 2>&1 | head -4 || true
+              echo "exit: $?"
+            done
+          } | tee "${RUNNER_TEMP}/evidence/tool-versions.txt"
+
+      - name: Build tzim with the fits feature
+        shell: bash
+        run: cargo build --release --locked --features fits
+
+      - name: Run the HEASARC gate
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/fits-heasarc.py \
+            --binary target/release/tzim \
+            --work "${RUNNER_TEMP}/fits-heasarc-work" \
+            --evidence "${RUNNER_TEMP}/evidence" 2>&1 | tee "${RUNNER_TEMP}/fits-heasarc.log"
+
+      - name: Seal the evidence
+        if: always()
+        shell: bash
+        run: |
+          dir="${RUNNER_TEMP}/evidence"
+          mkdir -p "$dir"
+          if [ -f "$dir/checksums.txt" ]; then
+            echo "the harness sealed its own evidence; see checksums.txt"
+          else
+            echo "the harness did not reach its seal step; sealing what exists"
+            ( cd "$dir" && sha256sum * 2>/dev/null | grep -v ' checksums.txt$' > checksums.txt || true )
+          fi
+          {
+            echo "commit: ${GITHUB_SHA}"
+            echo "run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } >> "$dir/run.txt"
+          sha256sum "$dir"/* | sed "s|$dir/||"
+
+      - name: Step summary
+        if: always()
+        shell: bash
+        run: |
+          summary="${RUNNER_TEMP}/evidence/summary.md"
+          if [ -f "$summary" ]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The gate did not produce a summary; see the log and the artifacts." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish failure log
+        # Not `continue-on-error`: the step below already ran, the job is going
+        # to be red either way, and this only makes the reason readable.
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/fits-heasarc.log" fits-heasarc
+
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fits-heasarc-evidence
+          retention-days: 90
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/evidence
+            ${{ runner.temp }}/fits-heasarc.log
