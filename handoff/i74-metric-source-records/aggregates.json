@@ -1,0 +1,465 @@
+{
+  "commands": [
+    "/tmp/astro/bin/python /home/user/tzim/.github/scripts/fits-measure.py --root /tmp/mfetch --manifest /tmp/mfetch/manifest.json --out /tmp/ev2/fits.jsonl",
+    "/tmp/astro/bin/python /home/user/tzim/.github/scripts/pdf-measure.py --root /tmp/mfetch --manifest /tmp/mfetch/manifest.json --out /tmp/ev2/pdf.jsonl --render-sample 140 --render-out /tmp/ev2/render-sample.jsonl"
+  ],
+  "corpora": [
+    {
+      "archive": "https://codeload.github.com/astropy/astropy/tar.gz/dbbf2acd6dbb",
+      "archive_sha256": "9e41903218933be74870e1723c08f856a503357618631a040475a88b3ee4f58c",
+      "bytes": 691200,
+      "commit": "dbbf2acd6dbb",
+      "excluded": 0,
+      "files": 34,
+      "name": "astropy",
+      "repo": "astropy/astropy"
+    },
+    {
+      "archive": "https://codeload.github.com/heasarc/cfitsio/tar.gz/113781d8aa44",
+      "archive_sha256": "cc5f1cc219b0de8f8d8500236b080bff13d2de12b9ed253c7a417b1b7d962509",
+      "bytes": 694080,
+      "commit": "113781d8aa44",
+      "excluded": 0,
+      "files": 5,
+      "name": "cfitsio",
+      "repo": "heasarc/cfitsio"
+    },
+    {
+      "archive": "https://codeload.github.com/spacetelescope/drizzlepac/tar.gz/635834581ea2",
+      "archive_sha256": "86cd9e8da51bf7e33de1ba0a844d27d3a0dbd82f730894430e3bf129f4b3b669",
+      "bytes": 15488640,
+      "commit": "635834581ea2",
+      "excluded": 0,
+      "files": 123,
+      "name": "drizzlepac",
+      "repo": "spacetelescope/drizzlepac"
+    },
+    {
+      "archive": "https://codeload.github.com/astropy/reproject/tar.gz/9dddd419111a",
+      "archive_sha256": "6b1c5b4e526d1c392b47ba2e98ec1b9fab99bae0765e110bf54ac3ef1a83f23d",
+      "bytes": 1903680,
+      "commit": "9dddd419111a",
+      "excluded": 0,
+      "files": 16,
+      "name": "reproject",
+      "repo": "astropy/reproject"
+    },
+    {
+      "archive": "https://codeload.github.com/mozilla/pdf.js/tar.gz/606bd6a4e138",
+      "archive_sha256": "222b1fb33e0bc09ebf125f0d4ce1f84226a6d7bdd26a0e3c1c5782583e8d3046",
+      "bytes": 124725746,
+      "commit": "606bd6a4e138",
+      "excluded": 0,
+      "files": 1009,
+      "name": "pdfjs",
+      "repo": "mozilla/pdf.js"
+    },
+    {
+      "archive": "https://codeload.github.com/qpdf/qpdf/tar.gz/4eba95899886",
+      "archive_sha256": "a93d12cd81807006ec1e949229fe72211be2d0999ce5c48d4e597b7f01eb039c",
+      "bytes": 38235783,
+      "commit": "4eba95899886",
+      "excluded": 0,
+      "files": 630,
+      "name": "qpdf",
+      "repo": "qpdf/qpdf"
+    },
+    {
+      "archive": "https://codeload.github.com/veraPDF/veraPDF-corpus/tar.gz/bb75f4f0073d",
+      "archive_sha256": "3f45b024d31ba88fca5710976c84eb2d91c56cc12d863bd2be1b0dfd2ef91f1e",
+      "bytes": 8891630,
+      "commit": "bb75f4f0073d",
+      "excluded": 0,
+      "files": 569,
+      "name": "verapdf",
+      "repo": "veraPDF/veraPDF-corpus"
+    }
+  ],
+  "elapsed_seconds": 52.8,
+  "environment": {
+    "executable": "/tmp/astro/bin/python",
+    "git_dirty": true,
+    "git_head": "a8f6c29293035005023e7b9f75c7ac90fb787760",
+    "machine": "x86_64",
+    "packages": {
+      "astropy": {
+        "file": "/tmp/astro/lib/python3.11/site-packages/astropy/__init__.py",
+        "version": "8.0.2"
+      },
+      "fitz": {
+        "file": "/tmp/av2/lib/python3.11/site-packages/fitz/__init__.py",
+        "mupdf": "1.28.5",
+        "version": "2.0"
+      },
+      "numpy": {
+        "file": "/tmp/av2/lib/python3.11/site-packages/numpy/__init__.py",
+        "version": "2.4.6"
+      },
+      "pikepdf": {
+        "file": "/tmp/av2/lib/python3.11/site-packages/pikepdf/__init__.py",
+        "libqpdf": "12.4.2",
+        "version": "10.17.0"
+      },
+      "pymupdf": {
+        "file": "/tmp/av2/lib/python3.11/site-packages/pymupdf/__init__.py",
+        "mupdf": "1.28.5",
+        "version": "2.0"
+      }
+    },
+    "platform": "Linux-6.1.158+-x86_64-with-glibc2.36",
+    "processor": "",
+    "python": "3.11.2 (main, Apr  8 2026, 01:58:00) [GCC 12.2.0]",
+    "scripts": {
+      "fits-measure.py": "b692db2644415ea8dcf03ef751085d28c684373aab34cc73e264b8c8c052b0a9",
+      "measure-fetch.py": "eb9c3598e4dbfd73b43db97454c6f1d3cd20f287d16fe3dce85308cf9fb40054",
+      "measure-repro.py": "f803cd0923f9fa257ca82ad1c04269bdac298266dbbbd674e0c6d70b98912311",
+      "pdf-measure.py": "a455ddc49970d7e2d279a82c74f70e6c790614dc67c0907b76953876f915e08f"
+    },
+    "started": "2026-10-26T14:30:18Z",
+    "zlib_compile_version": "1.2.13",
+    "zlib_runtime_version": "1.2.13"
+  },
+  "fits": {
+    "aggregates": {
+      "accepted": 151,
+      "by_corpus": {
+        "astropy": -7.142857142857143,
+        "cfitsio": 42.10526315789474,
+        "drizzlepac": 21.875,
+        "reproject": 41.883116883116884
+      },
+      "by_status": {
+        "refused": 25,
+        "tier2": 153
+      },
+      "bytes_after": 13343040,
+      "bytes_before": 17827200,
+      "bytes_pct": 25.153473344103393,
+      "exact_failures": [
+        {
+          "corpus": "astropy",
+          "path": "double_ext.fits",
+          "why": "keyword_EXTNAMX"
+        },
+        {
+          "corpus": "astropy",
+          "path": "zerowidth.fits",
+          "why": "array_0"
+        }
+      ],
+      "files": 178,
+      "maximum": 72.72727272727273,
+      "mean": 19.09110744252221,
+      "median": 21.875,
+      "minimum": -100.0,
+      "n": 151,
+      "q1": 17.391304347826086,
+      "q3": 27.272727272727273,
+      "refusals": {
+        "no_image": 25
+      },
+      "share_positive": 82.78145695364239,
+      "tier2": 153
+    },
+    "comparison": [
+      {
+        "measured": 178,
+        "metric": "files",
+        "note": null,
+        "published": 178,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 153,
+        "metric": "tier2",
+        "note": null,
+        "published": 153,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 151,
+        "metric": "accepted",
+        "note": null,
+        "published": 151,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 21.875,
+        "metric": "median",
+        "note": null,
+        "published": 21.9,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 17.3913,
+        "metric": "q1",
+        "note": null,
+        "published": 17.4,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 27.2727,
+        "metric": "q3",
+        "note": null,
+        "published": 27.3,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 19.0911,
+        "metric": "mean",
+        "note": null,
+        "published": 19.1,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 82.7815,
+        "metric": "share_positive",
+        "note": null,
+        "published": 83,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 72.7273,
+        "metric": "maximum",
+        "note": null,
+        "published": 72.7,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 17827200,
+        "metric": "bytes_before",
+        "note": null,
+        "published": 17827200,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 13343040,
+        "metric": "bytes_after",
+        "note": null,
+        "published": 13343040,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 41.8831,
+        "metric": "median[reproject]",
+        "published": 41.9,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 42.1053,
+        "metric": "median[cfitsio]",
+        "published": 42.1,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 21.875,
+        "metric": "median[drizzlepac]",
+        "published": 21.9,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": -7.1429,
+        "metric": "median[astropy]",
+        "published": -7.1,
+        "verdict": "reproduced"
+      }
+    ],
+    "elapsed_seconds": 7.3,
+    "problems": [],
+    "rows": 178
+  },
+  "manifest_digest": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "manifest_files": 2386,
+  "manifest_path": "/tmp/mfetch/manifest.json",
+  "note": "A re-run is a new measurement. The comparison below says whether the published numbers are still what the instruments produce; it does not promote this run to the publication.",
+  "pdf": {
+    "aggregates": {
+      "accepted": 1009,
+      "by_corpus": {
+        "pdfjs": 0.02907568400546623,
+        "qpdf": 0.0,
+        "verapdf": 0.08318314314881353
+      },
+      "by_status": {
+        "accepted": 1009,
+        "already_optimal": 723,
+        "refused": 476
+      },
+      "files": 2208,
+      "maximum": 29.6864174801967,
+      "mean": 0.4216836773137112,
+      "median": 0.08196721311475409,
+      "payloads_equal": 918,
+      "q1": 0.0,
+      "q3": 0.08559201141226819,
+      "qpdf_check_passed": 1009,
+      "qpdf_median": 0.5910039990090951,
+      "qpdf_q1": -0.06811370447734084,
+      "qpdf_q3": 1.936912008854455,
+      "qpdf_share_positive": 60.257680872150644,
+      "refusals": {
+        "damaged": 40,
+        "encrypted": 21,
+        "filter_chain": 15,
+        "incremental_update": 332,
+        "no_header": 15,
+        "not_deflate": 2,
+        "not_inflatable": 4,
+        "signed": 3,
+        "stream_too_short": 2,
+        "truncated": 2,
+        "unreadable": 40
+      },
+      "render_differences": 0,
+      "render_errors": 0,
+      "render_files": 140,
+      "render_pages": 168,
+      "render_sampled_files": 140,
+      "repack_mean": 16.985651209591044,
+      "repack_median": 20.14092777451556,
+      "share_negative_count": 0,
+      "share_positive": 69.37561942517344,
+      "share_positive_count": 700,
+      "share_positive_denominator": 1009,
+      "share_zero_count": 309
+    },
+    "comparison": [
+      {
+        "measured": 2208,
+        "metric": "files",
+        "note": null,
+        "published": 2208,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 1009,
+        "metric": "accepted",
+        "note": null,
+        "published": 1009,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 0.082,
+        "metric": "median",
+        "note": null,
+        "published": 0.08,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 0.0,
+        "metric": "q1",
+        "note": null,
+        "published": 0.0,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 0.0856,
+        "metric": "q3",
+        "note": null,
+        "published": 0.09,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 0.4217,
+        "metric": "mean",
+        "note": null,
+        "published": 0.39,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 69.3756,
+        "metric": "share_positive",
+        "note": null,
+        "published": 68,
+        "verdict": "DIFFERENT"
+      },
+      {
+        "measured": 29.6864,
+        "metric": "maximum",
+        "note": null,
+        "published": 29.7,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 0.591,
+        "metric": "qpdf_median",
+        "note": null,
+        "published": 0.59,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": -0.0681,
+        "metric": "qpdf_q1",
+        "note": null,
+        "published": -0.07,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 1.9369,
+        "metric": "qpdf_q3",
+        "note": null,
+        "published": 1.94,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 60.2577,
+        "metric": "qpdf_share_positive",
+        "note": null,
+        "published": 60,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 20.1409,
+        "metric": "repack_median",
+        "note": null,
+        "published": 20.1,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 16.9857,
+        "metric": "repack_mean",
+        "note": null,
+        "published": 17.0,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 1009,
+        "metric": "qpdf_check_passed",
+        "note": null,
+        "published": 1009,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 140,
+        "metric": "render_files",
+        "note": null,
+        "published": 140,
+        "verdict": "reproduced"
+      },
+      {
+        "measured": 168,
+        "metric": "render_pages",
+        "note": null,
+        "published": 173,
+        "verdict": "DIFFERENT"
+      },
+      {
+        "measured": 0,
+        "metric": "render_differences",
+        "note": null,
+        "published": 0,
+        "verdict": "reproduced"
+      }
+    ],
+    "elapsed_seconds": 43.8,
+    "problems": [
+      "share_positive: published 68, measured 69.37561942517344",
+      "render_pages: published 173, measured 168"
+    ],
+    "rows": 2208
+  },
+  "problems": [
+    "pdf: share_positive: published 68, measured 69.37561942517344",
+    "pdf: render_pages: published 173, measured 168"
+  ]
+}
