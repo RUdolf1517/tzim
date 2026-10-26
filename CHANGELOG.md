@@ -78,6 +78,15 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   CRC-32 and `ISIZE`), not an RFC 1950 zlib stream as [fits-audit §0](docs/fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source)
   had assumed, and the `GZIP_2` permutation is the decreasing order of significance the convention states. Both
   were marked "re-read before coding"; re-reading them is what produced the correction.
+- **The FITS run did not satisfy every step of #59, and says which.** `fitsverify` could not be installed, so no
+  candidate was checked by a program written by someone else — the round trip was compared with `astropy` and
+  every array bit for bit, which is stronger on content and weaker on independence, and
+  [fits-audit §4](docs/fits-audit.md#4-what-a-rewrite-may-change-tier-by-tier) gates Tier 2 on exactly that missing check. The
+  corpus is pinned by commit rather than by archive SHA-256, which pins the bytes more tightly than a hash of a
+  re-tarball but is not what the issue asked for. And the pre-registered clause "a single round-trip mismatch
+  ends the discussion" fired twice: both failures belong to the reference writer rather than to the transform,
+  and [fits-audit §8.2](docs/fits-audit.md#82-the-result) records that this distinction was made after the fact
+  rather than before it.
 
 ### Errata for 0.12.1
 

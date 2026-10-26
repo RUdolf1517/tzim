@@ -227,7 +227,7 @@ reachable. The substitutes are named, because a substitute is only honest when i
 | --- | --- | --- |
 | `fpack -g` | `astropy.io.fits.CompImageHDU` | it calls the same CFITSIO tile writer (`imcomp_compress_tile`) that `fpack` calls, with `quantize_level=0` so nothing is quantised |
 | `funpack` | reading the candidate back with `astropy` and comparing **every array bit for bit** (`array_equal` with `equal_nan`, after checking shape) | a stronger check than `funpack`'s own output comparison |
-| `fitsverify -l` | not run | the structural checks are the ones this document's contract would make; they are not a second implementation, and this is the one gap in the run |
+| `fitsverify -l` | not run | the structural checks are the ones this document's contract would make; they are not a second implementation, and this is the one gap in the run. **A gap, not a substitute**: no candidate here was checked by a program written by someone else |
 | published survey products | none obtainable | see the corpus note below; this is the run's real limitation |
 
 **Corpus**, pinned by repository and commit rather than by archive hash, because a `git` checkout pins the exact
@@ -267,11 +267,30 @@ refused as `no_image`. Two of the 153 candidates failed verification and are **n
 of the reference implementation's writer, not of the transform, and both are exactly the kind of file the
 handler's own verifier would refuse rather than write.
 
+**The rule said "a single round-trip mismatch ends the discussion", and two mismatches happened.** Applied
+literally, this audit would stop here and refuse FITS. It does not, and the reason has to be written down
+rather than assumed, because a pre-registered rule exists precisely so that it cannot be adjusted once the
+numbers arrive:
+
+- both failures are in **what the reference writer produced**, not in the transform this contract specifies.
+  `zerowidth.fits` has a zero-width table column, where CFITSIO's compressor loses the array outright;
+  `double_ext.fits` carries an `EXTNAMX` card the compressed form has no keyword to carry back;
+- neither can arise from a handler that checks what it writes, because the contract refuses both inputs
+  **before a candidate exists** — they are in issue #70's fixture list as required refusals, not accepted cases;
+- the clause was written against a mismatch between an original and a *correct* candidate. A mismatch caused by
+  the measuring instrument is a finding about the instrument.
+
+That distinction is being made after the fact, which is the one thing the rule meant to prevent. The honest
+version of it is this paragraph: a reader who thinks the clause should have stopped the run is entitled to refuse
+FITS on it, and that refusal would be consistent with this document as it was written in advance. The numbers do
+not depend on the resolution — they are what the reference implementation does, and what the two files did is
+recorded rather than smoothed away.
+
 **Tier 1, and why it is zero.** Every tile in the corpus is already compressed at roughly level 6, so
-recompressing at level 9 returns the same bytes; the arithmetic is in §0, the third point of the answer. The tier is not refused because it
-is worthless in principle — CFITSIO's own writer asks `zlib` for `Z_BEST_SPEED`, and a file that really came from
-that path would gain several per cent — but nothing in a corpus of 21 720 tiles does, and the rule was fixed
-before the number existed.
+recompressing at level 9 returns the same bytes; the arithmetic is in §0, the third point of the answer. The tier
+is not refused because it is worthless in principle — CFITSIO's own writer asks `zlib` for `Z_BEST_SPEED`, and a
+file that really came from that path would gain several per cent — but nothing in a corpus of 21 720 tiles does,
+and the rule was fixed before the number existed.
 
 ### 8.3 The decision
 
@@ -281,6 +300,13 @@ Applying the rule as written, not as it would be convenient to read:
   round-trip mismatches in the counted set. Tier 2 is therefore **admitted**, and ships **opt-in behind
   `--fits-tile`** as the rule says — never in `default`, because a pipeline that reads `NAXIS1` from an `IMAGE`
   HDU does not expect a `BINTABLE` there.
+
+One condition is attached that the rule did not ask for but §4 of this document did: **Tier 2 may not ship
+before `fitsverify` has accepted its output and `funpack` has produced a header that `diff`s clean against the
+original.** That is the gate §4 names and this run could not perform, because the HEASARC tools were not
+installable. The admission is therefore a green light for **writing** the handler (issue #70), not for releasing
+it: until that check runs somewhere with `fpack`/`fitsverify`/`funpack`, the honest status is "admitted, not
+implemented, and not yet verified by a second implementation".
 - **Tier 1 does not clear its bar**: median **0.00 % < 2 %**, so it does **not** ship on by default.
 - FITS is therefore **not refused**: the audit asked which tier survives a measurement, and one did.
 

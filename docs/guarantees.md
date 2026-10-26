@@ -1013,8 +1013,10 @@ HDU does not expect a `BINTABLE` in its place. The other tier — recompressing 
 `GZIP_1`/`GZIP_2` — measured **0.00 %** and does not ship on by default.
 
 No FITS code exists and `--list-formats` does not name the format. "Admitted" here means one thing only: the
-next issue is worth opening, and the size it will be judged against is a number. Nothing in this section is a
-claim of support.
+next issue is worth opening, and the size it will be judged against is a number. It is also **not yet verified
+by a second implementation** — §4 of the audit gates Tier 2 on `fitsverify` and on `funpack` reproducing a
+header that diffs clean, and neither tool was available for the measurement. Nothing in this section is a claim
+of support, and nothing in it licenses a release before that check has run.
 
 Two preconditions, from [fits-audit §0](fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source),
 had to be confirmed against the convention before any code is written, because both change the design rather
