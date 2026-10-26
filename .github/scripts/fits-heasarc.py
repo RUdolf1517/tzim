@@ -408,7 +408,7 @@ def build_fixtures(root):
         image_hdu(16, [64, 128], int16_pattern(64, 128), primary=True)
         + nonstandard_hdu("HDRLET", b"\x01\x02\x03\x04" * 200, extra=[string_card("EXTNAME", "STWCS")])
         + image_hdu(-32, [32, 64], float32_with_specials(32, 64), extra=[string_card("EXTNAME", "SCI")])
-        + bin_table_hdu(4, 16),
+        + bin_table_hdu(4, 8),
     )
     cases.append(
         dict(
@@ -773,10 +773,10 @@ def classify_diff(diff):
     if keywords & structural:
         return "structural (allowed to change on a rewritten HDU)"
     if diff["kind"] == "invented":
-        return "invented by the writer (allowed only for the generated structural set)"
+        return "present only in funpack-reconstructed header (producer not isolated)"
     if diff["kind"] == "dropped":
-        return "dropped (never allowed: §4.12 says no card is dropped)"
-    return "changed (allowed only if §4.12 names the card as allowed to change)"
+        return "absent from funpack-reconstructed header (producer not isolated; §4.12 says no card is dropped)"
+    return "literal card changed in funpack-reconstructed header (producer not isolated)"
 
 
 def compare_arrays(original_hdu, reconstructed_hdu):
@@ -1161,8 +1161,10 @@ def render_diagnostics(summary, evidence):
     lines.append("## Literal header diffs")
     lines.append("")
     lines.append(
-        "These are sequence diffs of complete 80-column cards (including comments and spacing); "
-        "the `repr` strings retain trailing blanks. The JSON and text originals are sealed in the artifact."
+        "These compare the original HDU with `funpack`'s reconstructed HDU, as complete 80-column "
+        "cards (including comments and spacing); `repr` retains trailing blanks. They prove a literal "
+        "round-trip difference, but do not by themselves attribute it to `tzim` or `funpack`. The raw "
+        "tzim candidate, JSON diff, and text diff are sealed in the artifact."
     )
     lines.append("")
     if not diffs:
@@ -1476,13 +1478,11 @@ def main():
                   " nothing about this program")
             failures += 1
 
-    # --- what the owner has to decide, counted but not excused ----------------
-    # A rewritten HDU that gains an `EXTNAME` it did not have is a *design*
-    # difference between this program and `fpack`, not a defect of the rewrite,
-    # and §4.12 does not obviously permit it. It is kept as a failure — nothing
-    # here normalises it away — but it is counted separately so that the owner can
-    # tell "the gate found the known open question" from "the gate found something
-    # new". #71 escalation, see the hand-off note.
+    # --- reconstruction differences that need ownership, counted but not excused ---
+    # The literal diff is original-vs-funpack output. If it contains only an
+    # inserted EXTNAME, keep that pattern separate for the owner, but do not say
+    # which program introduced it: the gate does not yet isolate that producer.
+    # It remains a failure and is never normalized away.
     escalation = []
     for case in summary["fixtures"]:
         diffs = case.get("header_diff") or {}
@@ -1492,8 +1492,8 @@ def main():
     summary["escalation"] = escalation
     if escalation:
         print(
-            "escalation: %d fixture(s) differ only by an `EXTNAME` this writer adds — owner decision,"
-            " still a failure here: %s" % (len(escalation), ", ".join(escalation))
+            "escalation: %d fixture(s) have only an inserted `EXTNAME` in funpack's reconstructed header;"
+            " producer not isolated, still a failure: %s" % (len(escalation), ", ".join(escalation))
         )
 
     summary["ok"] = failures == 0
@@ -1537,6 +1537,14 @@ def self_check(root, cases, scratch, evidence, summary):
         check(b"".join(h.raw for h in hdus) == raw, "%s does not round trip through the reader" % case["name"])
         check(len(raw) % RECORD == 0, "%s is not a whole number of records" % case["name"])
     print("reader: %d fixtures re-emit their own bytes" % len(cases))
+
+    multi = parse(open(os.path.join(root, "multi_hdu.fits"), "rb").read())
+    table = next((h for h in multi if h.kind() == "BINTABLE"), None)
+    check(table is not None, "multi_hdu fixture has no binary table")
+    if table:
+        check(table.int("NAXIS1") == 8 and table.text("TFORM1") == "1PB(1024)",
+              "multi_hdu's one 1PB column is 8 bytes, so NAXIS1 must be 8")
+    print("fixture: multi_hdu BINTABLE NAXIS1 agrees with its one 1PB descriptor")
 
     # The specials fixture really does carry four NaN payloads and both zeros.
     specials = parse(open(os.path.join(root, "float32_specials.fits"), "rb").read())[0]
