@@ -136,6 +136,50 @@ jobs:
         shell: bash
         run: exit 1
 
+  # FITS is the first format whose verification cannot live in the binary: the
+  # array round trip is checked by `astropy`, which is CFITSIO underneath — the
+  # same tile decoder `fpack` and `funpack` call (fits-audit §8.1). `fitsverify`
+  # has not run anywhere, and fits-audit §8.3 says the handler may not ship before
+  # it does; this job is the stand-in that makes "not yet" a measured statement
+  # rather than an assumption (#70).
+  fits-oracle:
+    name: fits oracle (astropy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install astropy
+        shell: bash
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet --disable-pip-version-check numpy astropy
+          /tmp/venv/bin/python -c "import astropy; print('astropy', astropy.__version__)"
+
+      - name: Build with the fits feature and check the output (#70)
+        id: oracle
+        continue-on-error: true
+        shell: bash
+        run: |
+          # One log for both halves: a build failure and a verification failure
+          # are the same answer to "does the second implementation accept it".
+          {
+            cargo build --release --locked --features fits
+            /tmp/venv/bin/python .github/scripts/fits-oracle.py --binary target/release/tzim
+          } 2>&1 | tee /tmp/tzim-fits.log
+
+      - name: Publish failure log
+        if: steps.oracle.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-fits.log fits
+
+      - name: Fail the job
+        if: steps.oracle.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
   docs:
     name: docs (links and anchors)
     runs-on: ubuntu-latest
@@ -526,8 +570,10 @@ jobs:
           out=/tmp/tzim-features.txt
           printf '%-38s %10s %8s\n' "features" "bytes" "KiB" > "$out"
           printf '%-38s %10s %8s\n' "--------------------------------------" "----------" "--------" >> "$out"
-          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the last
-          # two carry the independent decoder, which is off by default.
+          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the rows
+          # after it carry the decoders and formats that are off by default —
+          # `jpeg-v1`, `fits` — which is how their cost is measured rather than
+          # guessed.
           for features in \
             "png" \
             "png,gzip" \
@@ -535,8 +581,10 @@ jobs:
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
             "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli" \
+            "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits" \
             "png,gzip,zip,ico,jpeg,jpeg-v1" \
-            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli"
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli,fits"
           do
             cargo build --release --locked --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

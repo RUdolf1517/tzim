@@ -3454,3 +3454,276 @@ fn strip_metadata_has_nothing_to_remove_from_zlib() {
     assert_eq!(optimized[..2], original[..2]);
     assert_eq!(zlib_payload(&optimized), payload);
 }
+
+// ---------------------------------------------------------------------------
+// FITS (v0.14, opt-in behind --fits-tile)
+// ---------------------------------------------------------------------------
+//
+// The handler is behind its own feature, so these tests are too. Every one of
+// them asserts against the fixtures' own reader (`fits_parse`, `fits_tiles`,
+// `fits_compressed_array`), which inflates the tiles with `flate2` directly: a
+// test that asked the handler to decompress what the handler compressed would
+// prove only that it is self-consistent.
+
+#[cfg(feature = "fits")]
+mod fits_tests {
+    use super::*;
+
+    /// A primary image large enough that the tiles outweigh the table header,
+    /// which is the case the handler exists for.
+    fn image_file(bitpix: i64, axis: &[usize]) -> (Vec<u8>, Vec<u8>) {
+        let data = fits_samples(bitpix, axis);
+        (fits_primary_image(bitpix, axis, &data), data)
+    }
+
+    #[test]
+    fn fits_an_image_hdu_becomes_a_compressed_table_that_round_trips() {
+        let ws = Workspace::new("fits-int");
+        let (original, array) = image_file(16, &[256, 120]);
+        let path = ws.write("image.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "image.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        assert!(
+            optimized.len() < original.len(),
+            "{} vs {}",
+            optimized.len(),
+            original.len()
+        );
+
+        // A compressed primary array needs an empty primary HDU in front of it,
+        // because a BINTABLE cannot be the first HDU of a file.
+        let hdus = fits_parse(&optimized);
+        assert_eq!(hdus.len(), 2, "an empty primary and the table");
+        assert_eq!(fits_int(&hdus[0], "NAXIS"), Some(0), "the empty primary");
+        assert_eq!(fits_bool(&hdus[1], "ZIMAGE"), Some(true));
+        assert_eq!(fits_text(&hdus[1], "ZCMPTYPE").as_deref(), Some("GZIP_1"));
+        assert_eq!(fits_int(&hdus[1], "ZBITPIX"), Some(16));
+        assert_eq!(fits_int(&hdus[1], "ZNAXIS1"), Some(256));
+        assert_eq!(fits_int(&hdus[1], "ZNAXIS2"), Some(120));
+        // The tiling rule the contract states: one tile per row.
+        assert_eq!(fits_int(&hdus[1], "ZTILE1"), Some(256));
+        assert_eq!(fits_int(&hdus[1], "ZTILE2"), Some(1));
+        assert_eq!(fits_int(&hdus[1], "NAXIS2"), Some(120));
+
+        assert_eq!(
+            fits_compressed_array(&hdus[1]),
+            array,
+            "the array must round-trip byte for byte"
+        );
+    }
+
+    #[test]
+    fn fits_a_float_array_uses_gzip_2_and_round_trips() {
+        let ws = Workspace::new("fits-float");
+        let (original, array) = image_file(-32, &[128, 64]);
+        let path = ws.write("float.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "float.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        let hdus = fits_parse(&optimized);
+        let table = &hdus[1];
+        assert_eq!(fits_text(table, "ZCMPTYPE").as_deref(), Some("GZIP_2"));
+        // Quantisation off, in the file rather than in a comment: 'NOISEBIT' = 0.
+        assert_eq!(fits_text(table, "ZNAME1").as_deref(), Some("NOISEBIT"));
+        assert_eq!(fits_int(table, "ZVAL1"), Some(0));
+        assert_eq!(fits_compressed_array(table), array);
+    }
+
+    /// The mistake the measurement made and lost five HST files to: anything
+    /// that is not a rewrite target is copied byte for byte, in place.
+    #[test]
+    fn fits_every_other_hdu_is_copied_verbatim() {
+        let ws = Workspace::new("fits-multi");
+
+        let (primary, array) = image_file(16, &[256, 120]);
+        let mut original = primary;
+        let headerlet = fits_nonstandard("HDRLET", &[7u8; 5000]);
+        original.extend_from_slice(&headerlet);
+        let (extension, ext_array) = {
+            let data = fits_samples(-64, &[128, 64]);
+            (fits_image_ext(-64, &[128, 64], &data, &[]), data)
+        };
+        original.extend_from_slice(&extension);
+        let table = fits_bin_table(3, 4, &[9u8; 100]);
+        original.extend_from_slice(&table);
+
+        let path = ws.write("multi.fits", &original);
+        let (code, stdout, stderr) = run(&["--fits-tile", "multi.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        let before = fits_parse(&original);
+        let after = fits_parse(&optimized);
+        // empty primary, compressed primary, HDRLET, compressed extension, table
+        assert_eq!(after.len(), 5, "{stdout}");
+
+        assert_eq!(
+            after[2].raw, before[1].raw,
+            "the non-standard extension must be byte-identical"
+        );
+        assert_eq!(fits_text(&after[2], "XTENSION").as_deref(), Some("HDRLET"));
+        assert_eq!(
+            after[4].raw, before[3].raw,
+            "the binary table must be byte-identical"
+        );
+        assert_eq!(fits_compressed_array(&after[1]), array);
+        assert_eq!(fits_compressed_array(&after[3]), ext_array);
+    }
+
+    #[test]
+    fn fits_does_nothing_without_the_flag() {
+        let ws = Workspace::new("fits-optin");
+        let (original, _) = image_file(16, &[128, 64]);
+        let path = ws.write("image.fits", &original);
+
+        let (code, stdout, stderr) = run(&["image.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("skipped"), "{stdout}");
+        assert!(
+            stdout.contains("--fits-tile"),
+            "the note has to name the flag that would do it: {stdout}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    /// A file whose image is already compressed with a codec this build does not
+    /// have: `skipped` with the reason, never a rewrite, never an error.
+    #[test]
+    fn fits_an_unsupported_tile_codec_is_skipped() {
+        let ws = Workspace::new("fits-rice");
+        let axis = [64usize, 40];
+        let data = fits_samples(16, &axis);
+        let tiles: Vec<Vec<u8>> = data.chunks(128).map(|tile| tile.to_vec()).collect();
+        let original = fits_compressed_image(16, &axis, "RICE_1", &tiles);
+        let path = ws.write("rice.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "rice.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("skipped"), "{stdout}");
+        assert!(stdout.contains("RICE_1"), "{stdout}");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    /// The number the audit asks for and the contract requires: a file that
+    /// would grow is left alone, and the report says so instead of writing it.
+    #[test]
+    fn fits_a_file_that_would_grow_is_left_alone() {
+        let ws = Workspace::new("fits-nogain");
+        let (original, _) = image_file(16, &[8, 8]);
+        let path = ws.write("tiny.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "tiny.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("already optimal"), "{stdout}");
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    /// `CHECKSUM`/`DATASUM` are not recomputed yet, so an HDU carrying them is
+    /// copied verbatim — and the rest of the file is still rewritten.
+    #[test]
+    fn fits_a_checksummed_hdu_is_kept_and_the_rest_is_rewritten() {
+        let ws = Workspace::new("fits-checksum");
+        let array = fits_samples(16, &[256, 120]);
+        let mut original = fits_primary_image(16, &[256, 120], &array);
+        let checksummed = fits_image_ext(
+            -32,
+            &[32, 32],
+            &fits_samples(-32, &[32, 32]),
+            &[
+                "CHECKSUM= 'ABCDEFGHabcdefgh'".to_string(),
+                "DATASUM = '1234567890'".to_string(),
+            ],
+        );
+        original.extend_from_slice(&checksummed);
+        let path = ws.write("checksum.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "checksum.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        let before = fits_parse(&original);
+        let after = fits_parse(&optimized);
+        // empty primary, compressed primary, the checksummed extension verbatim
+        assert_eq!(after.len(), 3, "{stdout}");
+        assert_eq!(
+            after[2].raw, before[1].raw,
+            "the checksummed HDU must survive byte for byte"
+        );
+        assert_eq!(fits_compressed_array(&after[1]), array);
+    }
+
+    /// The two files the measurement's reference writer could not round-trip,
+    /// in the shape this suite can build: a zero-width table column and an
+    /// `IMAGE` extension with a keyword the convention has no `Z` card for.
+    ///
+    /// Neither is refused here, and that is the difference the design makes: a
+    /// `BINTABLE` is never a rewrite target, so a zero-width column is copied
+    /// byte for byte, and every non-structural card is copied verbatim, so an
+    /// `EXTNAMX` survives where `fpack`'s own writer dropped it.
+    #[test]
+    fn fits_the_two_shapes_the_reference_writer_lost_are_kept() {
+        let ws = Workspace::new("fits-edges");
+        let array = fits_samples(16, &[256, 120]);
+        let mut original = fits_primary_image(16, &[256, 120], &array);
+
+        let zero_width = fits_zero_width_table(3);
+        original.extend_from_slice(&zero_width);
+
+        let odd = fits_samples(-32, &[128, 64]);
+        let odd_hdu = fits_image_ext_with_odd_card(-32, &[128, 64], &odd);
+        original.extend_from_slice(&odd_hdu);
+
+        let path = ws.write("edges.fits", &original);
+        let (code, stdout, stderr) = run(&["--fits-tile", "edges.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+
+        let optimized = std::fs::read(&path).unwrap();
+        let before = fits_parse(&original);
+        let after = fits_parse(&optimized);
+        // empty primary, compressed primary, the table, the compressed extension
+        assert_eq!(after.len(), 4, "{stdout}");
+        assert_eq!(
+            after[2].raw, before[1].raw,
+            "a zero-width table is not a rewrite target and must be copied"
+        );
+        assert_eq!(fits_compressed_array(&after[1]), array);
+        assert_eq!(fits_compressed_array(&after[3]), odd);
+        // The card the reference writer lost survives as itself.
+        assert_eq!(
+            fits_text(&after[3], "EXTNAMX").as_deref(),
+            Some("SCI"),
+            "every non-structural card is copied verbatim"
+        );
+        assert_eq!(fits_text(&after[3], "EXTNAME").as_deref(), Some("SCI"));
+    }
+
+    #[test]
+    fn fits_is_listed_and_can_be_named() {
+        let ws = Workspace::new("fits-formats");
+        let (code, stdout, _) = run(&["--list-formats"], &ws.path);
+        assert_eq!(code, 0);
+        assert!(stdout.contains("FITS"), "{stdout}");
+
+        let (original, _) = image_file(16, &[128, 64]);
+        ws.write("image.fits", &original);
+        let (code, stdout, stderr) =
+            run(&["--formats", "png", "--fits-tile", "image.fits"], &ws.path);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("skipped"), "{stdout}");
+
+        let (code, stdout, stderr) = run(
+            &["--formats", "fits", "--fits-tile", "image.fits"],
+            &ws.path,
+        );
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+    }
+}

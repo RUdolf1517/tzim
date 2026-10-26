@@ -48,6 +48,7 @@ fn options(strip_metadata: bool) -> Options {
         nested: false,
         max_depth: 3,
         depth: 0,
+        fits_tile: true,
         allow: Allow {
             png: true,
             gzip: true,
@@ -56,6 +57,7 @@ fn options(strip_metadata: bool) -> Options {
             jpeg: true,
             tiff: true,
             zlib: true,
+            fits: true,
         },
     }
 }

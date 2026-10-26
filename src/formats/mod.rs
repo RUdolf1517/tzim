@@ -3,6 +3,8 @@ use std::io::Write;
 use crate::detect::Format;
 use crate::error::{Error, Result};
 
+#[cfg(feature = "fits")]
+pub mod fits;
 #[cfg(feature = "gzip")]
 pub mod gzip;
 #[cfg(feature = "jpeg")]
@@ -26,6 +28,7 @@ pub const fn compiled(format: Format) -> bool {
         Format::Jpeg => cfg!(feature = "jpeg"),
         Format::Tiff => cfg!(feature = "tiff"),
         Format::Zlib => cfg!(feature = "zlib"),
+        Format::Fits => cfg!(feature = "fits"),
     }
 }
 
@@ -53,6 +56,9 @@ pub fn compiled_names() -> Vec<&'static str> {
     if cfg!(feature = "zlib") {
         out.push("zlib");
     }
+    if cfg!(feature = "fits") {
+        out.push("fits");
+    }
     out
 }
 
@@ -70,6 +76,7 @@ pub struct Allow {
     pub jpeg: bool,
     pub tiff: bool,
     pub zlib: bool,
+    pub fits: bool,
 }
 
 impl Default for Allow {
@@ -84,6 +91,11 @@ impl Default for Allow {
             jpeg: false,
             tiff: cfg!(feature = "tiff"),
             zlib: cfg!(feature = "zlib"),
+            // The handler changes an `IMAGE` HDU into a `BINTABLE`, which is a
+            // visible change to a reader, so it does nothing unless the run asks
+            // for it with `--fits-tile` (`Options::fits_tile`). Being compiled
+            // in is not the same as being on.
+            fits: cfg!(feature = "fits"),
         }
     }
 }
@@ -101,6 +113,7 @@ impl Allow {
             jpeg: false,
             tiff: false,
             zlib: false,
+            fits: false,
         };
         for name in names {
             let (format, slot) = match name.as_str() {
@@ -111,9 +124,11 @@ impl Allow {
                 "jpeg" | "jpg" => (Format::Jpeg, &mut allow.jpeg),
                 "tiff" | "tif" => (Format::Tiff, &mut allow.tiff),
                 "zlib" => (Format::Zlib, &mut allow.zlib),
+                "fits" => (Format::Fits, &mut allow.fits),
                 other => {
                     return Err(Error::usage(format!(
-                        "unknown format `{other}`; expected png, gzip, zip, ico, jpeg, tiff or zlib"
+                        "unknown format `{other}`; expected png, gzip, zip, ico, jpeg, tiff, \
+                         zlib or fits"
                     )))
                 }
             };
@@ -143,6 +158,7 @@ impl Allow {
             Format::Jpeg => self.jpeg,
             Format::Tiff => self.tiff,
             Format::Zlib => self.zlib,
+            Format::Fits => self.fits,
         }
     }
 
@@ -169,6 +185,9 @@ impl Allow {
         }
         if self.zlib {
             out.push("zlib");
+        }
+        if self.fits {
+            out.push("fits");
         }
         out
     }
@@ -198,6 +217,12 @@ pub struct Options {
     pub depth: u32,
     /// Formats this run may process; nested children obey the same set.
     pub allow: Allow,
+    /// Turn an uncompressed image HDU into a tile-compressed table (`--fits-tile`).
+    ///
+    /// Off unless the user asks, because the file stops being an `IMAGE` HDU and
+    /// becomes a `BINTABLE`. The same shape as `strip_metadata`: one flag, one
+    /// documented change, never implied by another.
+    pub fits_tile: bool,
 }
 
 /// Whether a candidate may replace its original.
@@ -245,6 +270,8 @@ pub fn optimize(format: Format, input: &[u8], dst: &mut dyn Write, opts: &Option
         Format::Tiff => tiff::optimize(input, dst, opts)?,
         #[cfg(feature = "zlib")]
         Format::Zlib => zlib::optimize(input, dst, opts)?,
+        #[cfg(feature = "fits")]
+        Format::Fits => fits::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -293,6 +320,8 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options)
         Format::Tiff => tiff::verify(original, candidate, opts),
         #[cfg(feature = "zlib")]
         Format::Zlib => zlib::verify(original, candidate, opts),
+        #[cfg(feature = "fits")]
+        Format::Fits => fits::verify(original, candidate, opts),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -347,6 +376,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "ZLIB",
         "recompress the DEFLATE stream",
         "header preserved byte for byte; Adler-32 recomputed and matched",
+    ));
+    #[cfg(feature = "fits")]
+    rows.push((
+        "FITS",
+        "tile-compress image HDUs (--fits-tile)",
+        "the array round-trips byte for byte; every other HDU copied verbatim",
     ));
     rows
 }

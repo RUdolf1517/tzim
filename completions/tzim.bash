@@ -34,7 +34,8 @@ _tzim() {
     if [[ "$cur" == -* ]]; then
         COMPREPLY=( $(compgen -W "--recursive --dry-run --jobs --json --quiet --color --no-color \
             --no-progress --fail-fast --include --exclude --min-size --max-size --max-pixels \
-            --max-uncompressed --max-ratio --memory-budget --nested --max-depth --formats --zopfli \
+            --max-uncompressed --max-ratio --memory-budget --nested --max-depth --formats \
+            --fits-tile --zopfli \
             --follow-symlinks --allow-hardlinks --allow-root-ownership-change --no-fsync \
             --strip-metadata --info --list-formats --check-deps --help --version \
             -r -n -j -q -i -h -V" -- "$cur") )
