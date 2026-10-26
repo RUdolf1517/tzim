@@ -72,23 +72,30 @@ def _card(head: str) -> bytes:
     return head.ljust(CARD).encode("ascii")
 
 
-def string_card(keyword: str, value: str) -> bytes:
+def string_card(keyword: str, value: str, comment: str = "") -> bytes:
     """A character-string card: quotes immediately around the value."""
-    return _card("%-8s= '%-8s'" % (keyword, value)) if len(value) <= 8 else _card(
-        "%-8s= '%-20s'" % (keyword, value)
-    )
+    head = "%-8s= '%-8s'" % (keyword, value) if len(value) <= 8 else "%-8s= '%-20s'" % (keyword, value)
+    if comment:
+        head += " / " + comment
+    return _card(head)
 
 
-def int_card(keyword: str, value: int) -> bytes:
-    return _card("%-8s= %20d" % (keyword, value))
+def int_card(keyword: str, value: int, comment: str = "") -> bytes:
+    head = "%-8s= %20d" % (keyword, value)
+    if comment:
+        head += " / " + comment
+    return _card(head)
 
 
 def float_card(keyword: str, value: float) -> bytes:
     return _card("%-8s= %20.12G" % (keyword, value))
 
 
-def bool_card(keyword: str, value: bool) -> bytes:
-    return _card("%-8s= %20s" % (keyword, "T" if value else "F"))
+def bool_card(keyword: str, value: bool, comment: str = "") -> bytes:
+    head = "%-8s= %20s" % (keyword, "T" if value else "F")
+    if comment:
+        head += " / " + comment
+    return _card(head)
 
 
 def raw_card(text: str) -> bytes:
@@ -120,20 +127,30 @@ def pad_data(data: bytes) -> bytes:
     return data + b"\0" * (-len(data) % RECORD)
 
 
-def image_hdu(bitpix, axes, data, extra=(), primary=False, xtension="IMAGE") -> bytes:
+def image_hdu(bitpix, axes, data, extra=(), primary=False, xtension="IMAGE", comments=None) -> bytes:
     """A primary array or an image extension, uncompressed."""
+    comments = comments or {}
     cards = []
     if primary:
-        cards += [bool_card("SIMPLE", True), int_card("BITPIX", bitpix), int_card("NAXIS", len(axes))]
+        cards += [
+            bool_card("SIMPLE", True, comments.get("SIMPLE", "")),
+            int_card("BITPIX", bitpix, comments.get("BITPIX", "")),
+            int_card("NAXIS", len(axes), comments.get("NAXIS", "")),
+        ]
     else:
-        cards += [string_card("XTENSION", xtension), int_card("BITPIX", bitpix), int_card("NAXIS", len(axes))]
+        cards += [
+            string_card("XTENSION", xtension, comments.get("XTENSION", "")),
+            int_card("BITPIX", bitpix, comments.get("BITPIX", "")),
+            int_card("NAXIS", len(axes), comments.get("NAXIS", "")),
+        ]
     for index, axis in enumerate(axes, start=1):
-        cards.append(int_card("NAXIS%d" % index, axis))
+        keyword = "NAXIS%d" % index
+        cards.append(int_card(keyword, axis, comments.get(keyword, "")))
     if primary:
-        cards.append(bool_card("EXTEND", True))
+        cards.append(bool_card("EXTEND", True, comments.get("EXTEND", "")))
     else:
-        cards.append(int_card("PCOUNT", 0))
-        cards.append(int_card("GCOUNT", 1))
+        cards.append(int_card("PCOUNT", 0, comments.get("PCOUNT", "")))
+        cards.append(int_card("GCOUNT", 1, comments.get("GCOUNT", "")))
     cards.extend(extra)
     return header_bytes(cards) + pad_data(data)
 
@@ -332,10 +349,9 @@ def float64_pattern(rows, columns):
 def build_fixtures(root):
     """Every fixture, with the contract's expectation for it.
 
-    `expect` is read from `docs/guarantees.md` §4.12 rather than from what the
-    handler happens to do; where this script could not decide what the contract
-    says, the field says `undecided` and the gate reports the observed behaviour
-    instead of pretending to assert one.
+    `expect` is read from `docs/guarantees.md` §4.12 and the owner's explicit
+    decision about the strict whole-file size gate, rather than inferred from
+    whichever behavior the current binary happens to exhibit.
     """
     os.makedirs(root, exist_ok=True)
     cases = []
@@ -360,6 +376,14 @@ def build_fixtures(root):
                 commentary_card("HISTORY", " second history line"),
             ],
             primary=True,
+            comments={
+                "SIMPLE": "original primary logical comment",
+                "BITPIX": "original primary BITPIX comment",
+                "NAXIS": "original primary NAXIS comment",
+                "NAXIS1": "original primary width comment",
+                "NAXIS2": "original primary height comment",
+                "EXTEND": "original EXTEND comment",
+            },
         ),
     )
     cases.append(
@@ -390,7 +414,21 @@ def build_fixtures(root):
     # 3. Float image extension behind an empty primary: no empty primary is added.
     write(
         "float64_extension.fits",
-        empty_primary() + image_hdu(-64, [48, 96], float64_pattern(48, 96)),
+        empty_primary()
+        + image_hdu(
+            -64,
+            [48, 96],
+            float64_pattern(48, 96),
+            comments={
+                "XTENSION": "original XTENSION comment",
+                "BITPIX": "original extension BITPIX comment",
+                "NAXIS": "original extension NAXIS comment",
+                "NAXIS1": "original extension width comment",
+                "NAXIS2": "original extension height comment",
+                "PCOUNT": "original PCOUNT comment",
+                "GCOUNT": "original GCOUNT comment",
+            },
+        ),
     )
     cases.append(
         dict(
@@ -402,11 +440,11 @@ def build_fixtures(root):
         )
     )
 
-    # 4. A multi-HDU file: an unknown extension between two images, and a table.
+    # 4. Positive multi-HDU traversal: only registered extension types. The
+    # original is required to pass fitsverify before it can diagnose tzim.
     write(
         "multi_hdu.fits",
         image_hdu(16, [64, 128], int16_pattern(64, 128), primary=True)
-        + nonstandard_hdu("HDRLET", b"\x01\x02\x03\x04" * 200, extra=[string_card("EXTNAME", "STWCS")])
         + image_hdu(-32, [32, 64], float32_with_specials(32, 64), extra=[string_card("EXTNAME", "SCI")])
         + bin_table_hdu(4, 8),
     )
@@ -416,8 +454,32 @@ def build_fixtures(root):
             expect="mixed",
             images=2,
             hdu_delta=1,
+            verbatim=["BINTABLE"],
+            diagnostics="registered",
+            why="two registered image HDUs and a registered BINTABLE; original and candidate must both pass fitsverify",
+        )
+    )
+
+    # 4b. Preservation-only HDRLET case. Its original fitsverify error is
+    # explicitly captured as a per-file baseline; the candidate may not add a
+    # different external error while tzim walks and copies the HDUs.
+    write(
+        "hdrlet_preservation.fits",
+        image_hdu(16, [64, 128], int16_pattern(64, 128), primary=True)
+        + nonstandard_hdu("HDRLET", b"\x01\x02\x03\x04" * 200, extra=[string_card("EXTNAME", "STWCS")])
+        + image_hdu(-32, [32, 64], float32_with_specials(32, 64), extra=[string_card("EXTNAME", "SCI")])
+        + bin_table_hdu(4, 8),
+    )
+    cases.append(
+        dict(
+            name="hdrlet_preservation.fits",
+            expect="mixed",
+            images=2,
+            hdu_delta=1,
             verbatim=["HDRLET", "BINTABLE"],
-            why="§4.12: every other HDU is copied verbatim, including an unknown extension",
+            diagnostics="compare_original",
+            skip_funpack=True,
+            why="HDRLET is not registered in fitsverify; require exact byte preservation and no new per-file external diagnostic",
         )
     )
 
@@ -555,9 +617,8 @@ def build_fixtures(root):
     cases.append(
         dict(
             name="zero_width_column.fits",
-            expect="undecided",
-            images=1,
-            hdu_delta=0,
+            expect="untouched",
+            status="already_optimal",
             verbatim=["BINTABLE"],
             input_case=(
                 "HDU 0: empty primary (BITPIX=8, NAXIS=0); HDU 1: IMAGE extension "
@@ -566,14 +627,12 @@ def build_fixtures(root):
                 "TFORM1='0A' [zero-width], TFORM2='8A', PCOUNT=0, GCOUNT=1; 16 data bytes)."
             ),
             contract_expectation=(
-                "§4.12 has two interacting clauses: an eligible IMAGE HDU may be tiled "
-                "and every other HDU is copied verbatim; but the candidate is written "
-                "only if the whole file is strictly smaller. The fixture's no-change "
-                "result is consistent with no whole-file gain, but the harness has no "
-                "candidate-size measurement for the discarded candidate. It therefore "
-                "does not assert either a partial rewrite or a zero-width whole-file refusal."
+                "§4.12's strict whole-file size gate applies after the per-HDU candidate is "
+                "formed: if the complete candidate is not strictly smaller, the original "
+                "remains unchanged and the status is already_optimal. The discarded candidate "
+                "size is not needed to assert that externally visible contract."
             ),
-            why="§4.12 interaction: per-HDU transformation versus strict whole-file size gain",
+            why="§4.12: unchanged + already_optimal when the strict whole-file candidate is not smaller",
         )
     )
 
@@ -624,6 +683,27 @@ def fitsverify(path, scratch=None):
     return run(["fitsverify", "-l", os.path.abspath(path)])
 
 
+def fitsverify_diagnostics(output):
+    """The case-specific error/warning markers and final counts from fitsverify.
+
+    For the nonstandard HDRLET preservation fixture, compare the candidate with
+    that same input's actual external-tool baseline. This is not a global
+    allowlist: a different diagnostic or count is a new finding.
+    """
+    lines = output.splitlines()
+    markers = [
+        line.strip()
+        for line in lines
+        if line.lstrip().startswith(("*** Error:", "*** Warning:"))
+    ]
+    summary = [
+        line.strip()
+        for line in lines
+        if line.strip().startswith("**** Verification found ")
+    ]
+    return dict(markers=markers, summary=summary)
+
+
 def funpack(path, scratch):
     """Unpack a compressed candidate with `funpack` and return what came out.
 
@@ -637,14 +717,14 @@ def funpack(path, scratch):
         os.unlink(os.path.join(work, stale))
     packed = os.path.join(work, "candidate.fits.fz")
     shutil.copyfile(path, packed)
-    # `-O` is **not** "overwrite" in these tools: it names the output file, so
-    # `funpack -O candidate.fits.fz` means "write to candidate.fits.fz and read
-    # nothing", which the tool correctly rejects with "no FITS files to
-    # uncompress". The output is removed first instead, and the input named alone.
+    # `-C` disables checksum updates during reconstruction. The gate compares
+    # the full original header literally; leaving CFITSIO's default update on
+    # would synthesize CHECKSUM/DATASUM cards and make the reader itself the
+    # source of an avoidable diff. `-O` is not "overwrite"; it names an output.
     unpacked_name = os.path.join(work, "candidate.fits")
     if os.path.exists(unpacked_name):
         os.unlink(unpacked_name)
-    code, output = run(["funpack", os.path.basename(packed)], cwd=work)
+    code, output = run(["funpack", "-C", os.path.basename(packed)], cwd=work)
     unpacked = os.path.join(work, "candidate.fits")
     if not os.path.exists(unpacked):
         others = [n for n in os.listdir(work) if n.endswith(".fits")]
@@ -769,9 +849,9 @@ def classify_diff(diff):
     }
     if any(k and (k.startswith("NAXIS") or k.startswith("Z") or k.startswith("TTYPE") or k.startswith("TFORM"))
            for k in keywords):
-        return "structural (allowed to change on a rewritten HDU)"
+        return "structural card differs (still a literal round-trip failure)"
     if keywords & structural:
-        return "structural (allowed to change on a rewritten HDU)"
+        return "structural card differs (still a literal round-trip failure)"
     if diff["kind"] == "invented":
         return "present only in funpack-reconstructed header (producer not isolated)"
     if diff["kind"] == "dropped":
@@ -928,38 +1008,59 @@ def tzim_run(binary, path):
 def check_fixture(binary, case, root, scratch, evidence):
     """Everything the gate asserts about one fixture."""
     path = os.path.join(root, case["name"])
-    original = open(path, "rb").read()
-    before = parse(original)
-    # `tzim` rewrites the file in place, so the fixture as it was has to survive
-    # somewhere: the controls compare the candidate's tiles against *this*.
+    original_bytes = open(path, "rb").read()
+    before = parse(original_bytes)
     kept = os.path.join(scratch, "original-" + case["name"])
     with open(kept, "wb") as handle:
-        handle.write(original)
-    evidence.write_bytes("input-" + case["name"], original)
+        handle.write(original_bytes)
+    evidence.write_bytes("input-" + case["name"], original_bytes)
     result = dict(
         name=case["name"],
         why=case["why"],
         expect=case["expect"],
         input_case=case.get("input_case"),
         contract_expectation=case.get("contract_expectation"),
-        input_sha256=hashlib.sha256(original).hexdigest(),
+        input_sha256=hashlib.sha256(original_bytes).hexdigest(),
         original=kept,
         problems=[],
     )
-    if case["name"] == "multi_hdu.fits":
+
+    diagnostic_mode = case.get("diagnostics")
+    original_verify_code = None
+    original_verify_output = ""
+    original_diagnostics = None
+    if diagnostic_mode:
         result["original_hdus"] = hdu_layout(before)
         original_verify_code, original_verify_output = fitsverify(kept, scratch)
+        original_diagnostics = fitsverify_diagnostics(original_verify_output)
         result["original_fitsverify_exit"] = original_verify_code
-        evidence.write_text("fitsverify-original-multi_hdu.fits.txt", original_verify_output)
+        result["original_fitsverify_diagnostics"] = original_diagnostics
+        evidence.write_text(
+            "fitsverify-original-%s.txt" % case["name"], original_verify_output
+        )
+        if diagnostic_mode == "registered" and original_verify_code != 0:
+            result["problems"].append(
+                "registered positive fixture original fitsverify exit is %d, expected 0"
+                % original_verify_code
+            )
+        if diagnostic_mode == "compare_original":
+            inherited = any(
+                "Unregistered XTENSION" in marker and "HDRLET" in marker
+                for marker in original_diagnostics["markers"]
+            )
+            if original_verify_code == 0 or not inherited:
+                result["problems"].append(
+                    "HDRLET original did not reproduce the expected unregistered-XTENSION baseline"
+                )
 
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
     result["tzim"] = record
     evidence.write_json("tzim-%s.json" % case["name"], record)
-    after = open(path, "rb").read()
-    evidence.write_bytes("candidate-" + case["name"], after)
-    result["candidate_sha256"] = hashlib.sha256(after).hexdigest()
-    result["bytes"] = dict(before=len(original), after=len(after))
+    candidate_bytes = open(path, "rb").read()
+    evidence.write_bytes("candidate-" + case["name"], candidate_bytes)
+    result["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
+    result["bytes"] = dict(before=len(original_bytes), after=len(candidate_bytes))
     if code != 0:
         result["problems"].append("tzim exited %d: %s" % (code, output.strip()[:400]))
         return result
@@ -969,25 +1070,11 @@ def check_fixture(binary, case, root, scratch, evidence):
         expected_status = case.get("status")
         if expected_status and status != expected_status:
             result["problems"].append("status is %r, expected %r" % (status, expected_status))
-        if after != original:
+        if candidate_bytes != original_bytes:
             result["problems"].append("a file that must not be rewritten was rewritten")
         return result
 
-    verify_code, verify_output = fitsverify(path, scratch)
-    result["fitsverify_exit"] = verify_code
-    evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
-    if verify_code != 0:
-        result["problems"].append(
-            "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
-        )
-
-    if after == original:
-        if case["expect"] == "undecided":
-            result["observed_behavior"] = "unchanged; the discarded candidate size is not exposed"
-            result["candidate_hdus"] = hdu_layout(before)
-            return result
-        # `tzim` reports the decision it made; "nothing was written" without that
-        # reason is a riddle for whoever reads the log next.
+    if candidate_bytes == original_bytes:
         said = ""
         if record:
             said = " (tzim said: %s%s)" % (
@@ -999,8 +1086,39 @@ def check_fixture(binary, case, root, scratch, evidence):
     if status != "optimized":
         result["problems"].append("status is %r, expected 'optimized'" % status)
 
-    candidate = parse(after)
-    if case["name"] == "multi_hdu.fits":
+    verify_code, verify_output = fitsverify(path, scratch)
+    result["fitsverify_exit"] = verify_code
+    evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
+    if diagnostic_mode == "compare_original":
+        candidate_diagnostics = fitsverify_diagnostics(verify_output)
+        same_as_input = (
+            verify_code == original_verify_code
+            and candidate_diagnostics == original_diagnostics
+        )
+        result["candidate_fitsverify_diagnostics"] = candidate_diagnostics
+        result["external_diagnostic_comparison"] = dict(
+            matches_original=same_as_input,
+            original_exit=original_verify_code,
+            candidate_exit=verify_code,
+            original=original_diagnostics,
+            candidate=candidate_diagnostics,
+        )
+        evidence.write_json(
+            "fitsverify-diagnostic-comparison-%s.json" % case["name"],
+            result["external_diagnostic_comparison"],
+        )
+        if not same_as_input:
+            result["problems"].append(
+                "candidate introduced or changed fitsverify errors/warnings versus the exact HDRLET input baseline"
+            )
+    else:
+        if verify_code != 0:
+            result["problems"].append(
+                "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
+            )
+
+    candidate = parse(candidate_bytes)
+    if diagnostic_mode:
         result["candidate_hdus"] = hdu_layout(candidate)
     original_images = [h for h in before if h.kind() in ("PRIMARY", "IMAGE") and h.axes()]
     candidate_images = [
@@ -1021,16 +1139,16 @@ def check_fixture(binary, case, root, scratch, evidence):
         result["problems"].append(
             "the candidate has %d HDUs the original does not account for" % (len(candidate) - matched)
         )
-    for index, original in enumerate(before):
-        if original.kind() in ("PRIMARY", "IMAGE"):
+    for index, original_hdu in enumerate(before):
+        if original_hdu.kind() in ("PRIMARY", "IMAGE"):
             continue
         other = candidate[mapping.get(index, -1)] if index in mapping else None
         if other is None:
-            result["problems"].append("HDU %d (%s) is missing" % (index, original.kind()))
-        elif other.raw != original.raw:
+            result["problems"].append("HDU %d (%s) is missing" % (index, original_hdu.kind()))
+        elif other.raw != original_hdu.raw:
             result["problems"].append(
                 "HDU %d (%s) was not copied verbatim: %d -> %d bytes"
-                % (index, original.kind(), len(original.raw), len(other.raw))
+                % (index, original_hdu.kind(), len(original_hdu.raw), len(other.raw))
             )
     tables = [h for h in candidate if h.value("ZIMAGE")]
     if len(tables) != len(original_images):
@@ -1044,62 +1162,76 @@ def check_fixture(binary, case, root, scratch, evidence):
                 "HDU count changed by %+d, the contract says %+d" % (delta, case["hdu_delta"])
             )
 
-    # (2) funpack rebuilds the file, and the arrays are compared as bytes.
+    if case.get("skip_funpack"):
+        result["funpack"] = "not run: HDRLET case is a byte-preservation and external-baseline test"
+        return result
+
+    # Every array assertion below is source-vs-tzim-candidate->funpack -C. The
+    # fpack control is only an independent positive reader/writer sanity check.
     unpack_code, unpack_output, unpacked = funpack(path, scratch)
     evidence.write_text("funpack-%s.txt" % case["name"], unpack_output)
     result["funpack_exit"] = unpack_code
     result["funpack_output"] = unpack_output
     if unpack_code != 0 or not unpacked:
-        # The exit code alone is not evidence. `funpack` exits 255 for its own
-        # errors and what it printed is the only thing that says which.
         tail = " / ".join(line.strip() for line in unpack_output.splitlines()[-3:] if line.strip())
         result["problems"].append(
-            "funpack exited %d and produced no file%s" % (unpack_code, (": " + tail) if tail else "")
+            "funpack -C exited %d and produced no file%s" % (unpack_code, (": " + tail) if tail else "")
         )
         return result
     rebuilt = parse(open(unpacked, "rb").read())
     if rebuilt and rebuilt[0].kind() == "PRIMARY" and not rebuilt[0].axes() and before[0].axes():
-        rebuilt = rebuilt[1:]          # the empty primary funpack leaves behind
+        rebuilt = rebuilt[1:]
     if len(rebuilt) != len(before):
         result["problems"].append(
-            "funpack produced %d HDUs for an original of %d" % (len(rebuilt), len(before))
+            "funpack -C produced %d HDUs for an original of %d" % (len(rebuilt), len(before))
         )
 
     diffs = {}
+    array_checks = []
     for index, (a, b) in enumerate(zip(before, rebuilt)):
         label = "%d-%s" % (index, a.kind())
         if a.kind() in ("PRIMARY", "IMAGE"):
             problems = compare_arrays(a, b)
-            result["problems"].extend("%s: %s" % (label, p) for p in problems)
+            array_checks.append(dict(hdu=index, kind=a.kind(), matches=(not problems), problems=problems))
+            result["problems"].extend("%s: %s" % (label, problem) for problem in problems)
         elif cards_of(a) != cards_of(b) or a.data != b.data:
             result["problems"].append(
-                "%s: funpack did not reconstruct the copied HDU (its cards are in the diff)" % label
+                "%s: funpack -C did not reconstruct the copied HDU (its cards are in the diff)" % label
             )
         cards = literal_card_diff(a, b)
         if cards:
-            diffs[label] = [
-                dict(diff, classification=classify_diff(diff)) for diff in cards
-            ]
+            diffs[label] = [dict(diff, classification=classify_diff(diff)) for diff in cards]
+    result["array_checks"] = array_checks
+    result["header_diff"] = diffs
+    evidence.write_json("header-diff-%s.json" % case["name"], diffs)
     if diffs:
-        evidence.write_json("header-diff-%s.json" % case["name"], diffs)
-        evidence.write_text(
-            "header-diff-%s.txt" % case["name"],
-            "\n".join(
-                "%s: %s card; original index %s, reconstructed index %s; %s\n"
-                "  original: %r\n  reconstructed: %r\n  classification: %s"
-                % (label, d["kind"], d["original_index"], d["reconstructed_index"],
-                   d["keyword"], d["original"], d["reconstructed"], d["classification"])
-                for label, items in diffs.items()
-                for d in items
-            ) + "\n",
-        )
-        result["header_diff"] = diffs
+        text = "\n".join(
+            "%s: %s card; original index %s, reconstructed index %s; %s\n"
+            "  original: %r\n  reconstructed: %r\n  classification: %s"
+            % (
+                label,
+                diff["kind"],
+                diff["original_index"],
+                diff["reconstructed_index"],
+                diff["keyword"],
+                diff["original"],
+                diff["reconstructed"],
+                diff["classification"],
+            )
+            for label, items in diffs.items()
+            for diff in items
+        ) + "\n"
+        evidence.write_text("header-diff-%s.txt" % case["name"], text)
         result["problems"].append(
             "the reconstructed header is not identical (see header-diff-%s.txt)" % case["name"]
         )
+    else:
+        evidence.write_text(
+            "header-diff-%s.txt" % case["name"],
+            "No literal 80-column card differences, including END, comments, spacing, or order.\n",
+        )
     evidence.write_json("tzim-%s.json" % case["name"], record)
     return result
-
 
 class Evidence:
     """A directory of files that outlive the job, with a checksum over them."""
@@ -1157,35 +1289,62 @@ def render_diagnostics(summary, evidence):
             os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
             os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]))
         lines.append("")
-    diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
-    lines.append("## Literal header diffs")
-    lines.append("")
+
+    lines += ["## Literal 80-column header diffs", ""]
     lines.append(
-        "These compare the original HDU with `funpack`'s reconstructed HDU, as complete 80-column "
-        "cards (including comments and spacing); `repr` retains trailing blanks. They prove a literal "
-        "round-trip difference, but do not by themselves attribute it to `tzim` or `funpack`. The raw "
-        "tzim candidate, JSON diff, and text diff are sealed in the artifact."
+        "The comparison is original HDU versus the bytes produced by `tzim` then `funpack -C`. "
+        "It includes every 80-byte card through END, card order, comments, spacing, CHECKSUM, "
+        "DATASUM, EXTEND and ZEXTEND; nothing is normalized or excluded. These diffs diagnose "
+        "the complete round trip and do not by themselves assign a difference to one program. "
+        "The raw source, tzim candidate, full JSON/text diff, and per-tool output are retained in "
+        "the checksummed artifact."
     )
     lines.append("")
+    diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
     if not diffs:
-        lines.append("No header differences were found.")
+        lines.append("No literal card differences were found in the fixtures that completed `funpack -C`.")
+        lines.append("")
     for fixture in diffs:
         lines.append("### " + fixture["name"])
         lines.append("")
         lines.extend(evidence.read_text("header-diff-%s.txt" % fixture["name"]).rstrip().splitlines())
         lines.append("")
 
-    multi = next((f for f in summary["fixtures"] if f["name"] == "multi_hdu.fits"), None)
-    lines.append("## multi_hdu.fits tool diagnosis")
-    lines.append("")
-    if multi:
-        lines.append("Original input fitsverify exit %s; tzim candidate fitsverify exit %s; funpack exit %s." % (
-            multi.get("original_fitsverify_exit", "not run"),
-            multi.get("fitsverify_exit", "not run"),
-            multi.get("funpack_exit", "not run"),
-        ))
+    for fixture_name, title in (
+        ("multi_hdu.fits", "registered multi-HDU positive traversal"),
+        ("hdrlet_preservation.fits", "HDRLET preservation-only baseline comparison"),
+    ):
+        fixture = next((f for f in summary["fixtures"] if f["name"] == fixture_name), None)
+        lines.append("## " + title)
+        lines.append("")
+        if not fixture:
+            lines.append("The fixture did not run.")
+            lines.append("")
+            continue
+        lines.append(
+            "Original fitsverify exit %s; candidate exit %s; funpack -C exit %s."
+            % (fixture.get("original_fitsverify_exit", "not run"),
+               fixture.get("fitsverify_exit", "not run"),
+               fixture.get("funpack_exit", "not run"))
+        )
+        if fixture_name == "multi_hdu.fits":
+            lines.append(
+                "This fixture uses only registered IMAGE and BINTABLE extensions; the original must "
+                "pass fitsverify before the candidate is interpreted."
+            )
+        else:
+            comparison = fixture.get("external_diagnostic_comparison", {})
+            lines.append(
+                "The original's unregistered HDRLET diagnostic is an explicit per-file baseline; "
+                "candidate diagnostic markers and counts match that baseline: %s."
+                % comparison.get("matches_original", "not compared")
+            )
+            lines.append(
+                "A different candidate error is reported as new; the inherited unregistered-XTENSION "
+                "error is not a global warning/error allowlist. HDRLET raw bytes must match exactly."
+            )
         for label in ("original", "candidate"):
-            layout = multi.get(label + "_hdus") or []
+            layout = fixture.get(label + "_hdus") or []
             lines.append("")
             lines.append("%s HDU layout (byte offsets):" % label.capitalize())
             for row in layout:
@@ -1193,74 +1352,62 @@ def render_diagnostics(summary, evidence):
                     "- HDU %(index)s %(kind)s: start=%(start)s, header=%(header_bytes)s, "
                     "data=%(data_bytes)s, padded-data=%(padded_data_bytes)s, next=%(next_start)s" % row
                 )
-        lines.append("")
-        lines.append(
-            "The reported `^A^B^C^D` bytes are the exact repeating payload written in the `HDRLET` "
-            "fixture. The baseline fitsverify output below distinguishes an input/tool limitation from "
-            "a problem introduced by the candidate; neither is guessed from the exit code."
-        )
         for name, caption in (
-            ("fitsverify-original-multi_hdu.fits.txt", "fitsverify -l on original input"),
-            ("fitsverify-multi_hdu.fits.txt", "fitsverify -l on tzim candidate"),
-            ("funpack-multi_hdu.fits.txt", "funpack on tzim candidate"),
+            ("fitsverify-original-%s.txt" % fixture_name, "fitsverify -l on original input"),
+            ("fitsverify-%s.txt" % fixture_name, "fitsverify -l on tzim candidate"),
+            ("funpack-%s.txt" % fixture_name, "funpack -C on tzim candidate"),
         ):
-            lines += ["", "### " + caption, "", "````text"]
             try:
-                lines.extend(evidence.read_text(name).rstrip().splitlines())
+                text = evidence.read_text(name)
             except FileNotFoundError:
-                lines.append("(no output file was produced)")
+                continue
+            lines += ["", "### " + caption, "", "````text"]
+            lines.extend(text.rstrip().splitlines())
             lines += ["````", ""]
-    else:
-        lines.append("The fixture did not run.")
+        lines.append("")
 
     zero = next((f for f in summary["fixtures"] if f["name"] == "zero_width_column.fits"), None)
-    lines.append("## zero_width_column.fits — contract question, no writer change")
+    lines.append("## zero_width_column.fits — owner-confirmed strict whole-file size result")
     lines.append("")
     if zero:
         lines.append("**Input:** " + (zero.get("input_case") or "description not recorded"))
         lines.append("")
-        lines.append("Input SHA-256: `%s`; candidate SHA-256: `%s`." % (
+        lines.append("Input SHA-256: `%s`; output SHA-256: `%s`." % (
             zero.get("input_sha256", "not recorded"), zero.get("candidate_sha256", "not recorded")))
         lines.append("")
-        lines.append("**§4.12 reading encoded in the gate:** " +
+        lines.append("**Contract:** " +
                      (zero.get("contract_expectation") or zero.get("why", "not recorded")))
         lines.append("")
         record = zero.get("tzim") or {}
-        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s; `fitsverify` exit %s."
+        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s."
                      % (record.get("status", "?"), record.get("note"),
                         zero.get("bytes", {}).get("before", "?"),
-                        zero.get("bytes", {}).get("after", "?"),
-                        zero.get("fitsverify_exit", "not run")))
+                        zero.get("bytes", {}).get("after", "?")))
         lines.append("")
         lines.append(
-            "The precise open point is how the eligible-IMAGE clause interacts with the strict "
-            "whole-file-smaller clause when the candidate is discarded: current `already_optimal` "
-            "does not expose the discarded candidate size. The prior harness expected `mixed` "
-            "unconditionally; that overstates the contract. No writer behavior is changed, no "
-            "whole-file refusal is inferred from the zero-width column, and the gate records this "
-            "case as undecided pending owner agreement."
+            "Expected result is unchanged + `already_optimal`: the strict whole-file size gate "
+            "applies after candidate formation. The discarded candidate size is not needed; no "
+            "zero-width behavior was expanded."
         )
     else:
         lines.append("The fixture did not run.")
     lines += ["", "## Controls: two negative controls plus one positive toolchain sanity check", ""]
-    for c in summary.get("controls", []):
-        role = c.get("control_type", "unclassified")
+    for control in summary.get("controls", []):
+        role = control.get("control_type", "unclassified")
         lines.append("- `%s` (%s): expected %s; record `%s`." % (
-            c.get("name"), role, c.get("expected", "not recorded"),
-            json.dumps(c, sort_keys=True)))
+            control.get("name"), role, control.get("expected", "not recorded"),
+            json.dumps(control, sort_keys=True)))
     lines.append("")
     lines.append(
-        "The corrupted-tile control is an integrity-comparison control, not a test that "
-        "fitsverify must reject valid FITS structure with changed image content. Its own "
-        "fitsverify exit is reported separately. The structural control must make "
-        "fitsverify nonzero; the fpack control is positive and must remain exit 0."
+        "The corrupted-tile control tests the byte-integrity comparison; fitsverify may accept "
+        "structurally valid FITS with changed image content. The structural control must make "
+        "fitsverify nonzero. The positive fpack control is `fpack → funpack -C`: its output must "
+        "pass fitsverify and its full literal header diff must be empty. The fpack reference is "
+        "integer-only; float arrays are compared only as original versus `tzim → funpack -C`."
     )
     lines.append("")
-    lines.append("Full control-tool output is retained in the checksummed evidence files "
-                 "`control-corrupt-fitsverify.txt`, `control-structure-fitsverify.txt`, and "
-                 "`control-toolchain.txt`.")
+    lines.append("Full control-tool output and round-trip diffs are retained in the checksummed evidence.")
     return "\n".join(lines).rstrip() + "\n"
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1442,59 +1589,100 @@ def main():
               " the gate is not verifying anything")
         failures += 1
 
-    # --- toolchain sanity: a file *fpack* wrote must pass ---------------------
+    # --- positive toolchain control: fpack -> funpack -C ----------------------
     sane_src = os.path.join(scratch, "sanity")
     os.makedirs(sane_src, exist_ok=True)
-    shutil.copyfile(os.path.join(root, "int16_primary.fits"), os.path.join(sane_src, "sanity.fits"))
+    source_path = os.path.join(root, "int16_primary.fits")
+    sanity_path = os.path.join(sane_src, "sanity.fits")
+    shutil.copyfile(source_path, sanity_path)
+    sanity_original = open(sanity_path, "rb").read()
+    evidence.write_bytes("control-toolchain-input.fits", sanity_original)
     packed = os.path.join(sane_src, "sanity.fits.fz")
     if os.path.exists(packed):
         os.unlink(packed)
-    # Same `-O` trap as `funpack` above: it names the output, it does not mean
-    # "replace". `fpack sanity.fits` writes `sanity.fits.fz` next to it.
     pack_code, pack_output = run(["fpack", "sanity.fits"], cwd=sane_src)
+    evidence.write_text("control-fpack.txt", pack_output)
+    control = dict(
+        name="toolchain",
+        control_type="positive_sanity",
+        expected="fpack -> funpack -C; fitsverify exit 0 and zero literal 80-column header diff",
+        fpack_exit=pack_code,
+        fitsverify_exit=None,
+        funpack_exit=None,
+        header_diff_count=None,
+        array_equal=None,
+        ok=False,
+    )
     if pack_code != 0 or not os.path.exists(packed):
         tail = " / ".join(line.strip() for line in pack_output.splitlines()[-6:] if line.strip())
-        summary["controls"].append(
-            dict(name="toolchain", control_type="positive_sanity", ok=False,
-                 expected="fpack output passes fitsverify", note="fpack failed: %s" % (tail or "no output"))
-        )
-        # The annotation is the only channel that survives when neither the log nor
-        # the artifact can be read: put the tool's own words in it.
+        control["note"] = "fpack failed: %s" % (tail or "no output")
+        evidence.write_text("control-toolchain-fitsverify.txt", "not run: no fpack output\n")
+        evidence.write_text("control-toolchain-funpack.txt", "not run: no fpack output\n")
         print("::error::fpack exited %d and produced no reference file: %s"
               % (pack_code, tail or "no output"))
-        evidence.write_text("control-toolchain.txt", pack_output)
-        print("::error::fpack could not produce a reference file, so the tools are not trustworthy")
         failures += 1
     else:
         verify_code, verify_output = fitsverify(packed, sane_src)
-        evidence.write_text("control-toolchain.txt", verify_output)
-        summary["controls"].append(dict(name="toolchain", control_type="positive_sanity",
-                                         expected="fpack output passes fitsverify",
-                                         fpack=pack_code, fitsverify=verify_code,
-                                         ok=(verify_code == 0)))
-        print("control: fpack's own output -> fitsverify exit %d" % verify_code)
-        if verify_code != 0:
-            print("::error::fitsverify rejected fpack's own output; a red gate would say"
-                  " nothing about this program")
-            failures += 1
-
-    # --- reconstruction differences that need ownership, counted but not excused ---
-    # The literal diff is original-vs-funpack output. If it contains only an
-    # inserted EXTNAME, keep that pattern separate for the owner, but do not say
-    # which program introduced it: the gate does not yet isolate that producer.
-    # It remains a failure and is never normalized away.
-    escalation = []
-    for case in summary["fixtures"]:
-        diffs = case.get("header_diff") or {}
-        cards = [d for items in diffs.values() for d in items]
-        if cards and all(d["keyword"] == "EXTNAME" and d["kind"] == "invented" for d in cards):
-            escalation.append(case["name"])
-    summary["escalation"] = escalation
-    if escalation:
-        print(
-            "escalation: %d fixture(s) have only an inserted `EXTNAME` in funpack's reconstructed header;"
-            " producer not isolated, still a failure: %s" % (len(escalation), ", ".join(escalation))
+        control["fitsverify_exit"] = verify_code
+        evidence.write_text("control-toolchain-fitsverify.txt", verify_output)
+        unpack_code, unpack_output, unpacked = funpack(packed, os.path.join(scratch, "fpack-control"))
+        control["funpack_exit"] = unpack_code
+        evidence.write_text("control-toolchain-funpack.txt", unpack_output)
+        if unpack_code == 0 and unpacked:
+            source_hdus = parse(sanity_original)
+            rebuilt_hdus = parse(open(unpacked, "rb").read())
+            control_diffs = {}
+            if len(source_hdus) != len(rebuilt_hdus):
+                control_diffs["hdu_count"] = dict(
+                    original=len(source_hdus), reconstructed=len(rebuilt_hdus)
+                )
+            for index, (a, b) in enumerate(zip(source_hdus, rebuilt_hdus)):
+                cards = literal_card_diff(a, b)
+                if cards:
+                    control_diffs["%d-%s" % (index, a.kind())] = cards
+            control["header_diff_count"] = sum(len(items) for items in control_diffs.values()
+                                                if isinstance(items, list))
+            control["array_equal"] = (
+                len(source_hdus) == len(rebuilt_hdus)
+                and all(not compare_arrays(a, b) for a, b in zip(source_hdus, rebuilt_hdus))
+            )
+            evidence.write_json("control-toolchain-header-diff.json", control_diffs)
+            if control_diffs:
+                evidence.write_text(
+                    "control-toolchain-header-diff.txt",
+                    json.dumps(control_diffs, indent=2, sort_keys=True) + "\n",
+                )
+            else:
+                evidence.write_text(
+                    "control-toolchain-header-diff.txt",
+                    "No literal 80-column card differences, including END, comments, spacing, or order.\n",
+                )
+        else:
+            control["note"] = "funpack -C produced no reconstructed FITS file"
+        control["ok"] = (
+            pack_code == 0
+            and verify_code == 0
+            and unpack_code == 0
+            and bool(unpacked)
+            and control["header_diff_count"] == 0
+            and control["array_equal"] is True
         )
+        if not control["ok"]:
+            failures += 1
+            print(
+                "::error::fpack -> funpack -C positive control failed: fitsverify=%s, funpack=%s, "
+                "literal card diff count=%s, integer array equal=%s"
+                % (verify_code, unpack_code, control["header_diff_count"], control["array_equal"])
+            )
+        else:
+            print("control: fpack -> funpack -C -> zero literal card diff; fitsverify exit 0")
+    evidence.write_text(
+        "control-toolchain.txt",
+        "fpack exit: %s\nfitsverify exit: %s\nfunpack -C exit: %s\nliteral header diff cards: %s\ninteger array equal: %s\nresult: %s\n"
+        % (control["fpack_exit"], control["fitsverify_exit"], control["funpack_exit"],
+           control["header_diff_count"], control["array_equal"], control["ok"]),
+    )
+    summary["controls"].append(control)
 
     summary["ok"] = failures == 0
     evidence.write_json("summary.json", summary)
@@ -1545,6 +1733,15 @@ def self_check(root, cases, scratch, evidence, summary):
         check(table.int("NAXIS1") == 8 and table.text("TFORM1") == "1PB(1024)",
               "multi_hdu's one 1PB column is 8 bytes, so NAXIS1 must be 8")
     print("fixture: multi_hdu BINTABLE NAXIS1 agrees with its one 1PB descriptor")
+    check(not any(h.kind() == "HDRLET" for h in multi),
+          "the positive multi_hdu fixture must use only registered extension types")
+    hdrlet_case = next((c for c in cases if c["name"] == "hdrlet_preservation.fits"), None)
+    check(hdrlet_case is not None and hdrlet_case.get("skip_funpack") is True,
+          "HDRLET must be a separate preservation-only case")
+    zero_case = next((c for c in cases if c["name"] == "zero_width_column.fits"), None)
+    check(zero_case is not None and zero_case.get("expect") == "untouched"
+          and zero_case.get("status") == "already_optimal",
+          "zero-width column must expect unchanged + already_optimal")
 
     # The specials fixture really does carry four NaN payloads and both zeros.
     specials = parse(open(os.path.join(root, "float32_specials.fits"), "rb").read())[0]
@@ -1704,46 +1901,42 @@ def render_summary(summary):
     lines.append("- python %s on %s (%s)" % (env["python"], env["platform"], env["machine"]))
     for name, tool in summary["tools"].items():
         lines.append("- %s: exit %s, %s" % (name, tool.get("exit"), tool.get("first_lines", "").splitlines()[:1]))
-    lines += ["", "| fixture | expectation | tzim | fitsverify | funpack | problems |", "| --- | --- | --- | --- | --- | --- |"]
-    for f in summary["fixtures"]:
-        problems = f.get("problems") or []
+    lines += ["", "| fixture | expectation | tzim | fitsverify | funpack -C | problems |", "| --- | --- | --- | --- | --- | --- |"]
+    for fixture in summary["fixtures"]:
+        problems = fixture.get("problems") or []
         lines.append(
             "| %s | %s | %s | %s | %s | %s |"
             % (
-                f.get("name"),
-                f.get("expect"),
-                f.get("tzim", {}).get("status") if isinstance(f.get("tzim"), dict) else "-",
-                f.get("fitsverify_exit", "-"),
-                f.get("funpack_exit", "-"),
+                fixture.get("name"),
+                fixture.get("expect"),
+                fixture.get("tzim", {}).get("status") if isinstance(fixture.get("tzim"), dict) else "-",
+                fixture.get("fitsverify_exit", "-"),
+                fixture.get("funpack_exit", "-"),
                 "; ".join(problems) if problems else "none",
             )
         )
     zero = next((f for f in summary["fixtures"] if f["name"] == "zero_width_column.fits"), None)
     if zero:
-        lines += ["", "## zero-width column: unresolved contract reading", ""]
+        lines += ["", "## zero-width column: unchanged by the strict whole-file gate", ""]
         lines.append("**Input:** " + (zero.get("input_case") or "description not recorded"))
         lines.append("")
-        lines.append("Input SHA-256: `%s`; candidate SHA-256: `%s`." % (
+        lines.append("Input SHA-256: `%s`; output SHA-256: `%s`." % (
             zero.get("input_sha256", "not recorded"), zero.get("candidate_sha256", "not recorded")))
         lines.append("")
-        lines.append("**Contract reading:** " + (zero.get("contract_expectation") or zero.get("why", "not recorded")))
+        lines.append("**Contract:** " + (zero.get("contract_expectation") or zero.get("why", "not recorded")))
         lines.append("")
         record = zero.get("tzim") or {}
-        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s; `fitsverify` exit %s."
+        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s."
                      % (record.get("status", "?"), record.get("note"),
                         zero.get("bytes", {}).get("before", "?"),
-                        zero.get("bytes", {}).get("after", "?"),
-                        zero.get("fitsverify_exit", "not run")))
-        lines.append("")
-        lines.append("The `mixed` expectation is not asserted: `already_optimal` does not expose the discarded candidate size. No writer behavior is changed and no whole-file refusal is inferred.")
-    lines += ["", "## controls", ""]
-    for c in summary["controls"]:
+                        zero.get("bytes", {}).get("after", "?")))
+    lines += ["", "## controls: two negative, one positive", ""]
+    for control in summary["controls"]:
         lines.append("- `%s` (%s; expected: %s): %s" % (
-            c.get("name"), c.get("control_type", "unclassified"),
-            c.get("expected", "not recorded"), json.dumps(c, sort_keys=True)))
+            control.get("name"), control.get("control_type", "unclassified"),
+            control.get("expected", "not recorded"), json.dumps(control, sort_keys=True)))
     lines += ["", "Overall: **%s**" % ("PASS" if summary["ok"] else "FAIL")]
     return "\n".join(lines) + "\n"
-
 
 if __name__ == "__main__":
     sys.exit(main())

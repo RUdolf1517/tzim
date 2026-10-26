@@ -1831,8 +1831,10 @@ pub fn fits_parse(bytes: &[u8]) -> Vec<FitsHdu> {
         };
         let bitpix = fits_int(&hdu, "BITPIX").expect("BITPIX");
         let naxis = fits_int(&hdu, "NAXIS").expect("NAXIS");
+        let random_groups = fits_bool(&hdu, "GROUPS") == Some(true);
         let mut length = 1usize;
-        for axis in 1..=naxis {
+        let first_axis = if random_groups { 2 } else { 1 };
+        for axis in first_axis..=naxis {
             let keyword = format!("NAXIS{axis}");
             length *= fits_int(&hdu, &keyword).expect("NAXISn") as usize;
         }
@@ -1841,6 +1843,8 @@ pub fn fits_parse(bytes: &[u8]) -> Vec<FitsHdu> {
         let data_len = if naxis == 0 {
             0
         } else {
+            // Random groups reserve NAXIS1=0; their pixel product starts at
+            // NAXIS2, then PCOUNT is added once for each group.
             fits_bytes_per_sample(bitpix) * (length + pcount) * gcount
         };
         let padded = data_len.div_ceil(FITS_RECORD) * FITS_RECORD;
