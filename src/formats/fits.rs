@@ -186,7 +186,7 @@ fn assemble(head: &str, comment: &str) -> [u8; CARD] {
     let used = head.len().min(CARD);
     out[..used].copy_from_slice(&head[..used]);
     if !comment.is_empty() {
-        let start = used.max(30).min(CARD);
+        let start = used.clamp(30, CARD);
         let text = format!(" / {comment}");
         let bytes = text.as_bytes();
         let take = bytes.len().min(CARD - start);
@@ -452,10 +452,10 @@ impl Decision {
 /// True for a keyword the generated table header owns, so that it is not copied
 /// from the original header a second time.
 fn structural(keyword: &str) -> bool {
-    const EXACT: [&str; 18] = [
+    const EXACT: [&str; 20] = [
         "SIMPLE", "XTENSION", "BITPIX", "NAXIS", "PCOUNT", "GCOUNT", "EXTEND", "TFIELDS", "THEAP",
-        "EXTNAME", "ZIMAGE", "ZSIMPLE", "ZTENSION", "ZBITPIX", "ZNAXIS", "ZCMPTYPE", "ZNAME1",
-        "ZVAL1",
+        "EXTNAME", "ZIMAGE", "ZSIMPLE", "ZTENSION", "ZBITPIX", "ZNAXIS", "ZPCOUNT", "ZGCOUNT",
+        "ZCMPTYPE", "ZNAME1", "ZVAL1",
     ];
     if EXACT.contains(&keyword) {
         return true;
@@ -509,7 +509,7 @@ fn decide_image(hdu: &Hdu) -> Decision {
     if !BITPIX_VALUES.contains(&hdu.bitpix) {
         return Decision::Decline(format!("fits: BITPIX {}", hdu.bitpix));
     }
-    if hdu.axes.iter().any(|axis| *axis == 0) {
+    if hdu.axes.contains(&0) {
         return Decision::Decline("fits: an axis of length zero".to_string());
     }
     if hdu.axes.is_empty() || hdu.data_len == 0 {

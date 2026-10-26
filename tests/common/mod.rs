@@ -1910,6 +1910,17 @@ pub fn fits_compressed_array(hdu: &FitsHdu) -> Vec<u8> {
     out
 }
 
+/// The empty primary HDU a file needs when its first real HDU is a table.
+pub fn fits_empty_primary() -> Vec<u8> {
+    let cards = vec![
+        fits_bool_card("SIMPLE", true),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "0"),
+        fits_bool_card("EXTEND", true),
+    ];
+    fits_hdu(&cards, &[])
+}
+
 /// A `BINTABLE` whose single column is zero-width (`TFORM1 = '0A'`), the shape
 /// `zerowidth.fits` has.
 ///

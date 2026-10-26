@@ -3600,7 +3600,11 @@ mod fits_tests {
         let axis = [64usize, 40];
         let data = fits_samples(16, &axis);
         let tiles: Vec<Vec<u8>> = data.chunks(128).map(|tile| tile.to_vec()).collect();
-        let original = fits_compressed_image(16, &axis, "RICE_1", &tiles);
+        // A FITS file that begins with a BINTABLE is not a FITS file: the
+        // primary HDU is what detection sees, so the fixture has one even
+        // though it holds nothing.
+        let mut original = fits_empty_primary();
+        original.extend_from_slice(&fits_compressed_image(16, &axis, "RICE_1", &tiles));
         let path = ws.write("rice.fits", &original);
 
         let (code, stdout, stderr) = run(&["--fits-tile", "rice.fits"], &ws.path);
