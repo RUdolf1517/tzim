@@ -217,11 +217,20 @@ jobs:
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP}/fits-heasarc.log"
-          if [ ! -s "$log" ]; then
-            echo "no gate log was produced; the failure is in an earlier step" > "$log"
+          report="${RUNNER_TEMP}/fits-heasarc-report.log"
+          diagnostics="${RUNNER_TEMP}/evidence/ci-diagnostics.md"
+          if [ -s "$diagnostics" ]; then
+            cp "$diagnostics" "$report"
+            mode=full
+          else
+            if [ ! -s "$log" ]; then
+              echo "no gate log was produced; the failure is in an earlier step" > "$log"
+            fi
+            cp "$log" "$report"
+            mode=tail
           fi
-          bash .github/scripts/ci-report.sh "$log" fits-heasarc
-          bytes=$(wc -c < "$log")
+          bash .github/scripts/ci-report.sh "$report" fits-heasarc failure "$mode"
+          bytes=$(wc -c < "$report")
           echo "relayed ${bytes} bytes to the pull request"
 
       - name: Keep the evidence

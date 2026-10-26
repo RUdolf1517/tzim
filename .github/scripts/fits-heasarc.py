@@ -1122,6 +1122,11 @@ class Evidence:
 def render_diagnostics(summary, evidence):
     """Human-readable, artifact-backed diagnostics that CI can relay verbatim."""
     lines = ["# FITS gate diagnostics", ""]
+    if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
+        lines.append("Run: %s/%s/actions/runs/%s" % (
+            os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+            os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]))
+        lines.append("")
     diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
     lines.append("## Literal header diffs")
     lines.append("")
@@ -1198,15 +1203,9 @@ def render_diagnostics(summary, evidence):
         "fitsverify nonzero; the fpack control is positive and must remain exit 0."
     )
     lines.append("")
-    for name, caption in (("control-corrupt-fitsverify.txt", "corrupted tile: fitsverify output"),
-                          ("control-structure-fitsverify.txt", "structurally invalid file: fitsverify output"),
-                          ("control-toolchain.txt", "fpack-produced valid file: fitsverify output")):
-        lines += ["### " + caption, "", "````text"]
-        try:
-            lines.extend(evidence.read_text(name).rstrip().splitlines())
-        except FileNotFoundError:
-            lines.append("(no output file was produced)")
-        lines += ["````", ""]
+    lines.append("Full control-tool output is retained in the checksummed evidence files "
+                 "`control-corrupt-fitsverify.txt`, `control-structure-fitsverify.txt`, and "
+                 "`control-toolchain.txt`.")
     return "\n".join(lines).rstrip() + "\n"
 
 
