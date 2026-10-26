@@ -150,10 +150,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # The comparison table is the answer to "why is this red", so it goes to
-          # the pull request as well as into the artifact.
-          tail -c 12000 "${RUNNER_TEMP}/measure-repro.log" > "${RUNNER_TEMP}/measure-repro-tail.log" || true
-          bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/measure-repro-tail.log" measure-repro
+          # The complete published-table comparison is the answer to "why is
+          # this red". Publish the generated Markdown summary, not just the last
+          # two metric failures; the full evidence bundle is still retained below.
+          if [ -f evidence/run/summary.md ]; then
+            cp evidence/run/summary.md "${RUNNER_TEMP}/measure-repro-report.md"
+          else
+            tail -c 12000 "${RUNNER_TEMP}/measure-repro.log" > "${RUNNER_TEMP}/measure-repro-report.md" || true
+          fi
+          bash .github/scripts/ci-report.sh \\
+            "${RUNNER_TEMP}/measure-repro-report.md" measure-repro failure full
 
       - uses: actions/upload-artifact@v4
         if: always()

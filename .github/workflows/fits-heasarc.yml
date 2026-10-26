@@ -43,6 +43,9 @@ env:
   FITSVERIFY_FEEDSTOCK_COMMIT: "dc6109b2629c8e24c51ca7d2f042060a87fdd1f8"
   FITSVERIFY_FEEDSTOCK_VERSION: "4.22"
   FITSVERIFY_FEEDSTOCK_SHA256: "6c45e803a7e0edbcb7d13918615bae6361d2b333c292b849c509ec9bebdb18b4"
+  ASTROPY_COMMIT: "dbbf2acd6dbb177db184bff319d2a2950dd178bb"
+  ASTROPY_ARCHIVE_SHA256: "3c6b762797ea8f292d5c35fbb3ebe82b7a28139783b5c6e870a38e576d62a46f"
+  ASTROPY_DOUBLE_EXT_SHA256: "7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc"
 
 jobs:
   heasarc:
@@ -160,10 +163,53 @@ jobs:
             # not asserted here. The harness makes the same distinction.
             for tool in fitsverify fpack funpack; do
               echo "--- $tool"
-              "$tool" 2>&1 | head -4 || true
-              echo "exit: $?"
+              set +e
+              output="$("$tool" 2>&1)"
+              code=$?
+              set -e
+              printf '%s\n' "$output" | sed -n '1,4p'
+              echo "exit: $code"
             done
           } | tee "${RUNNER_TEMP}/evidence/tool-versions.txt"
+
+      - name: Fetch and verify the external Astropy EXTNAMX fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/astropy-${ASTROPY_COMMIT}.tar.gz"
+          source="${RUNNER_TEMP}/astropy-double-ext.fits"
+          url="https://codeload.github.com/astropy/astropy/tar.gz/${ASTROPY_COMMIT}"
+          curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$url"
+          echo "${ASTROPY_ARCHIVE_SHA256}  ${archive}" | sha256sum -c --strict -
+          python3 - "$archive" "$source" <<'PY' | tee "${RUNNER_TEMP}/evidence/astropy-double-ext-provenance.txt"
+          import hashlib
+          import os
+          import sys
+          import tarfile
+
+          archive, destination = sys.argv[1:]
+          expected = "astropy/io/fits/tests/data/double_ext.fits"
+          with tarfile.open(archive, "r:gz") as tar:
+              matches = [member for member in tar.getmembers()
+                         if member.isfile() and member.name.endswith("/" + expected)]
+              if len(matches) != 1:
+                  raise SystemExit("expected exactly one %s in the pinned Astropy archive, got %d"
+                                   % (expected, len(matches)))
+              data = tar.extractfile(matches[0]).read()
+          digest = hashlib.sha256(data).hexdigest()
+          if len(data) != 11520 or digest != os.environ["ASTROPY_DOUBLE_EXT_SHA256"]:
+              raise SystemExit("external double_ext fixture identity mismatch: %d bytes, %s"
+                               % (len(data), digest))
+          with open(destination, "wb") as handle:
+              handle.write(data)
+          print("archive URL: https://codeload.github.com/astropy/astropy/tar.gz/%s"
+                % os.environ["ASTROPY_COMMIT"])
+          print("archive SHA-256: %s" % os.environ["ASTROPY_ARCHIVE_SHA256"])
+          print("member: %s" % expected)
+          print("member bytes: %d" % len(data))
+          print("member SHA-256: %s" % digest)
+          PY
+          sha256sum "$archive" "$source" | tee -a "${RUNNER_TEMP}/evidence/astropy-double-ext-provenance.txt"
 
       - name: Build tzim with the fits feature
         shell: bash
@@ -175,6 +221,7 @@ jobs:
           set -o pipefail
           python3 .github/scripts/fits-heasarc.py \
             --binary target/release/tzim \
+            --external-double-ext "${RUNNER_TEMP}/astropy-double-ext.fits" \
             --work "${RUNNER_TEMP}/fits-heasarc-work" \
             --evidence "${RUNNER_TEMP}/evidence" 2>&1 | tee "${RUNNER_TEMP}/fits-heasarc.log"
 

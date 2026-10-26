@@ -79,6 +79,104 @@ class MeasurementDefinitions(unittest.TestCase):
         )
 
 
+class PublishedTableComparison(unittest.TestCase):
+    """Printed precision is per metric; every published output row is compared."""
+
+    def test_old_point_051_tolerance_no_longer_admits_a_two_decimal_delta(self):
+        rows, problems = measure_repro.compare(
+            {"mean": 0.441}, {"mean": 0.39}, precision={"mean": 2}
+        )
+        self.assertEqual(rows[0]["verdict"], "DIFFERENT")
+        self.assertTrue(problems)
+        self.assertEqual(rows[0]["measured"], 0.44)
+
+    def test_whole_percent_and_one_decimal_metrics_use_their_published_precision(self):
+        rows, _ = measure_repro.compare(
+            {"share_positive": 69.3756, "maximum": 29.6864},
+            {"share_positive": 68, "maximum": 29.7},
+            precision={"share_positive": 0, "maximum": 1},
+        )
+        verdicts = {row["metric"]: row["verdict"] for row in rows}
+        self.assertEqual(verdicts["share_positive"], "DIFFERENT")
+        self.assertEqual(verdicts["maximum"], "reproduced")
+
+    def test_four_pdf_table_differences_are_reported_separately(self):
+        metrics = {
+            "mean": 0.4216836773137112,
+            "share_positive": 69.37561942517344,
+            "qpdf_mean": 1.6538774233025473,
+            "render_pages": 168,
+        }
+        published = {"mean": 0.39, "share_positive": 68,
+                     "qpdf_mean": 1.68, "render_pages": 173}
+        rows, problems = measure_repro.compare(
+            metrics, published,
+            precision={"mean": 2, "share_positive": 0, "qpdf_mean": 2},
+        )
+        self.assertEqual(
+            {row["metric"] for row in rows if row["verdict"] == "DIFFERENT"},
+            {"mean", "share_positive", "qpdf_mean", "render_pages"},
+        )
+        self.assertEqual(len(problems), 4)
+
+    def test_pdf_input_manifest_rows_compare_all_published_counts_and_bytes(self):
+        pins = {row["name"]: row for row in measure_fetch.CORPORA}
+        corpora = [
+            dict(name="pdfjs", format="pdf", repo=pins["pdfjs"]["repo"],
+                 commit=pins["pdfjs"]["commit"], files=1009, bytes=124725746),
+            dict(name="qpdf", format="pdf", repo=pins["qpdf"]["repo"],
+                 commit=pins["qpdf"]["commit"], files=630, bytes=38235783),
+            dict(name="verapdf", format="pdf", repo=pins["verapdf"]["repo"],
+                 commit=pins["verapdf"]["commit"], files=569, bytes=8891630),
+        ]
+        rows, problems = measure_repro.compare_input_corpora(corpora, "pdf")
+        self.assertFalse(problems, problems)
+        self.assertEqual(len(rows), 14)  # repo, abbreviated commit, files, bytes, plus totals
+        self.assertTrue(all(row["verdict"] == "reproduced" for row in rows))
+        corpora[0]["bytes"] += 100000
+        _rows, problems = measure_repro.compare_input_corpora(corpora, "pdf")
+        self.assertTrue(any("pdfjs.bytes" in problem for problem in problems))
+        corpora[0]["bytes"] -= 100000
+        corpora[0]["repo"] = "wrong/repository"
+        _rows, problems = measure_repro.compare_input_corpora(corpora, "pdf")
+        self.assertTrue(any("pdfjs.repo" in problem for problem in problems))
+
+    def test_fits_input_table_compares_repository_commit_counts_and_selected_bytes(self):
+        pins = {row["name"]: row for row in measure_fetch.CORPORA}
+        corpora = [
+            dict(name="astropy", format="fits", repo=pins["astropy"]["repo"],
+                 commit=pins["astropy"]["commit"], files=34, bytes=691200),
+            dict(name="cfitsio", format="fits", repo=pins["cfitsio"]["repo"],
+                 commit=pins["cfitsio"]["commit"], files=5, bytes=694080),
+            dict(name="drizzlepac", format="fits", repo=pins["drizzlepac"]["repo"],
+                 commit=pins["drizzlepac"]["commit"], files=123, bytes=15488640),
+            dict(name="reproject", format="fits", repo=pins["reproject"]["repo"],
+                 commit=pins["reproject"]["commit"], files=16, bytes=1903680),
+        ]
+        rows, problems = measure_repro.compare_input_corpora(corpora, "fits")
+        self.assertEqual(len(rows), 18)  # repo, abbreviated commit, files, bytes, plus totals
+        self.assertEqual(
+            {row["metric"] for row in rows if row["verdict"] != "reproduced"},
+            {
+                "fits.astropy.bytes[KiB]",
+                "fits.cfitsio.bytes[KiB]",
+                "fits.drizzlepac.bytes[MiB]",
+                "fits.reproject.bytes[MiB]",
+                "fits.total.bytes[MiB]",
+            },
+        )
+        self.assertEqual(len(problems), 5)
+        corpora[0]["commit"] = "0" * 40
+        _rows, problems = measure_repro.compare_input_corpora(corpora, "fits")
+        self.assertTrue(any("astropy.commit" in problem for problem in problems))
+
+    def test_unavailable_zopfli_sample_is_not_claimed_as_reproduced(self):
+        rows, problems = measure_repro.compare_zopfli_side_table()
+        self.assertTrue(rows)
+        self.assertTrue(all(row["verdict"] == "unavailable" for row in rows))
+        self.assertTrue(problems)
+
+
 class FullShaCorpusSelection(unittest.TestCase):
     """Archive refs are full commit IDs and near-miss files are explicit exclusions."""
 
@@ -304,6 +402,20 @@ class PdfHistoricalBug(unittest.TestCase):
     def test_every_stream_in_the_file_is_seen(self):
         with pikepdf.open(self.path) as pdf:
             self.assertEqual(len(list(pdf_measure.iter_streams(pdf))), 3)
+
+    def test_zlib_faithful_zero_is_not_counted_as_positive(self):
+        streams, original_bytes, recompressed_bytes = pdf_measure.faithful(self.path)
+        self.assertEqual(streams, 2)
+        self.assertEqual(original_bytes, recompressed_bytes)
+        faithful_pct = 100.0 * (original_bytes - recompressed_bytes) / os.path.getsize(self.path)
+        self.assertEqual(faithful_pct, 0.0)
+        aggregates = measure_repro.pdf_aggregates([
+            dict(corpus="pdfjs", status="accepted", faithful_pct=faithful_pct,
+                 qpdf_pct=0.0, repack_pct=0.0)
+        ])
+        self.assertEqual(aggregates["share_positive_count"], 0)
+        self.assertEqual(aggregates["share_zero_count"], 1)
+        self.assertEqual(aggregates["share_positive_denominator"], 1)
 
 
 if __name__ == "__main__":

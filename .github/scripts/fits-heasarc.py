@@ -58,6 +58,12 @@ import sys
 RECORD = 2880
 CARD = 80
 
+# External fixture pin: the exact Astropy test-corpus archive and selected file.
+ASTROPY_COMMIT = "dbbf2acd6dbb177db184bff319d2a2950dd178bb"
+ASTROPY_ARCHIVE_SHA256 = "3c6b762797ea8f292d5c35fbb3ebe82b7a28139783b5c6e870a38e576d62a46f"
+ASTROPY_DOUBLE_EXT_SHA256 = "7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc"
+ASTROPY_DOUBLE_EXT_BYTES = 11520
+
 #: Card widths by BITPIX, in bytes per sample.
 SAMPLE_BYTES = {8: 1, 16: 2, 32: 4, 64: 8, -32: 4, -64: 8}
 
@@ -653,6 +659,96 @@ def build_fixtures(root):
     return cases
 
 
+def add_external_double_ext(root, source_path):
+    """Add the pinned real input and an image derived with its literal EXTNAMX cards."""
+    if not source_path or not os.path.isfile(source_path):
+        raise FileNotFoundError("the external Astropy double_ext.fits input is missing")
+    raw = open(source_path, "rb").read()
+    destination = os.path.join(root, "external_double_ext.fits")
+    with open(destination, "wb") as handle:
+        handle.write(raw)
+
+    external_hdus = parse(raw)
+    compressed = next((hdu for hdu in external_hdus if hdu.value("ZIMAGE") == "T"), None)
+    if compressed is None:
+        raise ValueError("the pinned external Astropy fixture has no ZIMAGE HDU")
+    extnamx_cards = [card for card in compressed.cards if card[:8].strip() == "EXTNAMX"]
+    extname_cards = [card for card in compressed.cards if card[:8].strip() == "EXTNAME"]
+    if len(extnamx_cards) != 2 or len(extname_cards) < 2:
+        raise ValueError("the pinned external HDU no longer has its expected duplicate name cards")
+    if [card[10:30].strip() for card in extnamx_cards] != ["'COMPRESSED_IMAGE'", "'ccd00   '"]:
+        raise ValueError("the pinned external fixture's literal EXTNAMX values changed")
+    # In Astropy's compressed extension, the last EXTNAME names the source
+    # image; the first names the compressed-table extension. Build a small,
+    # uncompressed image from deterministic data, but use the two exact raw
+    # EXTNAMX cards from the independently pinned external file. This enters
+    # the real tzim writer/acceptance path without relying on funpack's failure
+    # to decompress this RICE_1 test input.
+    source_extname = extname_cards[-1]
+    if "'ccd00" not in source_extname[10:30]:
+        raise ValueError("the pinned external source-image EXTNAME card changed")
+    rewrite_name = "external_extnamx_rewrite.fits"
+    rewrite_path = os.path.join(root, rewrite_name)
+    rewrite_bytes = (
+        empty_primary()
+        + image_hdu(
+            16,
+            [64, 128],
+            int16_pattern(64, 128),
+            extra=[source_extname.encode("ascii"), *(card.encode("ascii") for card in extnamx_cards)],
+        )
+    )
+    with open(rewrite_path, "wb") as handle:
+        handle.write(rewrite_bytes)
+
+    external_case = dict(
+        name="external_double_ext.fits",
+        expect="untouched",
+        status="skipped",
+        required_card_counts={"EXTNAMX": 2},
+        expected_input_bytes=ASTROPY_DOUBLE_EXT_BYTES,
+        expected_input_sha256=ASTROPY_DOUBLE_EXT_SHA256,
+        input_case=(
+            "External astropy/astropy FITS test input at commit %s, "
+            "astropy/io/fits/tests/data/double_ext.fits; selected-file SHA-256 %s, %d bytes."
+            % (ASTROPY_COMMIT, ASTROPY_DOUBLE_EXT_SHA256, ASTROPY_DOUBLE_EXT_BYTES)
+        ),
+        contract_expectation=(
+            "The pinned external file is already a RICE_1 ZIMAGE table, outside this build's "
+            "Tier 2 rewrite path. The contract says an unsupported RICE_1 codec is refused as "
+            "skipped; tzim must preserve the exact file, and both external EXTNAMX cards must "
+            "remain byte-identical. The source-derived rewrite "
+            "case separately sends those literal cards through the actual writer and acceptance path."
+        ),
+        why=(
+            "external real-file coverage for the Astropy double_ext.fits EXTNAMX cards; "
+            "the RICE_1 compressed input is outside the writer's accepted rewrite subset"
+        ),
+    )
+    rewrite_case = dict(
+        name=rewrite_name,
+        expect="rewritten",
+        images=1,
+        hdu_delta=0,
+        required_card_counts={"EXTNAMX": 2},
+        input_case=(
+            "Uncompressed synthetic IMAGE data with EXTNAME and the two literal EXTNAMX cards "
+            "copied byte-for-byte from pinned external Astropy file %s (commit %s, SHA-256 %s). "
+            "The pixel array is deterministic harness data; it is not claimed to be a decompression "
+            "of the RICE_1 source file."
+            % ("astropy/io/fits/tests/data/double_ext.fits", ASTROPY_COMMIT, ASTROPY_DOUBLE_EXT_SHA256)
+        ),
+        contract_expectation=(
+            "The actual rewritten candidate must contain both externally sourced EXTNAMX cards "
+            "byte-for-byte, and the shared fitsverify/funpack/array/literal-header acceptance "
+            "path must pass. This isolates header preservation from the source file's unsupported "
+            "RICE_1 codec and the known funpack failure."
+        ),
+        why="external Astropy EXTNAMX literal cards exercised through the writer's rewrite path",
+    )
+    return [external_case, rewrite_case]
+
+
 # ---------------------------------------------------------------------------
 # Running the binary and the tools
 # ---------------------------------------------------------------------------
@@ -1063,38 +1159,63 @@ def tzim_run(binary, path):
     return code, record, output
 
 
-def check_fixture(binary, case, root, scratch, evidence):
-    """Everything the gate asserts about one fixture."""
-    path = os.path.join(root, case["name"])
-    original_bytes = open(path, "rb").read()
+def check_candidate(original_path, candidate_path, case, scratch, evidence, evidence_tag):
+    """Apply the gate's acceptance checks to an existing candidate.
+
+    Both the normal tzim output and the corrupt-tile negative control enter this
+    same function. It is the actual acceptance path: independent structural
+    verification, HDU preservation, `funpack -C`, byte-exact arrays, and literal
+    cards. A control that merely notices that one bit changed is not sufficient.
+    """
+    original_bytes = open(original_path, "rb").read()
+    candidate_bytes = open(candidate_path, "rb").read()
     before = parse(original_bytes)
-    kept = os.path.join(scratch, "original-" + case["name"])
-    with open(kept, "wb") as handle:
-        handle.write(original_bytes)
-    evidence.write_bytes("input-" + case["name"], original_bytes)
+    candidate = parse(candidate_bytes)
+    diagnostic_mode = case.get("diagnostics")
     result = dict(
-        name=case["name"],
-        why=case["why"],
-        expect=case["expect"],
-        input_case=case.get("input_case"),
-        contract_expectation=case.get("contract_expectation"),
-        input_sha256=hashlib.sha256(original_bytes).hexdigest(),
-        original=kept,
+        candidate_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
+        bytes=dict(before=len(original_bytes), after=len(candidate_bytes)),
         problems=[],
     )
+    required_card_checks = {}
+    for keyword, expected_count in case.get("required_card_counts", {}).items():
+        source_cards = [
+            card for hdu in before for card in hdu.cards if card[:8].strip() == keyword
+        ]
+        candidate_cards = [
+            card for hdu in candidate for card in hdu.cards if card[:8].strip() == keyword
+        ]
+        unchanged = source_cards == candidate_cards
+        required_card_checks[keyword] = dict(
+            expected_count=expected_count,
+            source_count=len(source_cards),
+            candidate_count=len(candidate_cards),
+            source_cards=source_cards,
+            candidate_cards=candidate_cards,
+            unchanged=unchanged,
+        )
+        if len(source_cards) != expected_count or len(candidate_cards) != expected_count:
+            result["problems"].append(
+                "%s occurs %d times in the source and %d times in the rewritten candidate; expected %d"
+                % (keyword, len(source_cards), len(candidate_cards), expected_count)
+            )
+        if not unchanged:
+            result["problems"].append(
+                "%s cards changed in the rewritten candidate" % keyword
+            )
+    if required_card_checks:
+        result["required_card_checks"] = required_card_checks
 
-    diagnostic_mode = case.get("diagnostics")
     original_verify_code = None
-    original_verify_output = ""
     original_diagnostics = None
     if diagnostic_mode:
         result["original_hdus"] = hdu_layout(before)
-        original_verify_code, original_verify_output = fitsverify(kept, scratch)
+        original_verify_code, original_verify_output = fitsverify(original_path, scratch)
         original_diagnostics = fitsverify_diagnostics(original_verify_output)
         result["original_fitsverify_exit"] = original_verify_code
         result["original_fitsverify_diagnostics"] = original_diagnostics
         evidence.write_text(
-            "fitsverify-original-%s.txt" % case["name"], original_verify_output
+            "fitsverify-original-%s.txt" % evidence_tag, original_verify_output
         )
         if diagnostic_mode == "registered" and original_verify_code != 0:
             result["problems"].append(
@@ -1111,42 +1232,9 @@ def check_fixture(binary, case, root, scratch, evidence):
                     "HDRLET original did not reproduce the expected unregistered-XTENSION baseline"
                 )
 
-    code, record, output = tzim_run(binary, path)
-    result["tzim_exit"] = code
-    result["tzim"] = record
-    evidence.write_json("tzim-%s.json" % case["name"], record)
-    candidate_bytes = open(path, "rb").read()
-    evidence.write_bytes("candidate-" + case["name"], candidate_bytes)
-    result["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
-    result["bytes"] = dict(before=len(original_bytes), after=len(candidate_bytes))
-    if code != 0:
-        result["problems"].append("tzim exited %d: %s" % (code, output.strip()[:400]))
-        return result
-
-    status = (record or {}).get("status")
-    if case["expect"] == "untouched":
-        expected_status = case.get("status")
-        if expected_status and status != expected_status:
-            result["problems"].append("status is %r, expected %r" % (status, expected_status))
-        if candidate_bytes != original_bytes:
-            result["problems"].append("a file that must not be rewritten was rewritten")
-        return result
-
-    if candidate_bytes == original_bytes:
-        said = ""
-        if record:
-            said = " (tzim said: %s%s)" % (
-                record.get("status", "?"),
-                (": " + record["note"]) if record.get("note") else "",
-            )
-        result["problems"].append("the file did not change, so nothing was written%s" % said)
-        return result
-    if status != "optimized":
-        result["problems"].append("status is %r, expected 'optimized'" % status)
-
-    verify_code, verify_output = fitsverify(path, scratch)
+    verify_code, verify_output = fitsverify(candidate_path, scratch)
     result["fitsverify_exit"] = verify_code
-    evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
+    evidence.write_text("fitsverify-%s.txt" % evidence_tag, verify_output)
     if diagnostic_mode == "compare_original":
         candidate_diagnostics = fitsverify_diagnostics(verify_output)
         comparison = external_diagnostic_comparison(
@@ -1164,20 +1252,18 @@ def check_fixture(binary, case, root, scratch, evidence):
             candidate=candidate_diagnostics,
         )
         evidence.write_json(
-            "fitsverify-diagnostic-comparison-%s.json" % case["name"],
+            "fitsverify-diagnostic-comparison-%s.json" % evidence_tag,
             result["external_diagnostic_comparison"],
         )
         if not comparison["no_new_diagnostics"]:
             result["problems"].append(
                 "candidate introduced a new fitsverify error/warning or an inconsistent diagnostic count versus the exact HDRLET input baseline"
             )
-    else:
-        if verify_code != 0:
-            result["problems"].append(
-                "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
-            )
+    elif verify_code != 0:
+        result["problems"].append(
+            "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
+        )
 
-    candidate = parse(candidate_bytes)
     if diagnostic_mode:
         result["candidate_hdus"] = hdu_layout(candidate)
     original_images = [h for h in before if h.kind() in ("PRIMARY", "IMAGE") and h.axes()]
@@ -1190,7 +1276,7 @@ def check_fixture(binary, case, root, scratch, evidence):
             "the fixture itself has %d images, the case says %d"
             % (len(original_images), case.get("images"))
         )
-    if len(candidate_images) != 0:
+    if candidate_images:
         result["problems"].append(
             "%d image HDUs are still uncompressed after the rewrite" % len(candidate_images)
         )
@@ -1224,12 +1310,13 @@ def check_fixture(binary, case, root, scratch, evidence):
 
     if case.get("skip_funpack"):
         result["funpack"] = "not run: HDRLET case is a byte-preservation and external-baseline test"
+        result["accepted"] = not result["problems"]
         return result
 
-    # Every array assertion below is source-vs-tzim-candidate->funpack -C. The
-    # fpack control is only an independent positive reader/writer sanity check.
-    unpack_code, unpack_output, unpacked = funpack(path, scratch)
-    evidence.write_text("funpack-%s.txt" % case["name"], unpack_output)
+    # Every array assertion below is source-vs-candidate->funpack -C. The fpack
+    # control remains a separate integer-only reader/writer sanity check.
+    unpack_code, unpack_output, unpacked = funpack(candidate_path, scratch)
+    evidence.write_text("funpack-%s.txt" % evidence_tag, unpack_output)
     result["funpack_exit"] = unpack_code
     result["funpack_output"] = unpack_output
     if unpack_code != 0 or not unpacked:
@@ -1237,6 +1324,7 @@ def check_fixture(binary, case, root, scratch, evidence):
         result["problems"].append(
             "funpack -C exited %d and produced no file%s" % (unpack_code, (": " + tail) if tail else "")
         )
+        result["accepted"] = False
         return result
     rebuilt = parse(open(unpacked, "rb").read())
     if rebuilt and rebuilt[0].kind() == "PRIMARY" and not rebuilt[0].axes() and before[0].axes():
@@ -1263,7 +1351,7 @@ def check_fixture(binary, case, root, scratch, evidence):
             diffs[label] = [dict(diff, classification=classify_diff(diff)) for diff in cards]
     result["array_checks"] = array_checks
     result["header_diff"] = diffs
-    evidence.write_json("header-diff-%s.json" % case["name"], diffs)
+    evidence.write_json("header-diff-%s.json" % evidence_tag, diffs)
     if diffs:
         text = "\n".join(
             "%s: %s card; original index %s, reconstructed index %s; %s\n"
@@ -1281,17 +1369,130 @@ def check_fixture(binary, case, root, scratch, evidence):
             for label, items in diffs.items()
             for diff in items
         ) + "\n"
-        evidence.write_text("header-diff-%s.txt" % case["name"], text)
+        evidence.write_text("header-diff-%s.txt" % evidence_tag, text)
         result["problems"].append(
-            "the reconstructed header is not identical (see header-diff-%s.txt)" % case["name"]
+            "the reconstructed header is not identical (see header-diff-%s.txt)" % evidence_tag
         )
     else:
         evidence.write_text(
-            "header-diff-%s.txt" % case["name"],
+            "header-diff-%s.txt" % evidence_tag,
             "No literal 80-column card differences, including END, comments, spacing, or order.\n",
         )
-    evidence.write_json("tzim-%s.json" % case["name"], record)
+    result["accepted"] = not result["problems"]
     return result
+
+
+def check_fixture(binary, case, root, scratch, evidence):
+    """Run tzim on one input, then use the shared candidate acceptance path."""
+    path = os.path.join(root, case["name"])
+    original_bytes = open(path, "rb").read()
+    before = parse(original_bytes)
+    kept = os.path.join(scratch, "original-" + case["name"])
+    with open(kept, "wb") as handle:
+        handle.write(original_bytes)
+    evidence.write_bytes("input-" + case["name"], original_bytes)
+    input_sha = hashlib.sha256(original_bytes).hexdigest()
+    result = dict(
+        name=case["name"],
+        why=case["why"],
+        expect=case["expect"],
+        input_case=case.get("input_case"),
+        contract_expectation=case.get("contract_expectation"),
+        input_sha256=input_sha,
+        original=kept,
+        problems=[],
+    )
+    expected_input_bytes = case.get("expected_input_bytes")
+    expected_input_sha256 = case.get("expected_input_sha256")
+    if expected_input_bytes is not None and len(original_bytes) != expected_input_bytes:
+        result["problems"].append(
+            "external fixture is %d bytes, expected %d"
+            % (len(original_bytes), expected_input_bytes)
+        )
+        return result
+    if expected_input_sha256 and input_sha != expected_input_sha256:
+        result["problems"].append(
+            "external fixture SHA-256 is %s, expected %s"
+            % (input_sha, expected_input_sha256)
+        )
+        return result
+
+    code, record, output = tzim_run(binary, path)
+    result["tzim_exit"] = code
+    result["tzim"] = record
+    evidence.write_json("tzim-%s.json" % case["name"], record)
+    candidate_bytes = open(path, "rb").read()
+    evidence.write_bytes("candidate-" + case["name"], candidate_bytes)
+    result["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
+    result["bytes"] = dict(before=len(original_bytes), after=len(candidate_bytes))
+    if code != 0:
+        result["problems"].append("tzim exited %d: %s" % (code, output.strip()[:400]))
+        return result
+
+    status = (record or {}).get("status")
+    if case["expect"] == "untouched":
+        expected_status = case.get("status")
+        if expected_status and status != expected_status:
+            result["problems"].append("status is %r, expected %r" % (status, expected_status))
+        if candidate_bytes != original_bytes:
+            result["problems"].append("a file that must not be rewritten was rewritten")
+        required = case.get("required_card_counts", {})
+        card_record = {}
+        after = parse(candidate_bytes)
+        for keyword, expected_count in required.items():
+            source_cards = [
+                card for hdu in before for card in hdu.cards
+                if card[:8].strip() == keyword
+            ]
+            candidate_cards = [
+                card for hdu in after for card in hdu.cards
+                if card[:8].strip() == keyword
+            ]
+            same = source_cards == candidate_cards
+            card_record[keyword] = dict(
+                expected_count=expected_count,
+                source_count=len(source_cards),
+                candidate_count=len(candidate_cards),
+                cards=[card for card in candidate_cards],
+                unchanged=same,
+            )
+            if len(source_cards) != expected_count or len(candidate_cards) != expected_count:
+                result["problems"].append(
+                    "%s occurs %d times in the external input and %d times in the candidate; expected %d"
+                    % (keyword, len(source_cards), len(candidate_cards), expected_count)
+                )
+            if not same:
+                result["problems"].append("%s cards changed across the no-rewrite path" % keyword)
+        if card_record:
+            result["external_card_checks"] = card_record
+        result["candidate_accepted"] = None
+        return result
+
+    if candidate_bytes == original_bytes:
+        said = ""
+        if record:
+            said = " (tzim said: %s%s)" % (
+                record.get("status", "?"),
+                (": " + record["note"]) if record.get("note") else "",
+            )
+        result["problems"].append("the file did not change, so nothing was written%s" % said)
+        return result
+    if status != "optimized":
+        result["problems"].append("status is %r, expected 'optimized'" % status)
+
+    acceptance = check_candidate(kept, path, case, scratch, evidence, case["name"])
+    result["candidate_acceptance"] = acceptance["accepted"]
+    result["acceptance"] = {
+        "accepted": acceptance["accepted"],
+        "problems": acceptance["problems"],
+        "fitsverify_exit": acceptance.get("fitsverify_exit"),
+        "funpack_exit": acceptance.get("funpack_exit"),
+        "array_checks": acceptance.get("array_checks", []),
+    }
+    result.update({key: value for key, value in acceptance.items() if key != "problems"})
+    result["problems"].extend(acceptance["problems"])
+    return result
+
 
 class Evidence:
     """A directory of files that outlive the job, with a checksum over them."""
@@ -1453,7 +1654,43 @@ def render_diagnostics(summary, evidence):
         )
     else:
         lines.append("The fixture did not run.")
-    lines += ["", "## Controls: two negative controls plus one positive toolchain sanity check", ""]
+    external = next(
+        (f for f in summary["fixtures"] if f["name"] == "external_double_ext.fits"), None
+    )
+    lines += ["", "## External Astropy `double_ext.fits` — real-file EXTNAMX coverage", ""]
+    if external:
+        lines.append("Source identity: %s; input SHA-256 `%s`; output SHA-256 `%s`." % (
+            external.get("input_case"), external.get("input_sha256", "not recorded"),
+            external.get("candidate_sha256", "not recorded")))
+        lines.append("")
+        lines.append("The byte-pinned external input is already a RICE_1 compressed image outside this build's rewrite subset. The contract expects `skipped`, unchanged bytes, and two literal EXTNAMX cards. The same raw cards also feed a separate uncompressed harness image that exercises the writer path; its pixel data is explicitly synthetic, not a claimed RICE_1 decompression.")
+        lines.append("")
+        lines.append("External no-op card check: `%s`." % json.dumps(
+            external.get("external_card_checks", {}), sort_keys=True))
+        lines.append("")
+    else:
+        lines.append("The external fixture did not run.")
+        lines.append("")
+    external_rewrite = next(
+        (f for f in summary["fixtures"] if f["name"] == "external_extnamx_rewrite.fits"), None
+    )
+    lines.append("### External-card-derived rewrite path")
+    lines.append("")
+    if external_rewrite:
+        lines.append("Input: %s" % external_rewrite.get("input_case", "description not recorded"))
+        lines.append("")
+        lines.append("Candidate SHA-256 `%s`; accepted by the shared candidate path: `%s`." % (
+            external_rewrite.get("candidate_sha256", "not recorded"),
+            external_rewrite.get("candidate_acceptance", "not reached")))
+        lines.append("")
+        lines.append("Exact-card check and acceptance problems: `%s`; `%s`." % (
+            json.dumps(external_rewrite.get("required_card_checks", {}), sort_keys=True),
+            json.dumps(external_rewrite.get("acceptance", {}).get("problems", []), sort_keys=True)))
+        lines.append("")
+    else:
+        lines.append("The external-card-derived rewrite fixture did not run.")
+        lines.append("")
+    lines += ["## Controls: two negative controls plus one positive toolchain sanity check", ""]
     for control in summary.get("controls", []):
         role = control.get("control_type", "unclassified")
         lines.append("- `%s` (%s): expected %s; record `%s`." % (
@@ -1461,11 +1698,14 @@ def render_diagnostics(summary, evidence):
             json.dumps(control, sort_keys=True)))
     lines.append("")
     lines.append(
-        "The corrupted-tile control tests the byte-integrity comparison; fitsverify may accept "
-        "structurally valid FITS with changed image content. The structural control must make "
-        "fitsverify nonzero. The positive fpack control is `fpack → funpack -C`: its output must "
-        "pass fitsverify and its full literal header diff must be empty. The fpack reference is "
-        "integer-only; float arrays are compared only as original versus `tzim → funpack -C`."
+        "The corrupt-tile control runs both the intact and altered candidates through the same "
+        "main acceptance helper used by normal fixtures. It passes only when the intact candidate "
+        "is accepted and the corrupted candidate is rejected by `funpack -C` or the byte-exact "
+        "array comparison; fitsverify may accept structurally valid FITS with changed image data. "
+        "The separate structural control must make fitsverify nonzero. The positive fpack control "
+        "is `fpack → funpack -C`: its output must pass fitsverify and its full literal header diff "
+        "must be empty. The fpack reference is integer-only; float arrays are compared only as "
+        "original versus `tzim → funpack -C`."
     )
     lines.append("")
     lines.append("Full control-tool output and round-trip diffs are retained in the checksummed evidence.")
@@ -1474,6 +1714,10 @@ def render_diagnostics(summary, evidence):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--binary", help="the tzim binary built with --features fits")
+    parser.add_argument(
+        "--external-double-ext",
+        help="byte-pinned external Astropy double_ext.fits input for EXTNAMX coverage",
+    )
     parser.add_argument("--work", default="fits-heasarc-work")
     parser.add_argument("--evidence", default="fits-heasarc-evidence")
     parser.add_argument(
@@ -1506,6 +1750,9 @@ def main():
 
     if not args.binary:
         parser.error("--binary is required unless --self-check is given")
+    if not args.external_double_ext:
+        parser.error("--external-double-ext is required for the real-file EXTNAMX control")
+    cases.extend(add_external_double_ext(root, args.external_double_ext))
 
     # Every candidate is produced by running the binary from the fixture's own
     # directory, so a relative path is resolved **once**, here: `cwd=` would
@@ -1543,17 +1790,18 @@ def main():
             print("    %s" % problem)
         failures += bool(result["problems"])
 
-    # --- negative controls: each one has to be *detected* ---------------------
-    # A candidate to corrupt: any fixture that was actually rewritten. It does
-    # not have to be a flawless one — the control asks whether corruption is
-    # *detected*, and choosing only from fixtures without other problems would
-    # quietly turn the control off whenever the run had something else to say.
+    # --- negative controls use the same acceptance path as a normal fixture ---
+    # The intact candidate must first pass the complete acceptance helper. Then
+    # the bit-flipped candidate is sent through that same helper; a local tile
+    # inequality alone is not the gate's acceptance criterion.
     good = next(
         (
             c
             for c in summary["fixtures"]
             if c.get("expect") in ("rewritten", "mixed")
             and (c.get("tzim") or {}).get("status") == "optimized"
+            and c.get("candidate_acceptance") is True
+            and not c.get("problems")
             and c.get("bytes", {}).get("after", 0) != c.get("bytes", {}).get("before", 0)
         ),
         None,
@@ -1561,54 +1809,77 @@ def main():
     if good is None:
         summary["controls"].append(
             dict(name="corrupt_tile", control_type="negative", detected=None,
-                 expected="the integrity comparison detects the changed tile",
-                 note="no accepted candidate to corrupt")
+                 expected="a candidate accepted by the main path becomes rejected after one tile bit is flipped",
+                 note="no intact candidate passed the full acceptance path")
         )
-        print("!! no accepted candidate is available, so the corruption control did not run")
+        print("!! no intact accepted candidate is available, so the corruption control did not run")
         failures += 1
     else:
         path = os.path.join(root, good["name"])
         corrupt = os.path.join(scratch, "corrupt-" + good["name"])
         detail = corrupt_tile(path, corrupt)
-        # The control is about the *tiles*: the candidate's own heap, inflated,
-        # has to equal the original array before the flip and differ after it.
         source = parse(open(good["original"], "rb").read())
         image = next(h for h in source if h.kind() in ("PRIMARY", "IMAGE") and h.axes())
-        # The intact candidate must inflate: if it does not, the run has a real
-        # problem and the control must not paper over it with an exception.
         intact = inflate_tiles(path) == image.data
         try:
             damaged = inflate_tiles(corrupt) == image.data
             note = "the corrupted tile inflated and differed"
         except (OSError, EOFError, zlib.error) as error:
-            # A flipped bit inside the deflate stream is often past repair: the
-            # gzip member's own CRC-32 or its stream makes it fail outright.
-            # That is detection too, and the failure is recorded.
             damaged = False
             note = "the corrupted tile no longer inflates: %s" % error
-        detected = intact and not damaged
-        verify_code, verify_output = fitsverify(corrupt, scratch)
-        evidence.write_text("control-corrupt-fitsverify.txt", verify_output)
+
+        case_by_name = {case["name"]: case for case in cases}
+        corrupt_acceptance = check_candidate(
+            good["original"], corrupt, case_by_name[good["name"]], scratch,
+            evidence, "control-corrupt-tile",
+        )
+        acceptance_rejected = not corrupt_acceptance["accepted"]
+        payload_rejected = (
+            corrupt_acceptance.get("funpack_exit") not in (None, 0)
+            or any(not check.get("matches") for check in corrupt_acceptance.get("array_checks", []))
+        )
+        detected = intact and not damaged and acceptance_rejected and payload_rejected
+        evidence.write_json(
+            "control-corrupt-acceptance.json",
+            corrupt_acceptance,
+        )
         evidence.write_json(
             "control-corrupt.json",
             dict(
                 fixture=good["name"],
                 **detail,
-                fitsverify_exit=verify_code,
-                note=note,
+                intact_candidate_accepted=good.get("candidate_acceptance"),
                 tiles_equal_original=intact,
                 corrupted_tiles_equal_original=damaged,
-                our_detection=detected,
+                candidate_acceptance_rejected=acceptance_rejected,
+                content_rejection_via_funpack_or_array_check=payload_rejected,
+                candidate_fitsverify_exit=corrupt_acceptance.get("fitsverify_exit"),
+                candidate_funpack_exit=corrupt_acceptance.get("funpack_exit"),
+                acceptance_problems=corrupt_acceptance["problems"],
+                detected=detected,
+                note=note,
             ),
         )
         summary["controls"].append(
-            dict(name="corrupt_tile", control_type="negative", fixture=good["name"],
-                 expected="intact tile bytes match source; flipped tile does not",
-                 detected=detected, fitsverify_exit=verify_code, note=note, **detail)
+            dict(
+                name="corrupt_tile", control_type="negative", fixture=good["name"],
+                expected="the normal acceptance path accepts the intact candidate and rejects the tile-corrupted candidate on its funpack/byte comparison",
+                intact_candidate_accepted=good.get("candidate_acceptance"),
+                candidate_acceptance_rejected=acceptance_rejected,
+                content_rejected=payload_rejected,
+                detected=detected,
+                fitsverify_exit=corrupt_acceptance.get("fitsverify_exit"),
+                funpack_exit=corrupt_acceptance.get("funpack_exit"),
+                note=note,
+                **detail,
+            )
         )
-        print("control: one bit flipped in a tile -> tiles still match the original: %s;"
-              " after the flip: %s; fitsverify exit %d"
-              % (intact, damaged, verify_code))
+        print(
+            "control: same acceptance path: intact accepted=%s; corrupted accepted=%s; "
+            "content rejection=%s; fitsverify exit=%s; funpack exit=%s"
+            % (good.get("candidate_acceptance"), not acceptance_rejected, payload_rejected,
+               corrupt_acceptance.get("fitsverify_exit"), corrupt_acceptance.get("funpack_exit"))
+        )
         if not detected:
             failures += 1
 

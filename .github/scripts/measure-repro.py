@@ -47,34 +47,53 @@ import subprocess
 import sys
 import time
 import zlib
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-#: The published aggregates, transcribed from the audits. Percentages are rounded
-#: to the precision the audit prints them at, and are compared with a tolerance of
-#: half of the last printed digit — the instrument is not asked to agree more
-#: precisely with a rounded table than the table can express.
+#: The published result-table values, transcribed without treating them as ground
+#: truth. Rows that were rounded in the audits are compared at exactly the number
+#: of places printed in that table; integer percentages are rounded to whole points.
 PUBLISHED = {
     "fits": dict(
         where="docs/fits-audit.md §8.2",
         files=178,
-        tier2=153,
-        accepted=151,
-        median=21.9,
-        q1=17.4,
-        q3=27.3,
-        mean=19.1,
-        share_positive=83,
-        maximum=72.7,
+        tier2_candidates=153,
+        tier2_files=151,
+        tier1_files=151,
+        tier2_median=21.9,
+        tier2_q1=17.4,
+        tier2_q3=27.3,
+        tier2_mean=19.1,
+        tier2_share_positive=83,
+        tier2_maximum=72.7,
+        tier1_median=0.00,
+        tier1_q1=0.00,
+        tier1_q3=0.00,
+        tier1_mean=0.00,
+        tier1_share_positive=0,
+        tier1_maximum=0.00,
         bytes_before=17827200,
         bytes_after=13343040,
+        bytes_pct=25.2,
+        exact_failure_count=2,
         by_corpus={"reproject": 41.9, "cfitsio": 42.1, "drizzlepac": 21.9, "astropy": -7.1},
-        exact_failures=2,
+        by_status={"refused": 25, "tier2": 153},
+        refusals={"no_image": 25},
+        exact_failure_set=[
+            ("double_ext.fits", "keyword_EXTNAMX"),
+            ("zerowidth.fits", "array_0"),
+        ],
     ),
     "pdf": dict(
         where="docs/pdf-audit.md §9.2",
         files=2208,
         accepted=1009,
+        already_optimal=723,
+        refused=476,
+        accepted_pct=45.7,
+        already_optimal_pct=32.7,
+        refused_pct=21.6,
         median=0.08,
         q1=0.00,
         q3=0.09,
@@ -84,22 +103,114 @@ PUBLISHED = {
         qpdf_median=0.59,
         qpdf_q1=-0.07,
         qpdf_q3=1.94,
+        qpdf_mean=1.68,
         qpdf_share_positive=60,
+        qpdf_maximum=96.4,
         repack_median=20.1,
         repack_mean=17.0,
         qpdf_check_passed=1009,
         render_files=140,
         render_pages=173,
         render_differences=0,
+        by_status={"accepted": 1009, "already_optimal": 723, "refused": 476},
+        refusals={
+            "damaged": 40,
+            "encrypted": 21,
+            "filter_chain": 15,
+            "incremental_update": 332,
+            "no_header": 15,
+            "not_deflate": 2,
+            "not_inflatable": 4,
+            "signed": 3,
+            "stream_too_short": 2,
+            "truncated": 2,
+            "unreadable": 40,
+        },
     ),
 }
 
-#: No metric discrepancy is soft. The older report has no per-file render sample,
-#: so the difference is unresolved rather than attributed to a library by guesswork.
-SOFT = {}
+#: Decimal places visible in each published output table. These explicit scales
+#: replace the previous blanket 0.051 allowance, which admitted differences not
+#: consistent with the table's stated precision.
+PUBLISHED_PRECISION = {
+    "fits": {
+        "tier2_median": 1,
+        "tier2_q1": 1,
+        "tier2_q3": 1,
+        "tier2_mean": 1,
+        "tier2_share_positive": 0,
+        "tier2_maximum": 1,
+        "tier1_median": 2,
+        "tier1_q1": 2,
+        "tier1_q3": 2,
+        "tier1_mean": 2,
+        "tier1_share_positive": 0,
+        "tier1_maximum": 2,
+        "bytes_pct": 1,
+        "by_corpus": 1,
+    },
+    "pdf": {
+        "accepted_pct": 1,
+        "already_optimal_pct": 1,
+        "refused_pct": 1,
+        "median": 2,
+        "q1": 2,
+        "q3": 2,
+        "mean": 2,
+        "share_positive": 0,
+        "maximum": 1,
+        "qpdf_median": 2,
+        "qpdf_q1": 2,
+        "qpdf_q3": 2,
+        "qpdf_mean": 2,
+        "qpdf_share_positive": 0,
+        "qpdf_maximum": 1,
+        "repack_median": 1,
+        "repack_mean": 1,
+    },
+}
 
-#: How far a percentage may sit from the rounded published value.
-PERCENT_TOLERANCE = 0.051
+#: Source-corpus rows printed in the audits. Byte values use the displayed unit
+#: and precision; they are compared to the new manifest's selected-file bytes,
+#: not to archive sizes.
+PUBLISHED_INPUT_CORPORA = {
+    "fits": dict(
+        where="docs/fits-audit.md §8.1",
+        unit="MiB",
+        places=1,
+        rows={
+            "astropy": dict(repo="astropy/astropy", commit_prefix="dbbf2acd6dbb", files=34, bytes=780, unit="KiB", places=0),
+            "cfitsio": dict(repo="heasarc/cfitsio", commit_prefix="113781d8aa44", files=5, bytes=60, unit="KiB", places=0),
+            "drizzlepac": dict(repo="spacetelescope/drizzlepac", commit_prefix="635834581ea2", files=123, bytes=3.3, unit="MiB", places=1),
+            "reproject": dict(repo="astropy/reproject", commit_prefix="9dddd419111a", files=16, bytes=2.0, unit="MiB", places=1),
+        },
+        total=dict(files=178, bytes=17.8, unit="MiB", places=1),
+    ),
+    "pdf": dict(
+        where="docs/pdf-audit.md §9.1",
+        unit="MB",
+        places=1,
+        rows={
+            "pdfjs": dict(repo="mozilla/pdf.js", commit_prefix="606bd6a4e138", files=1009, bytes=124.7, unit="MB", places=1),
+            "qpdf": dict(repo="qpdf/qpdf", commit_prefix="4eba95899886", files=630, bytes=38.2, unit="MB", places=1),
+            "verapdf": dict(repo="veraPDF/veraPDF-corpus", commit_prefix="bb75f4f0073d", files=569, bytes=8.9, unit="MB", places=1),
+        },
+        total=dict(files=2208, bytes=171.9, unit="MB", places=1),
+    ),
+}
+
+#: The audit also printed this secondary 150-file Zopfli sample. Its historical
+#: per-file sample membership was not retained, so the old summary cannot be
+#: relabeled as a rerun; the comparison reports it as unavailable rather than
+#: guessing a new sample or silently omitting the table row.
+PUBLISHED_ZOPFLI = dict(
+    sample_files=150,
+    median=0.15,
+    q1=0.14,
+    q3=2.81,
+    share_positive=91,
+    precision=dict(median=2, q1=2, q3=2, share_positive=0),
+)
 
 
 def sha256_of(path):
@@ -195,14 +306,16 @@ def render_aggregates(rows):
 
 
 def fits_aggregates(rows):
-    """The FITS table, recomputed from the JSONL rather than read from stdout."""
+    """Full FITS result table, recomputed from the per-file JSONL."""
     by_status = {}
     for row in rows:
         by_status[row["status"]] = by_status.get(row["status"], 0) + 1
     tier2 = [r for r in rows if r["status"] == "tier2"]
     accepted = [r for r in tier2 if r.get("exact")]
     failed = [r for r in tier2 if not r.get("exact")]
-    per_file = distribution([r["pct"] for r in accepted])
+    tier2_distribution = distribution([r["pct"] for r in accepted])
+    tier1_rows = [r for r in accepted if r.get("tier1_pct") is not None]
+    tier1_distribution = distribution([r["tier1_pct"] for r in tier1_rows])
     per_corpus = {}
     for corpus in sorted({r["corpus"] for r in rows}):
         subset = [r["pct"] for r in accepted if r["corpus"] == corpus]
@@ -217,14 +330,27 @@ def fits_aggregates(rows):
     return dict(
         files=len(rows),
         by_status=by_status,
-        tier2=len(tier2),
-        accepted=len(accepted),
-        **per_file,
+        tier2_candidates=len(tier2),
+        tier2_files=len(accepted),
+        tier2_median=tier2_distribution.get("median"),
+        tier2_q1=tier2_distribution.get("q1"),
+        tier2_q3=tier2_distribution.get("q3"),
+        tier2_mean=tier2_distribution.get("mean"),
+        tier2_share_positive=tier2_distribution.get("share_positive"),
+        tier2_maximum=tier2_distribution.get("maximum"),
+        tier1_files=len(tier1_rows),
+        tier1_median=tier1_distribution.get("median"),
+        tier1_q1=tier1_distribution.get("q1"),
+        tier1_q3=tier1_distribution.get("q3"),
+        tier1_mean=tier1_distribution.get("mean"),
+        tier1_share_positive=tier1_distribution.get("share_positive"),
+        tier1_maximum=tier1_distribution.get("maximum"),
         bytes_before=total_before,
         bytes_after=total_after,
         bytes_pct=100.0 * (total_before - total_after) / total_before if total_before else None,
         by_corpus=per_corpus,
         refusals=refusals,
+        exact_failure_count=len(failed),
         exact_failures=[
             dict(path=os.path.basename(r["path"]), why=r.get("why"), corpus=r["corpus"])
             for r in failed
@@ -233,6 +359,7 @@ def fits_aggregates(rows):
 
 
 def pdf_aggregates(rows):
+    """Full PDF result/status/refusal table, recomputed from all JSONL rows."""
     by_status = {}
     for row in rows:
         by_status[row["status"]] = by_status.get(row["status"], 0) + 1
@@ -249,24 +376,35 @@ def pdf_aggregates(rows):
         subset = [r["faithful_pct"] for r in accepted if r["corpus"] == corpus]
         if subset:
             by_corpus[corpus] = percentile(sorted(subset), 0.5)
+    files = len(rows)
+    already_optimal = by_status.get("already_optimal", 0)
+    refused = by_status.get("refused", 0)
+    accepted_count = len(accepted)
     return dict(
-        files=len(rows),
+        files=files,
         by_status=by_status,
-        accepted=len(accepted),
+        accepted=accepted_count,
+        already_optimal=already_optimal,
+        refused=refused,
+        accepted_pct=100.0 * accepted_count / files if files else None,
+        already_optimal_pct=100.0 * already_optimal / files if files else None,
+        refused_pct=100.0 * refused / files if files else None,
         median=faithful.get("median"),
         q1=faithful.get("q1"),
         q3=faithful.get("q3"),
         mean=faithful.get("mean"),
         share_positive=faithful.get("share_positive"),
         share_positive_count=sum(1 for r in accepted if r["faithful_pct"] > 0),
-        share_positive_denominator=len(accepted),
+        share_positive_denominator=accepted_count,
         share_zero_count=sum(1 for r in accepted if r["faithful_pct"] == 0),
         share_negative_count=sum(1 for r in accepted if r["faithful_pct"] < 0),
         maximum=faithful.get("maximum"),
         qpdf_median=qpdf.get("median"),
         qpdf_q1=qpdf.get("q1"),
         qpdf_q3=qpdf.get("q3"),
+        qpdf_mean=qpdf.get("mean"),
         qpdf_share_positive=qpdf.get("share_positive"),
+        qpdf_maximum=qpdf.get("maximum"),
         repack_median=repack.get("median"),
         repack_mean=repack.get("mean"),
         qpdf_check_passed=sum(1 for r in accepted if r.get("check_ok")),
@@ -276,48 +414,240 @@ def pdf_aggregates(rows):
     )
 
 
-def compare(measured, published, soft=None):
-    """Metric-by-metric comparison against the published table."""
-    soft = soft or {}
+def _rounded_decimal(value, places):
+    quantum = Decimal(1).scaleb(-places)
+    return Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def _display_rounded(value, places):
+    rounded = _rounded_decimal(value, places)
+    return int(rounded) if places == 0 else float(rounded)
+
+
+def _compare_count_mapping(actual, expected, prefix):
+    rows = []
+    problems = []
+    for key in sorted(set(actual) | set(expected)):
+        got = actual.get(key, 0)
+        want = expected.get(key)
+        if key not in expected:
+            verdict = "DIFFERENT"
+            problems.append("unexpected %s %s: measured %s" % (prefix, key, got))
+        elif got != want:
+            verdict = "DIFFERENT"
+            problems.append("%s %s: published %s, measured %s" % (prefix, key, want, got))
+        else:
+            verdict = "reproduced"
+        rows.append(dict(metric="%s[%s]" % (prefix, key), published=want,
+                         measured=got, verdict=verdict))
+    return rows, problems
+
+
+def compare(measured, published, precision=None):
+    """Compare every numeric result-table cell at its printed precision."""
+    precision = precision or {}
+    group_keys = {"where", "by_corpus", "by_status", "refusals", "exact_failure_set"}
     problems = []
     rows = []
     for key, want in published.items():
-        if key in ("where", "by_corpus", "exact_failures"):
+        if key in group_keys:
             continue
         got = measured.get(key)
         if got is None:
             problems.append("%s is missing from the run" % key)
             rows.append(dict(metric=key, published=want, measured=None, verdict="missing"))
             continue
-        if key in soft:
-            verdict = "recorded"
+        if key in precision:
+            places = precision[key]
+            try:
+                measured_display = _display_rounded(got, places)
+                published_display = _display_rounded(want, places)
+            except (InvalidOperation, ValueError, TypeError):
+                measured_display = got
+                published_display = want
+                verdict = "invalid"
+                problems.append("%s could not be compared at %d decimal places" % (key, places))
+            else:
+                verdict = "reproduced" if measured_display == published_display else "DIFFERENT"
+                if verdict == "DIFFERENT":
+                    problems.append(
+                        "%s: published %s, measured %s (rounded to %d decimal places)"
+                        % (key, want, got, places)
+                    )
         elif isinstance(want, float):
-            verdict = "reproduced" if abs(got - want) <= PERCENT_TOLERANCE else "DIFFERENT"
-        elif key.endswith("share_positive"):
-            # The audit prints a share of a count as whole per cent; one point is
-            # that rounding and not a different measurement.
-            verdict = "reproduced" if abs(got - want) <= 1 else "DIFFERENT"
+            measured_display = got
+            published_display = want
+            verdict = "invalid"
+            problems.append("%s is a rounded float without a declared printed precision" % key)
         else:
+            measured_display = got
+            published_display = want
             verdict = "reproduced" if got == want else "DIFFERENT"
-        show = round(got, 4) if isinstance(got, float) else got
-        rows.append(dict(metric=key, published=want, measured=show, verdict=verdict,
-                         note=soft.get(key)))
-        if verdict == "DIFFERENT":
-            problems.append("%s: published %s, measured %s" % (key, want, got))
-    for corpus, want in (published.get("by_corpus") or {}).items():
-        got = (measured.get("by_corpus") or {}).get(corpus)
-        if got is None:
-            problems.append("median for %s is missing from the run" % corpus)
-            rows.append(dict(metric="median[%s]" % corpus, published=want, measured=None, verdict="missing"))
+            if verdict == "DIFFERENT":
+                problems.append("%s: published %s, measured %s" % (key, want, got))
+        rows.append(dict(metric=key, published=published_display,
+                         measured=measured_display, measured_exact=got,
+                         precision=precision.get(key), verdict=verdict))
+
+    published_corpora = published.get("by_corpus") or {}
+    measured_corpora = measured.get("by_corpus") or {}
+    corpus_keys = (
+        sorted(set(published_corpora) | set(measured_corpora))
+        if "by_corpus" in published else []
+    )
+    for key in corpus_keys:
+        want = published_corpora.get(key)
+        got = measured_corpora.get(key)
+        if key not in published_corpora:
+            problems.append("unexpected corpus median %s: measured %s" % (key, got))
+            rows.append(dict(metric="median[%s]" % key, published=None,
+                             measured=got, verdict="DIFFERENT"))
             continue
-        ok = abs(got - want) <= PERCENT_TOLERANCE
-        rows.append(
-            dict(metric="median[%s]" % corpus, published=want, measured=round(got, 4),
-                 verdict="reproduced" if ok else "DIFFERENT")
+        if got is None:
+            problems.append("median for %s is missing from the run" % key)
+            rows.append(dict(metric="median[%s]" % key, published=want,
+                             measured=None, verdict="missing"))
+            continue
+        places = precision.get("by_corpus")
+        if places is None:
+            verdict = "invalid"
+            measured_display = got
+            problems.append("by_corpus medians have no declared printed precision")
+        else:
+            measured_display = _display_rounded(got, places)
+            published_display = _display_rounded(want, places)
+            verdict = "reproduced" if measured_display == published_display else "DIFFERENT"
+            if verdict == "DIFFERENT":
+                problems.append(
+                    "median for %s: published %s, measured %s (rounded to %d decimal places)"
+                    % (key, want, got, places)
+                )
+        rows.append(dict(metric="median[%s]" % key, published=want,
+                         measured=measured_display, measured_exact=got,
+                         precision=places, verdict=verdict))
+
+    for key in ("by_status", "refusals"):
+        mapping_rows, mapping_problems = _compare_count_mapping(
+            measured.get(key) or {}, published.get(key) or {}, key
         )
-        if not ok:
-            problems.append("median for %s: published %s, measured %s" % (corpus, want, got))
+        rows.extend(mapping_rows)
+        problems.extend(mapping_problems)
+
+    if "exact_failure_set" in published:
+        expected = sorted(tuple(item) for item in published["exact_failure_set"])
+        observed = sorted(
+            (os.path.basename(item.get("path", "")), item.get("why"))
+            for item in measured.get("exact_failures", [])
+        )
+        verdict = "reproduced" if observed == expected else "DIFFERENT"
+        rows.append(dict(metric="exact_failure_set", published=[list(x) for x in expected],
+                         measured=[list(x) for x in observed], verdict=verdict))
+        if verdict != "reproduced":
+            problems.append("exact failure identities differ: published %s, measured %s"
+                            % (expected, observed))
     return rows, problems
+
+
+def _unit_divisor(unit):
+    return {"B": 1, "KiB": 1024, "MiB": 1024 ** 2,
+            "kB": 1000, "MB": 1000 ** 2, "GB": 1000 ** 3}[unit]
+
+
+def compare_input_corpora(corpora, family):
+    """Compare full manifest file counts and selected bytes with the audit table."""
+    published = PUBLISHED_INPUT_CORPORA[family]
+    actual = {
+        row["name"]: row for row in corpora
+        if row.get("format") == ("fits" if family == "fits" else "pdf")
+    }
+    rows = []
+    problems = []
+
+    def add_row(metric, want, got, verdict, extra=None):
+        row = dict(metric=metric, published=want, measured=got, verdict=verdict)
+        if extra:
+            row.update(extra)
+        rows.append(row)
+        if verdict != "reproduced":
+            problems.append("%s: published %s, measured %s" % (metric, want, got))
+
+    expected_names = set(published["rows"])
+    for name in sorted(expected_names | set(actual)):
+        expected = published["rows"].get(name)
+        found = actual.get(name)
+        if expected is None:
+            for field in ("repo", "commit", "files", "bytes"):
+                add_row("%s.%s.%s" % (family, name, field), None,
+                        found.get(field) if found else None, "DIFFERENT")
+            continue
+        if found is None:
+            add_row("%s.%s.repo" % (family, name), expected["repo"], None, "missing")
+            add_row("%s.%s.commit" % (family, name), expected["commit_prefix"], None, "missing")
+            add_row("%s.%s.files" % (family, name), expected["files"], None, "missing")
+            add_row("%s.%s.bytes" % (family, name), expected["bytes"], None, "missing")
+            continue
+        repo_verdict = "reproduced" if found.get("repo") == expected["repo"] else "DIFFERENT"
+        add_row("%s.%s.repo" % (family, name), expected["repo"], found.get("repo"), repo_verdict)
+        commit = found.get("commit", "")
+        commit_prefix = expected["commit_prefix"]
+        commit_verdict = (
+            "reproduced" if len(commit) == 40 and commit.startswith(commit_prefix) else "DIFFERENT"
+        )
+        add_row("%s.%s.commit" % (family, name), commit_prefix, commit, commit_verdict,
+                extra=dict(published_is_abbreviated_prefix=True))
+        file_verdict = "reproduced" if found["files"] == expected["files"] else "DIFFERENT"
+        add_row("%s.%s.files" % (family, name), expected["files"], found["files"], file_verdict)
+        unit = expected["unit"]
+        scaled = found["bytes"] / _unit_divisor(unit)
+        places = expected["places"]
+        got_display = _display_rounded(scaled, places)
+        want_display = _display_rounded(expected["bytes"], places)
+        byte_verdict = "reproduced" if got_display == want_display else "DIFFERENT"
+        add_row(
+            "%s.%s.bytes[%s]" % (family, name, unit), want_display, got_display,
+            byte_verdict,
+            extra=dict(measured_exact_bytes=found["bytes"], selected_bytes=True,
+                       precision=places),
+        )
+
+    expected_total = published["total"]
+    total_files = sum(row["files"] for row in actual.values())
+    total_bytes = sum(row["bytes"] for row in actual.values())
+    files_verdict = "reproduced" if total_files == expected_total["files"] else "DIFFERENT"
+    add_row("%s.total.files" % family, expected_total["files"], total_files, files_verdict)
+    unit = expected_total["unit"]
+    scaled = total_bytes / _unit_divisor(unit)
+    places = expected_total["places"]
+    got_display = _display_rounded(scaled, places)
+    want_display = _display_rounded(expected_total["bytes"], places)
+    bytes_verdict = "reproduced" if got_display == want_display else "DIFFERENT"
+    add_row(
+        "%s.total.bytes[%s]" % (family, unit), want_display, got_display,
+        bytes_verdict,
+        extra=dict(measured_exact_bytes=total_bytes, selected_bytes=True,
+                   precision=places),
+    )
+    return rows, problems
+
+
+def compare_zopfli_side_table():
+    """Return explicit unavailable rows; historical sample membership is absent."""
+    rows = []
+    for metric in ("sample_files", "median", "q1", "q3", "share_positive"):
+        published = PUBLISHED_ZOPFLI[metric]
+        rows.append(dict(
+            metric="zopfli.%s" % metric,
+            published=published,
+            measured=None,
+            verdict="unavailable",
+            note=(
+                "the historical 150-file sample path list and per-file rows were not retained; "
+                "a new sample would be a new measurement, not a reproduction"
+            ),
+        ))
+    return rows, [
+        "zopfli side-table sample is unavailable: the original 150-file path list and per-file rows were not retained"
+    ]
 
 
 def environment():
@@ -384,6 +714,24 @@ def write_summary(path, payload):
         payload.get("manifest_digest", "?"),
     ))
     lines.append("")
+    for family in ("fits", "pdf"):
+        block = payload.get("input_corpus_comparison", {}).get(family)
+        if not block:
+            continue
+        lines.append("## Input corpus table — published in %s" % PUBLISHED_INPUT_CORPORA[family]["where"])
+        lines.append("")
+        lines.append("Selected-file sizes from the new manifest are compared in the units and precision printed in the audit; archive bytes are not substituted.")
+        lines.append("")
+        lines.append("| corpus metric | published | measured | verdict |")
+        lines.append("| --- | --- | --- | --- |")
+        for row in block["rows"]:
+            lines.append("| `%s` | %s | %s | %s |" % (
+                row["metric"], row["published"], row["measured"], row["verdict"]))
+        lines.append("")
+        if block["problems"]:
+            for problem in block["problems"]:
+                lines.append("* %s" % problem)
+            lines.append("")
     for name in ("fits", "pdf"):
         block = payload.get(name)
         if not block:
@@ -398,7 +746,7 @@ def write_summary(path, payload):
         lines.append("")
         for row in block["comparison"]:
             if row.get("note"):
-                lines.append("* `%s` is recorded rather than compared: %s." % (row["metric"], row["note"]))
+                lines.append("* `%s`: %s." % (row["metric"], row["note"]))
         if any(row.get("note") for row in block["comparison"]):
             lines.append("")
         if block["problems"]:
@@ -585,6 +933,10 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows, render_sam
     formulas = [
         "# Metric definitions and source rows", "",
         "Old published values are comparison targets, not assumed ground truth. The original audit bundles did not preserve per-file JSONL or a render-sample list, so historical source rows cannot be reconstructed from those rounded table entries alone.", "",
+        "## Published-table comparison", "",
+        "Counts and refusal/status maps compare exactly. Displayed percentages and byte totals are rounded half-up to the number of decimal places printed in the specific published cell; there is no global 0.051 tolerance. Whole-percent shares compare after rounding to an integer percentage. Corpus rows also compare the repository and displayed commit prefix. Byte rows compare selected uncompressed file bytes from the new manifest in the audit's displayed unit, not codeload archive sizes.", "",
+        "The FITS Tier 1 row is recomputed for exact-verified Tier 2 rows using each row's `tier1_pct`; its denominator is the number of those exact rows with a Tier 1 value. FITS `tier2_candidates` is the full writer-candidate count; `tier2_files` is the exact-verified subset used by the table. The two exact-failure identities and all refused counts remain explicit.", "",
+        "The PDF Zopfli side-table sample is marked unavailable: the historical 150 paths and per-file outputs were not retained. No new sample is substituted and the published row is not described as reproduced.", "",
         "## FITS median by corpus: astropy and reproject", "",
         "Per-file value: `pct = 100 * (bytes - new_size) / bytes`. Include only `status=tier2` rows with `exact=true`; the median denominator is the number of such rows in the corpus. For an even count, median is the arithmetic mean of the two middle sorted values. Quartiles use the instrument's nearest-rank indices `int(p*n)`.", "",
         "The earlier re-run used the upper middle element for even counts. That is a different definition, not a change in input data. The source rows in `fits-corpus-median-source.jsonl` include all Tier 2 rows from these two corpora, including failed-verification rows (marked `included_in_median=false`).", "",
@@ -699,15 +1051,23 @@ def main():
         manifest_digest=recorded["manifest_digest"],
         manifest_files=sum(c["files"] for c in recorded["corpora"]),
         corpora=[
-            dict(name=c["name"], repo=c["repo"], commit=c["commit"], archive=c["archive"],
-                 archive_sha256=c["archive_sha256"], files=c["files"], bytes=c["bytes"],
-                 excluded=len(c.get("excluded") or []))
+            dict(name=c["name"], format=c["format"], repo=c["repo"], commit=c["commit"],
+                 archive=c["archive"], archive_sha256=c["archive_sha256"],
+                 files=c["files"], bytes=c["bytes"], excluded=len(c.get("excluded") or []))
             for c in recorded["corpora"]
         ],
         environment=environment(),
         commands=[],
         problems=[],
     )
+
+    input_comparison = {}
+    for family in ("fits", "pdf"):
+        corpus_rows, corpus_problems = compare_input_corpora(payload["corpora"], family)
+        input_comparison[family] = dict(rows=corpus_rows, problems=corpus_problems)
+        payload["problems"].extend("%s input corpus: %s" % (family, problem)
+                                  for problem in corpus_problems)
+    payload["input_corpus_comparison"] = input_comparison
 
     source_rows = {"fits": [], "pdf": []}
     render_rows = []
@@ -751,7 +1111,13 @@ def main():
                     % (from_log, from_rows)
                 )
             aggregates.update(from_rows)
-        comparison, problems = compare(aggregates, PUBLISHED[name], SOFT.get(name))
+        comparison, problems = compare(
+            aggregates, PUBLISHED[name], precision=PUBLISHED_PRECISION[name]
+        )
+        if name == "pdf":
+            zopfli_rows, zopfli_problems = compare_zopfli_side_table()
+            comparison.extend(zopfli_rows)
+            problems.extend(zopfli_problems)
         payload[name] = dict(
             aggregates=aggregates,
             comparison=comparison,
@@ -772,19 +1138,6 @@ def main():
                     min(args.render_sample, aggregates.get("accepted", 0)))
                 payload["pdf"]["problems"].append(render_problem)
                 payload["problems"].append("pdf: " + render_problem)
-        if name == "fits":
-            expected = PUBLISHED["fits"]["exact_failures"]
-            found = len(aggregates["exact_failures"])
-            if found != expected:
-                note = (
-                    "the files that fail verification are %d, the publication implies %d"
-                    " (151 accepted out of 153 rewritten)"
-                    % (found, expected)
-                )
-                payload["problems"].append("fits: %s" % note)
-                payload["fits"]["comparison"].append(
-                    dict(metric="exact_failures", published=expected, measured=found, verdict="DIFFERENT")
-                )
 
     payload["elapsed_seconds"] = round(time.time() - started, 1)
     order_audit = write_metric_sources(
