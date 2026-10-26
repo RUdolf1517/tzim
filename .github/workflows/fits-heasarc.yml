@@ -117,7 +117,15 @@ jobs:
               [ -f "$candidate" ] || continue
               kind="$(file -b "$candidate" 2>/dev/null || true)"
               case "$kind" in
-                *ELF*) cp -f "$candidate" "$bindir/$tool"; placed="$candidate"; break ;;
+                *ELF*)
+                  # `make install` often puts the real binary in place already;
+                  # copying a file onto itself fails under `set -e`.
+                  if [ "$candidate" != "$bindir/$tool" ]; then
+                    cp -f "$candidate" "$bindir/$tool"
+                  fi
+                  placed="$candidate"
+                  break
+                  ;;
               esac
             done
             if [ -z "$placed" ]; then
