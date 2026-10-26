@@ -555,7 +555,7 @@ def build_fixtures(root):
     cases.append(
         dict(
             name="zero_width_column.fits",
-            expect="mixed",
+            expect="undecided",
             images=1,
             hdu_delta=0,
             verbatim=["BINTABLE"],
@@ -566,13 +566,14 @@ def build_fixtures(root):
                 "TFORM1='0A' [zero-width], TFORM2='8A', PCOUNT=0, GCOUNT=1; 16 data bytes)."
             ),
             contract_expectation=(
-                "§4.12 says each eligible IMAGE HDU is replaced when the candidate is "
-                "smaller, and every other HDU is copied byte for byte. That reading "
-                "requires IMAGE HDU 1 rewritten and BINTABLE HDU 2 copied verbatim; "
-                "the accepted-subset clause separately excludes zero-length IMAGE axes, "
-                "not a zero-width BINTABLE column."
+                "§4.12 has two interacting clauses: an eligible IMAGE HDU may be tiled "
+                "and every other HDU is copied verbatim; but the candidate is written "
+                "only if the whole file is strictly smaller. The fixture's no-change "
+                "result is consistent with no whole-file gain, but the harness has no "
+                "candidate-size measurement for the discarded candidate. It therefore "
+                "does not assert either a partial rewrite or a zero-width whole-file refusal."
             ),
-            why="§4.12: rewrite the eligible IMAGE HDU; copy the zero-width BINTABLE verbatim",
+            why="§4.12 interaction: per-HDU transformation versus strict whole-file size gain",
         )
     )
 
@@ -680,6 +681,24 @@ def map_candidate(before, candidate):
         mapping[index] = cursor
         cursor += 1
     return mapping, cursor
+
+
+def hdu_layout(hdus):
+    """Offsets that let the tool error be matched to the fixture's exact HDUs."""
+    rows = []
+    for index, hdu in enumerate(hdus):
+        data_padded = ((len(hdu.data) + RECORD - 1) // RECORD) * RECORD
+        header_bytes = len(hdu.raw) - data_padded
+        rows.append(dict(
+            index=index,
+            kind=hdu.kind(),
+            start=hdu.start,
+            header_bytes=header_bytes,
+            data_bytes=len(hdu.data),
+            padded_data_bytes=data_padded,
+            next_start=hdu.start + len(hdu.raw),
+        ))
+    return rows
 
 
 def literal_card_diff(original_hdu, reconstructed_hdu):
@@ -927,6 +946,11 @@ def check_fixture(binary, case, root, scratch, evidence):
         original=kept,
         problems=[],
     )
+    if case["name"] == "multi_hdu.fits":
+        result["original_hdus"] = hdu_layout(before)
+        original_verify_code, original_verify_output = fitsverify(kept, scratch)
+        result["original_fitsverify_exit"] = original_verify_code
+        evidence.write_text("fitsverify-original-multi_hdu.fits.txt", original_verify_output)
 
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
@@ -958,6 +982,10 @@ def check_fixture(binary, case, root, scratch, evidence):
         )
 
     if after == original:
+        if case["expect"] == "undecided":
+            result["observed_behavior"] = "unchanged; the discarded candidate size is not exposed"
+            result["candidate_hdus"] = hdu_layout(before)
+            return result
         # `tzim` reports the decision it made; "nothing was written" without that
         # reason is a riddle for whoever reads the log next.
         said = ""
@@ -972,6 +1000,8 @@ def check_fixture(binary, case, root, scratch, evidence):
         result["problems"].append("status is %r, expected 'optimized'" % status)
 
     candidate = parse(after)
+    if case["name"] == "multi_hdu.fits":
+        result["candidate_hdus"] = hdu_layout(candidate)
     original_images = [h for h in before if h.kind() in ("PRIMARY", "IMAGE") and h.axes()]
     candidate_images = [
         h for h in candidate if h.kind() in ("PRIMARY", "IMAGE") and h.axes()
@@ -1147,13 +1177,31 @@ def render_diagnostics(summary, evidence):
     lines.append("## multi_hdu.fits tool diagnosis")
     lines.append("")
     if multi:
-        lines.append("Fixture result: %s; fitsverify exit %s; funpack exit %s." % (
-            "FAIL" if multi.get("problems") else "ok",
+        lines.append("Original input fitsverify exit %s; tzim candidate fitsverify exit %s; funpack exit %s." % (
+            multi.get("original_fitsverify_exit", "not run"),
             multi.get("fitsverify_exit", "not run"),
             multi.get("funpack_exit", "not run"),
         ))
-        for name, caption in (("fitsverify-multi_hdu.fits.txt", "fitsverify -l full output"),
-                              ("funpack-multi_hdu.fits.txt", "funpack full output")):
+        for label in ("original", "candidate"):
+            layout = multi.get(label + "_hdus") or []
+            lines.append("")
+            lines.append("%s HDU layout (byte offsets):" % label.capitalize())
+            for row in layout:
+                lines.append(
+                    "- HDU %(index)s %(kind)s: start=%(start)s, header=%(header_bytes)s, "
+                    "data=%(data_bytes)s, padded-data=%(padded_data_bytes)s, next=%(next_start)s" % row
+                )
+        lines.append("")
+        lines.append(
+            "The reported `^A^B^C^D` bytes are the exact repeating payload written in the `HDRLET` "
+            "fixture. The baseline fitsverify output below distinguishes an input/tool limitation from "
+            "a problem introduced by the candidate; neither is guessed from the exit code."
+        )
+        for name, caption in (
+            ("fitsverify-original-multi_hdu.fits.txt", "fitsverify -l on original input"),
+            ("fitsverify-multi_hdu.fits.txt", "fitsverify -l on tzim candidate"),
+            ("funpack-multi_hdu.fits.txt", "funpack on tzim candidate"),
+        ):
             lines += ["", "### " + caption, "", "````text"]
             try:
                 lines.extend(evidence.read_text(name).rstrip().splitlines())
@@ -1183,9 +1231,12 @@ def render_diagnostics(summary, evidence):
                         zero.get("fitsverify_exit", "not run")))
         lines.append("")
         lines.append(
-            "The contract reading requires an eligible IMAGE rewrite and a verbatim BINTABLE copy; "
-            "the observed no-change is evidence against that reading, not authority to widen the "
-            "whole-file refusal rule. No writer behavior is changed pending owner agreement."
+            "The precise open point is how the eligible-IMAGE clause interacts with the strict "
+            "whole-file-smaller clause when the candidate is discarded: current `already_optimal` "
+            "does not expose the discarded candidate size. The prior harness expected `mixed` "
+            "unconditionally; that overstates the contract. No writer behavior is changed, no "
+            "whole-file refusal is inferred from the zero-width column, and the gate records this "
+            "case as undecided pending owner agreement."
         )
     else:
         lines.append("The fixture did not run.")
@@ -1676,7 +1727,7 @@ def render_summary(summary):
                         zero.get("bytes", {}).get("after", "?"),
                         zero.get("fitsverify_exit", "not run")))
         lines.append("")
-        lines.append("No writer behavior is changed pending agreement; no whole-file refusal is inferred.")
+        lines.append("The `mixed` expectation is not asserted: `already_optimal` does not expose the discarded candidate size. No writer behavior is changed and no whole-file refusal is inferred.")
     lines += ["", "## controls", ""]
     for c in summary["controls"]:
         lines.append("- `%s` (%s; expected: %s): %s" % (
