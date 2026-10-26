@@ -44,6 +44,10 @@ on:
 
 permissions:
   contents: read
+  # `ci-report.sh` puts the failing log on the pull request. A red measurement run
+  # is only useful if the numbers that disagreed are readable without an artifact
+  # download that may not be reachable.
+  pull-requests: write
 
 env:
   # Largest single download is veraPDF's corpus at 140 967 512 bytes; the seven
@@ -113,7 +117,7 @@ jobs:
           python .github/scripts/measure-repro.py \
             --root "$MEASURE_ROOT" \
             --manifest "$MEASURE_ROOT/manifest.json" \
-            --out evidence/run 2>&1 | tee evidence/repro.txt
+            --out evidence/run 2>&1 | tee evidence/repro.txt | tee "${RUNNER_TEMP}/measure-repro.log"
 
       - name: Seal the evidence
         if: always()
@@ -138,6 +142,18 @@ jobs:
               echo "The run did not produce a summary; see the step logs."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish failure log
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The comparison table is the answer to "why is this red", so it goes to
+          # the pull request as well as into the artifact.
+          tail -c 12000 "${RUNNER_TEMP}/measure-repro.log" > "${RUNNER_TEMP}/measure-repro-tail.log" || true
+          bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/measure-repro-tail.log" measure-repro
 
       - uses: actions/upload-artifact@v4
         if: always()
