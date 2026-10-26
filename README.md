@@ -127,7 +127,7 @@ FITS is the first format with **two** switches, and both are off. `--fits-tile` 
 it the handler only says why it did nothing, because turning an `IMAGE` HDU into a `BINTABLE` is visible to
 every reader that indexes `NAXIS1`. The `fits` cargo feature is the code: it is not in `default`, so a build
 that wants FITS is `cargo build --release --features fits`, and [size-budget §3](docs/size-budget.md#3-feature-matrix)
-carries what it costs. `--list-formats` names FITS only when the feature is compiled in.
+measures what it costs: **+36 KiB**, which is enough to break the byte-exact gate on the default build. `--list-formats` names FITS only when the feature is compiled in.
 
 ## Why tzim
 

@@ -1006,8 +1006,9 @@ median < 1 % refuses it with the numbers on record.
 
 **Status: implemented in v0.14, behind two doors and both are shut by default.** The handler is compiled
 only with the `fits` cargo feature — it is **not** in `default`, because the release binary's size gate is
-its own measurement to the byte and [size-budget §3](size-budget.md#3-feature-matrix) carries what
-this one costs — and it does nothing unless the run asks for it with `--fits-tile`. The second door is the
+its own measurement to the byte and this handler measures **+36 864 bytes** (36 KiB), which is
+[size-budget §3](size-budget.md#3-feature-matrix)'s measurement rather than an estimate — and it does nothing
+unless the run asks for it with `--fits-tile`. The second door is the
 one the measurement required: rewriting an uncompressed image HDU as a tile-compressed binary table turns an
 `IMAGE` HDU into a `BINTABLE`, and a pipeline that reads `NAXIS1` from an image does not expect that. The
 transformation is the same class of change as TIFF `Compression 1 → 8` in [§4.8](#48-tiff-classic-baseline-strips--v07),

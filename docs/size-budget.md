@@ -61,12 +61,20 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 | `+jpeg` | `png,gzip,zip,ico,jpeg` | 865 056 B (844 KiB) | −73 728 |
 | **`default`** | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | **979 808 B (956 KiB)** | **−69 632** |
 | `+jpeg-v1` | `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 B (960 KiB) | −55 168 |
-| `all but fuzz-api` | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 098 592 B (1 072 KiB) | +49 152 |
+| `all but fuzz-api` | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 102 688 B (1 076 KiB) | +53 248 |
+| `default +fits` | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits` | 1 016 672 B (992 KiB) | −32 768 |
+| `all +fits` | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli,fits` | 1 139 552 B (1 112 KiB) | +90 112 |
 
 Every row fell by 68–73 KiB without a handler changing: the progress line left the tree (§3), and the largest
 file in it — the one dependency that was not behind a feature — went with it. `jpeg-v1` is measured by
-subtraction: 983 840 − 865 056 = **118 784 bytes** on the lean row, and 1 098 592 − 979 808 = the same on the
-full one.
+subtraction: 983 840 − 865 056 = **118 784 bytes** on the lean row, and 1 102 688 − 979 808 = the same on the
+full one. `fits` is measured the same way and comes out at **36 864 bytes** (36 KiB) on both:
+1 016 672 − 979 808, and 1 139 552 − 1 102 688.
+
+Two rows moved for a reason that is not a handler: `png,gzip,zip` and `all but fuzz-api` measure 4 096 bytes
+above the figures they carried, because `flate2` 1.1.10 (`miniz_oxide` 0.9 alongside 0.8) is a version further
+along than the run that wrote them. `default` itself did not move — 979 808, exactly the gate — which is the
+number that decides whether a new feature may join it.
 
 **The one attempt to make `jpeg-v1` cheaper is measured and on record.** Building that dependency at
 `opt-level = "s"` — the profile `indicatif` and `console` used before they left — moved the lean row
@@ -148,6 +156,7 @@ jpeg    = []
 jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]   # the independent JPEG verifier, off by default
 tiff    = ["dep:flate2"]
 zlib    = ["dep:flate2"]
+fits    = ["dep:flate2", "dep:crc32fast"]   # tile compression; off by default, see guarantees §4.12
 zopfli  = ["dep:zopfli"]
 fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```
@@ -165,22 +174,31 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 | --- | --- | --- |
 | `png` | 750 368 | 732 |
 | `png,gzip` | 762 656 | 744 |
-| `png,gzip,zip` | 799 520 | 780 |
+| `png,gzip,zip` | 803 616 | 784 |
 | `png,gzip,zip,ico` | 811 808 | 792 |
 | `png,gzip,zip,ico,jpeg` | 865 056 | 844 |
 | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` (default) | 979 808 | 956 |
 | `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 | 960 |
-| `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 098 592 | 1 072 |
+| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits` | 1 016 672 | 992 |
+| `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 102 688 | 1 076 |
+| `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli,fits` | 1 139 552 | 1 112 |
 
-Each feature's cost is visible by subtracting the row above it: `gzip` +12 KiB, `zip` +36 KiB, `ico` +12 KiB,
+Each feature's cost is visible by subtracting the row above it: `gzip` +12 KiB, `zip` +40 KiB, `ico` +8 KiB,
 the JPEG codec +52 KiB, and the jump from `+jpeg` to the default row is TIFF, zlib and Zopfli together
 +112 KiB — of which Zopfli is +84 KiB and appears nowhere else, which is why it is the one feature worth
-turning off for a container or an installer. `jpeg-v1` is +116 KiB, and it is the reason the feature ships
-off.
+turning off for a container or an installer. `jpeg-v1` is +116 KiB and `fits` is **+36 KiB**; both ship off,
+`jpeg-v1` because it would break the condition #39 put on it and `fits` because it would break the gate on the
+`default` row.
 
-The rows above `default` are the narrowing path a build takes when it wants a smaller binary; the two `jpeg-v1`
-rows are the widening path, taken only by `--all-features` in CI and by anyone who wants the second opinion
-inside the binary.
+`fits` is the cheapest handler since zlib: it adds no crate ([dependencies
+§2.11](dependencies.md#211-fits-no-cfitsio-and-why-that-is-not-a-gap)), and 36 KiB is what a parser, a table
+writer and a verifier cost when the codec is already in the tree. The guess in issue #70 was 60–100 KiB; the
+measurement is 36 864 bytes, and the guess is recorded here rather than quietly replaced.
+
+The rows above `default` are the narrowing path a build takes when it wants a smaller binary; the rows below it
+are the widening path — `jpeg-v1`, `fits`, and both together — taken only by `--all-features` in CI and by
+anyone who wants the second opinion on a JPEG, or a second implementation of the FITS transform, inside the
+binary.
 
 The same deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile change made
 visible inside each handler, because the codecs are already compiled for speed.
@@ -189,9 +207,11 @@ The deltas are what a user saves by narrowing the build, not estimates: `png,gzi
 optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, `+tiff` adds the one
 format that is on by default, and the last row is the published binary.
 
-`jpeg` is the only feature that is *also* off at runtime by default: its handler requires an explicit
+`jpeg` and `fits` are the two features that are *also* off at runtime: `jpeg`'s handler requires an explicit
 `--formats jpeg`, because the expected gain is small and the verification is the weakest in the project
-([guarantees §2.6](guarantees.md#26-verification-independence)).
+([guarantees §2.6](guarantees.md#26-verification-independence)), and `fits`'s requires `--fits-tile`, because it
+turns an `IMAGE` HDU into a `BINTABLE`
+([guarantees §4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in)).
 
 Build examples:
 
