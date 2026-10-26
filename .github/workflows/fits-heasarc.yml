@@ -86,6 +86,10 @@ jobs:
           # the case where the artifact cannot be inspected.
           exec > >(tee -a "${RUNNER_TEMP}/fits-heasarc.log") 2>&1
           set -x
+          # `set -e` alone leaves a bare "exit code 1" behind; the trap names the
+          # line and the command, and an `::error::` becomes a check annotation,
+          # which is readable even when neither the log nor the artifact is.
+          trap 'echo "::error::build step failed at line ${LINENO}: ${BASH_COMMAND}"' ERR
           cd "${RUNNER_TEMP}"
           tar xzf cfitsio.tar.gz
           src="$(find . -maxdepth 1 -type d -name 'cfitsio-*' | head -1)"
