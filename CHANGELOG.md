@@ -54,6 +54,40 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   time, so those 102 KiB would be carried by every user for a format most of them never enable — and paying
   for it would mean moving the `size` gate off the zero-tolerance number it was just tightened to.
 
+### Changed
+
+- **PDF is refused after measurement** (#57). [pdf-audit §9](docs/pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)
+  ran against 2 208 files from `mozilla/pdf.js`, `qpdf` and the veraPDF corpus, with the thresholds fixed before
+  the run. **1 009 files (45.7 %)** fall inside the `FlateDecode`-only slice, far more than the rule required,
+  and the typical accepted file saves **0.08 %** of its bytes when every permitted stream is re-deflated at level
+  9 — 0.15 % with `zopfli`, 0.59 % with `qpdf`'s own `--recompress-flate`, which also rebuilds object streams
+  and so measures more than the contract allows. `qpdf --check` passed on all 1 009 candidates and 173 rendered
+  pages from 140 files were pixel-identical, so nothing was refused for unsoundness: it was refused for being a
+  rounding error. What repacking would buy is **20.1 %**, which is the price of the invariant stated in bytes.
+  [guarantees §4.11](docs/guarantees.md#411-pdf--refused-after-measurement) keeps the contract and names it
+  refused, as FLAC's did.
+- **FITS is admitted by measurement** (#59). [fits-audit §8](docs/fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
+  measured 178 files from `astropy`, `cfitsio`, `drizzlepac` and `reproject`. Rewriting an uncompressed image HDU
+  as a tile-compressed binary table saves a median **21.9 %** of the file (Q1 17.4 %, Q3 27.3 %) on **84.8 %** of
+  the corpus, against a bar of 8 % and 15 %, with every array compared bit for bit after the round trip;
+  recompressing tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %**, because the ones in the corpus are
+  already at roughly level 6. The first tier is admissible as an opt-in `--fits-tile`; the second does not ship.
+  No handler exists — [guarantees §4.12](docs/guarantees.md#412-fits--admitted-by-measurement-not-implemented)
+  now says "admitted, not implemented" rather than "not yet justified".
+- **A correction the FITS audit earned:** the tile payload of `GZIP_1`/`GZIP_2` is a **gzip** member (RFC 1952,
+  CRC-32 and `ISIZE`), not an RFC 1950 zlib stream as [fits-audit §0](docs/fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source)
+  had assumed, and the `GZIP_2` permutation is the decreasing order of significance the convention states. Both
+  were marked "re-read before coding"; re-reading them is what produced the correction.
+- **The FITS run did not satisfy every step of #59, and says which.** `fitsverify` could not be installed, so no
+  candidate was checked by a program written by someone else — the round trip was compared with `astropy` and
+  every array bit for bit, which is stronger on content and weaker on independence, and
+  [fits-audit §4](docs/fits-audit.md#4-what-a-rewrite-may-change-tier-by-tier) gates Tier 2 on exactly that missing check. The
+  corpus is pinned by commit rather than by archive SHA-256, which pins the bytes more tightly than a hash of a
+  re-tarball but is not what the issue asked for. And the pre-registered clause "a single round-trip mismatch
+  ends the discussion" fired twice: both failures belong to the reference writer rather than to the transform,
+  and [fits-audit §8.2](docs/fits-audit.md#82-the-result) records that this distinction was made after the fact
+  rather than before it.
+
 ### Errata for 0.12.1
 
 The release notes said the binary was the same size and the five release **tarballs** each grew by 514–634

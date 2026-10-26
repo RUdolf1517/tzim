@@ -116,8 +116,8 @@ Full flag reference: [docs/cli.md](docs/cli.md).
 | TIFF (classic, strips) | v0.7 | Recompress strips; every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
 | zlib (`.zlib`, `.zz`) | v0.9 | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | G3 |
 | FLAC | — | **Refused after measurement**: a stronger encoder buys 0.4 % on music for ~150–300 KiB of binary ([audit](docs/flac-audit.md)) | — |
-| FITS | — | **Under measurement, not supported**: tiles of a compressed image HDU are zlib streams (small gain), and an uncompressed image HDU could be rewritten as a tile-compressed table (large gain, changes the HDU type) ([contract](docs/guarantees.md#412-fits--contract-written-not-implemented) · [audit](docs/fits-audit.md)) | — |
-| PDF | — | **Refused, under measurement**: only the `FlateDecode` payloads could be touched without repacking the document, and no comparison proves a rendering ([contract](docs/guarantees.md#411-pdf--contract-written-not-implemented) · [audit](docs/pdf-audit.md)) | — |
+| FITS | — | **Admitted by measurement, not implemented**: an uncompressed image HDU rewritten as a tile-compressed table saves a median 21.9 % on 84.8 % of the corpus; recompressing existing `GZIP_1`/`GZIP_2` tiles saves 0.00 %, and the change turns `IMAGE` into `BINTABLE`, so it can only be opt-in ([contract](docs/guarantees.md#412-fits--admitted-by-measurement-not-implemented) · [audit](docs/fits-audit.md)) | — |
+| PDF | — | **Refused after measurement**: the permitted slice covers 45.7 % of the corpus and saves a median 0.08 %, while the repacking that would save 20.1 % is exactly what the contract forbids ([contract](docs/guarantees.md#411-pdf--refused-after-measurement) · [audit](docs/pdf-audit.md)) | — |
 | WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **Not planned** ([why](docs/formats.md#5-refused-formats)) | — |
 
 A format is listed as supported only when its contract and its tests exist. JPEG is off by default and enabled

@@ -1,10 +1,10 @@
 # PDF: the audit the contract has to pass
 
-Related: [guarantees §4.11](guarantees.md#411-pdf--contract-written-not-implemented) · [formats](formats.md) ·
+Related: [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [roadmap](roadmap.md)
 
 This is stage 1 for PDF — the audit a contract is allowed to follow, the same rule the FLAC work followed
-([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--contract-written-not-implemented))
+([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--refused-after-measurement))
 says what an implementation would have to preserve; this document says what such an implementation could
 possibly win and what it would cost.
 
@@ -111,7 +111,7 @@ worth more than anything the binary can do on its own — the same argument as i
 ## 6. Refusal list
 
 Every row below is a refusal with a reason, not a best-effort rewrite. This list is the spine of
-[§4.11](guarantees.md#411-pdf--contract-written-not-implemented); if a construct is not listed as accepted, it is
+[§4.11](guarantees.md#411-pdf--refused-after-measurement); if a construct is not listed as accepted, it is
 refused.
 
 | Construct | Why refuse |
@@ -206,10 +206,110 @@ archive recorded, never the files:
 The rule is written here so that a later reader can check whether the decision followed it. A measurement that
 is not pre-committed to a threshold is a search for an excuse.
 
-**Results: not measured.** This document was written in an environment with no `qpdf`, no PDF corpus and no
-access to `crates.io`; nothing in §3 or §8 is a measurement, and no number in those sections may be quoted as
-one. Filling the table above is the whole of the remaining work, and it does not require writing a line of the
-handler.
+### 9.1 What was run
+
+`qpdf` 11 was not installable here; **libqpdf 12.4.2** came through `pikepdf` and `mutool draw`'s engine was
+**MuPDF 1.28.5** through `PyMuPDF` — the same libraries, a major version later, driven in-process instead of
+from a shell. The two jobs of the table above are exactly the two jobs below: `--recompress-flate
+--compression-level=9` with `--object-streams=preserve` for the permitted transform, and with
+`--object-streams=generate` for the forbidden repack.
+
+**Corpus**, pinned by repository and commit (a checkout pins the exact bytes; an archive hash does not survive a
+re-tarball):
+
+| Set | Repository | Commit | Files | Bytes |
+| --- | --- | --- | --- | --- |
+| `test/pdfs` | `mozilla/pdf.js` | `606bd6a4e138` | 1 009 | 124.7 MB |
+| `qpdf/qtest` inputs | `qpdf/qpdf` | `4eba95899886` | 630 | 38.2 MB |
+| PDF/A-1b corpus | `veraPDF/veraPDF-corpus` | `bb75f4f0073d` | 569 | 8.9 MB |
+| **total** | | | **2 208** | **171.9 MB** |
+
+The fourth set the rule asks for — 20 to 50 documents from real toolchains — could not be assembled as a separate
+sample, because a runner has no Word and no LaTeX. It is not missing from the numbers, only from the provenance:
+the three upstream sets contain files from those toolchains, and their `/Producer` strings say so. Of the 1 009
+accepted files, 224 carry a producer; the medians by producer are `cairo 1.18.0` 0.74 %, `PDFium` 0.72 %,
+`iText` 0.24 %, `Adobe Acrobat Pro` 0.07 %, `Microsoft Word` 0.01 %, `Scribus` 0.01 %,
+`TCPDF` 0.01 %. The other 788 carry no producer at all, which is itself a fact about hand-built test
+corpora. **This is the run's weakness and is not papered over:** a corpus that is half hand-built edge cases is
+not a person's disk, and the one row §3 expected to be heavy — scans — is represented here mostly as
+`DCTDecode` streams that the transform never touches.
+
+### 9.2 The result
+
+| Metric | Value |
+| --- | --- |
+| files | 2 208 |
+| accepted into the §4.11 slice | **1 009 (45.7 %)** |
+| `already_optimal` — parses, nothing inside the slice to rewrite | 723 (32.7 %) |
+| refused | 476 (21.6 %) |
+
+**Refusals by reason**, which the rule calls half the answer:
+
+| Reason | Files |
+| --- | --- |
+| incremental update (more than one `%%EOF`, or `/Prev`) | 332 |
+| damaged — `qpdf --check` reports an error or a warning | 40 |
+| unreadable even with recovery disabled | 40 |
+| encrypted | 21 |
+| filter chain (more than one filter, or not `FlateDecode`) | 15 |
+| no `%PDF-` header in the first 1 024 bytes | 15 |
+| `FlateDecode` payload is not a well-formed RFC 1950 stream | 4 |
+| signed (`/ByteRange`) | 3 |
+| truncated zlib stream | 2 |
+| `FlateDecode` with a payload under six bytes | 2 |
+| `/Filter` present but not DEFLATE | 2 |
+
+**Bytes saved, per file, as a percentage of the file** — the distribution the rule asks for:
+
+| Encoder | Median | Q1 | Q3 | Mean | Share > 0 | Max |
+| --- | --- | --- | --- | --- | --- | --- |
+| `flate2` at level 9 — **the transform §4.11 specifies**, and §5's chosen encoder | **0.08 %** | 0.00 % | 0.09 % | 0.39 % | 68 % | 29.7 % |
+| `zopfli`, on a 150-file sample (the project already ships it as `--zopfli`) | **0.15 %** | 0.14 % | 2.81 % | — | 91 % | — |
+| `qpdf --recompress-flate --object-streams=preserve` — the instrument of this table | 0.59 % | −0.07 % | 1.94 % | 1.68 % | 60 % | 96.4 % |
+
+The three rows disagree in the direction that matters, and the reasons are worth stating rather than averaging:
+
+- **`qpdf`'s number is the highest because it does more than the contract allows.** With `--object-streams=
+  preserve` it still rebuilds `ObjStm` containers, which §6 refuses to touch, so its 0.59 % includes repacking
+  that a conforming handler would not do. The measured payload sets differ for 91 of the 1 009 files for exactly
+  this reason.
+- **`zopfli` is not the pre-registered encoder** (§5 names `flate2`), so its number is recorded as a fact, not
+  as the basis of the decision. It buys a few per cent per *stream* — a median of 5.6 % on a 60-stream sample —
+  but almost nothing per *file*, because most accepted files are mostly not Flate payloads. It is also ~18 KB/s
+  on this corpus, which is a minute for a one-megabyte document.
+
+**What the forbidden repack would have added:** median **20.1 %**, mean 17.0 % of the file. That is the price of
+the invariant in bytes: §4.11's refusal to repack costs about a fifth of every PDF that enters the slice, and it
+is the single largest number in this audit.
+
+**Soundness and rendering.** `qpdf --check` passed on **1 009 of 1 009** candidates. A page-image comparison was
+run with MuPDF at 100 dpi on a random sample of **140 files, 173 pages**: **zero differences**, pixel for pixel.
+No `--check` failure and no render difference, so the rule's "a single render difference ends the discussion"
+clause was not triggered.
+
+### 9.3 The decision
+
+| Rule | Threshold | Measured | Verdict |
+| --- | --- | --- | --- |
+| admit | median ≥ 3 % **and** ≥ 10 % of the corpus accepted | 0.08 %, 45.7 % | gain fails by a factor of 37 |
+| refuse | median < 1 % | **0.08 %** — and 0.15 % with the strongest encoder, 0.59 % with the loosest instrument | **refuse** |
+
+**PDF is refused after measurement.** Not because the slice is small — 45.7 % of the corpus is in it, more than
+the rule required — but because what it wins is a rounding error. The transform is arithmetically what §3
+guessed: files whose streams are already at level 6–9 have nothing left, and the measured median says the
+typical accepted document loses **eighty bytes per hundred kilobytes**. A handler would cost 40–70 KiB of binary
+and 1 500–2 500 lines to save that, and would still have to refuse a third of the corpus as
+`already_optimal` and a fifth as out of scope.
+
+The one number that made this worth checking is the last one: **20.1 %** is what repacking buys, and repacking is
+forbidden because flattening revisions, regenerating object streams and renumbering objects is not a recompress —
+it is a rewrite with a different risk class. The audit's job was to find out whether that 20 % could be reached
+without paying that price. It cannot.
+
+The refusal is recorded in [formats §5](formats.md#5-refused-formats) and
+[guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), which keeps the clause-by-clause
+contract: it is now a written answer to "what would it take", and the reason to keep it is the same
+reason FLAC's audit was kept.
 
 ## 10. What happens to this work
 

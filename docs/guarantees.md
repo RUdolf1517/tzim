@@ -904,13 +904,21 @@ the same reasoning.
 
 ---
 
-### 4.11. PDF — contract written, not implemented
+### 4.11. PDF — refused after measurement
 
-**Status: not implemented, and not yet justified.** No PDF code exists, `--list-formats` does not name the
-format, and `docs/formats.md` §5 records PDF as refused. This contract is written because it is the only way to
-make the question decidable: [pdf-audit](pdf-audit.md) pre-registers the measurement that would admit or refuse
-the format, and these are the clauses an implementation would have to satisfy if it did. Nothing here is a claim
-of support.
+**Status: refused, contract kept.** It was measured before it was decided, and the measurement is in
+[pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance): of 2 208
+files, **1 009 (45.7 %)** fall inside the slice below — far more than the pre-registered rule required — and the
+typical one saves **0.08 %** of its bytes when every permitted stream is re-deflated at level 9, 0.15 % with
+`zopfli`, 0.59 % with the loosest instrument. The rule said *median < 1 % → refused* before the number existed,
+and the number is a rounding error. What repacking would buy is **20.1 %**, and repacking is precisely what the
+contract forbids: flattening revisions, regenerating object streams and renumbering objects is a rewrite with a
+different risk class, not a recompress.
+
+Nothing in this section is a claim that the binary supports PDF: no PDF code exists, `--list-formats` does not
+name the format, and `docs/formats.md` §5 records it as refused. The contract is kept for the reason FLAC's was
+kept — it is correct, it is free, and it turns "PDF is too dangerous" into a list of clauses a future attempt
+must satisfy. Those clauses are what follows.
 
 The shape of the opportunity is different from FLAC's and worth stating: a `FlateDecode` payload **is** an
 RFC 1950 stream, so the transformation is the one this document already specifies in
@@ -994,15 +1002,27 @@ median < 1 % refuses it with the numbers on record.
 
 ---
 
-### 4.12. FITS — contract written, not implemented
+### 4.12. FITS — admitted by measurement, not implemented
 
-**Status: not implemented, and not yet justified.** No FITS code exists and `--list-formats` does not name the
-format. FITS was never refused; it was absent, and it is now specified so that the question becomes measurable
-([fits-audit](fits-audit.md)). Nothing in this section is a claim of support.
+**Status: admitted, not implemented.** The measurement in [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
+cleared the bar that was fixed before it: rewriting an uncompressed image HDU as a tile-compressed binary table
+saves a median **21.9 %** of the file (Q1 17.4 %, Q3 27.3 %) on **84.8 %** of the corpus, against a threshold of
+8 % and 15 %, with every array compared bit for bit after the round trip. That tier is therefore admitted and
+ships **opt-in behind `--fits-tile`**, never in `default`, because a pipeline reading `NAXIS1` from an `IMAGE`
+HDU does not expect a `BINTABLE` in its place. The other tier — recompressing tiles that are already
+`GZIP_1`/`GZIP_2` — measured **0.00 %** and does not ship on by default.
 
-Two preconditions, from [fits-audit §0](fits-audit.md#0-what-is-a-fact-here-and-what-has-to-be-re-read-from-the-source),
-must be confirmed against the convention before any code is written, because both change the design rather than
-its details: that a `GZIP_1`/`GZIP_2` tile payload is an RFC 1950 stream, and the exact byte permutation the
+No FITS code exists and `--list-formats` does not name the format. "Admitted" here means one thing only: the
+next issue is worth opening, and the size it will be judged against is a number. It is also **not yet verified
+by a second implementation** — §4 of the audit gates Tier 2 on `fitsverify` and on `funpack` reproducing a
+header that diffs clean, and neither tool was available for the measurement. Nothing in this section is a claim
+of support, and nothing in it licenses a release before that check has run.
+
+Two preconditions, from [fits-audit §0](fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source),
+had to be confirmed against the convention before any code is written, because both change the design rather
+than its details. Both are confirmed, and the first one corrected this document: the tile payload is a **gzip**
+member (RFC 1952, CRC-32 and `ISIZE`), not an RFC 1950 stream, and the `GZIP_2` permutation is the decreasing
+order of significance the convention states. The earlier wording follows.
 `GZIP_2` shuffle applies.
 
 **Transformation.** Two tiers, admitting different amounts of change.

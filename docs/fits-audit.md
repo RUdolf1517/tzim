@@ -1,6 +1,6 @@
 # FITS: the audit the contract has to pass
 
-Related: [guarantees §4.12](guarantees.md#412-fits--contract-written-not-implemented) · [formats](formats.md) ·
+Related: [guarantees §4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [pdf-audit](pdf-audit.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FITS, in the order the FLAC and PDF work established: the audit first, the contract second,
@@ -8,12 +8,12 @@ the code only if the numbers justify it. FITS was not refused anywhere — it wa
 [formats](formats.md) §5, which is a gap this document closes one way or the other.
 
 **Status: not implemented, not measured.** No FITS code exists and `--list-formats` does not name the format.
-The contract in [§4.12](guarantees.md#412-fits--contract-written-not-implemented) says what an implementation
+The contract in [§4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) says what an implementation
 would have to preserve; §8 below fixes the decision rule **before** the numbers exist.
 
 Unlike the PDF audit, this one has a confidence problem that has to be stated up front rather than buried.
 
-## 0. What is a fact here and what has to be re-read from the source
+## 0. What is a fact here, and what had to be re-read from the source
 
 FITS is specified by the IAU FITS Working Group (*Definition of the FITS Standard*, version 4.0) and its
 registered conventions. This audit was written away from that text, so:
@@ -24,13 +24,45 @@ registered conventions. This audit was written away from that text, so:
 | `SIMPLE = T` is the first card of the primary HDU; `BITPIX` ∈ {8, 16, 32, 64, −32, −64}; data size is `\|BITPIX\|/8 × Π NAXISn` | high |
 | tile compression turns an image HDU into a `BINTABLE` whose columns hold the compressed tiles in the table's **heap**, with `ZIMAGE`, `ZSIMPLE`, `ZBITPIX`, `ZNAXIS`, `ZNAXISn`, `ZTILEn`, `ZCMPTYPE`, `ZNAME` keywords | high |
 | `ZCMPTYPE` values are `GZIP_1`, `GZIP_2`, `RICE_1`, `PLIO_1`, `HCOMPRESS_1` | high |
-| the payload of `GZIP_1`/`GZIP_2` is a **zlib** stream (RFC 1950: two header bytes, Adler-32 trailer) despite the name | **re-read before coding** — the whole cost estimate rests on it |
-| `GZIP_2` applies a byte shuffle before deflate so that the bytes of multi-byte samples are grouped by significance | high that it exists, **the exact permutation must be taken from the convention**, never reconstructed |
+| the payload of `GZIP_1`/`GZIP_2` is a **gzip** stream (RFC 1952: a ten-byte header beginning `1F 8B 08`, DEFLATE, then CRC-32 and `ISIZE` little-endian) — **not** zlib (RFC 1950) and not raw DEFLATE | **confirmed, and the earlier guess was wrong** — see below |
+| `GZIP_2` shuffles the pixel bytes into **decreasing order of significance**: every most-significant byte first, in pixel order, then the next byte of every pixel, and so on | **confirmed from the convention text**, and reproduced by a written tile — see below |
 | `CHECKSUM`/`DATASUM` are 16-character ASCII encodings of two 32-bit 1's-complement sums over the HDU | high |
 | `fpack` moves an original `CHECKSUM`/`DATASUM` into `ZHECKSUM`/`ZDATASUM` and the compressed HDU carries its own | **re-read before coding** |
 
-The two marked rows are the ones that would sink the project if guessed wrong, so the contract refuses to
-proceed until they are confirmed. Nothing in this document is more useful than an honest "check this".
+The two marked rows were the ones that would sink the project if guessed wrong, so the contract refused to
+proceed until they were confirmed. They have been, and the first one was **wrong in this document**.
+
+**1. The framing is gzip, not zlib.** This audit assumed RFC 1950 because `flate2` would then give the
+verification a checksum anchor for free and the transform would be [guarantees §4.10](guarantees.md#410-zlib-rfc-1950--v09)
+inside a container. Three sources agree on what it actually is:
+
+- the convention, §6.2: *"If ZCMPTYPE = 'GZIP 1' then the gzip algorithm is used … Gzip is the compression
+  algorithm used in the free GNU software utility of the same name"*;
+- CFITSIO `zcompress.c`, the function every tile passes through: `deflateInit2(&c_stream, Z_BEST_SPEED,
+  Z_DEFLATED, (15+16), 8, Z_DEFAULT_STRATEGY)`. `wbits = 31` is the gzip wrapper; the source says so in a
+  comment — *"The argument (15+16) tells the compressor that we are to use the gzip algorythm"*;
+- a tile written by the reference implementation through `astropy`, whose first bytes are `1f 8b 08 00` and
+  whose last eight verify as CRC-32 over the inflated data and `ISIZE` equal to its length.
+
+The correction is not bad news, but it is not the news the estimate assumed either. The anchor is still there:
+a gzip member carries **CRC-32** over the uncompressed tile and its length, so a rewritten tile can be checked
+by an independent implementation that shares no code with ours — but the check is RFC 1952, not RFC 1950, and
+§4.10's text (Adler-32, `CM`/`CINFO`/`FDICT` bit field) does not describe these bytes. The contract has to cite
+the gzip member, and this audit's §3 arithmetic is unaffected: the transform is still inflate-and-deflate, and
+still needs no new dependency.
+
+**2. The permutation, from the text.** Convention §6.2: *"the bytes in the array of image pixel values are
+shuffled into decreasing order of significance before being compressed … the most significant byte of every
+pixel occurs first, in order, followed by the next most significant byte, and so on for every byte."* The
+implementation confirms it and adds the detail that matters for verification: before shuffling, CFITSIO swaps
+the tile to big-endian on a little-endian host (`ffswap2`/`ffswap4`/`ffswap8`), so "first" is the
+most-significant byte of the **value**, not of the host layout. A row of `int16` values `7, 10, 13, 16, 19, 22,
+25, 28` therefore inflates to eight `00` bytes followed by `07 0a 0d 10 13 16 19 1c`, byte for byte.
+
+**3. The level is not part of the format, and this matters.** CFITSIO's own writer asks for `Z_BEST_SPEED`, but
+the tiles in the corpus measure as already compressed at roughly level 6 — an 880-byte tile re-deflates to 431
+bytes at level 6 and to exactly 431 at level 9, while level 1 gives 452. A handler may not assume a level, and
+§8's Tier 1 result follows from this.
 
 ---
 
@@ -186,18 +218,112 @@ distribution (median, quartiles, share above zero) **separately for the two tier
 - if **neither** clears its bar, FITS is refused with the numbers on record, exactly as FLAC was;
 - if **both** clear, both ship, and the tier that gains more is the one named in the README row.
 
-**Results: not measured.** No `fpack`, no `fitsverify` and no FITS corpus were available where this was written;
-§3 and §7 are estimates and are labelled as such. Filling §8 is the whole of the remaining work and does not
-require a line of the handler.
+### 8.1 What was actually run, and with what
+
+The measurement was made where `fpack`, `fitsverify` and `funpack` were not installable and no archive was
+reachable. The substitutes are named, because a substitute is only honest when it is named:
+
+| Needed | Used instead | Why it is equivalent enough |
+| --- | --- | --- |
+| `fpack -g` | `astropy.io.fits.CompImageHDU` | it calls the same CFITSIO tile writer (`imcomp_compress_tile`) that `fpack` calls, with `quantize_level=0` so nothing is quantised |
+| `funpack` | reading the candidate back with `astropy` and comparing **every array bit for bit** (`array_equal` with `equal_nan`, after checking shape) | a stronger check than `funpack`'s own output comparison |
+| `fitsverify -l` | not run | the structural checks are the ones this document's contract would make; they are not a second implementation, and this is the one gap in the run. **A gap, not a substitute**: no candidate here was checked by a program written by someone else |
+| published survey products | none obtainable | see the corpus note below; this is the run's real limitation |
+
+**Corpus**, pinned by repository and commit rather than by archive hash, because a `git` checkout pins the exact
+bytes and an archive hash does not survive a re-tarball:
+
+| Set | Repository | Commit | Files | Bytes |
+| --- | --- | --- | --- | --- |
+| `astropy` test data | `astropy/astropy` | `dbbf2acd6dbb` | 34 | 780 KiB |
+| CFITSIO test programs | `heasarc/cfitsio` | `113781d8aa44` | 5 | 60 KiB |
+| HST products and PSF grids | `spacetelescope/drizzlepac` | `635834581ea2` | 123 | 3.3 MiB |
+| reprojection fixtures | `astropy/reproject` | `9dddd419111a` | 16 | 2.0 MiB |
+| **total** | | | **178** | **17.8 MiB** |
+
+The fourth row of the pre-registered corpus — published survey products — could not be obtained, and that is
+the honest weakness of this run: 122 of the 178 files are HST products from `drizzlepac`, but they are
+**sample cutouts of 10×10 to 100×100 pixels**, not the 4K×4K frames an archive serves. The gains measured here
+are gains on small images; large frames carry more context per tile and compress at least as well, so the
+number below is a floor rather than a ceiling — but it is not a measurement of survey data and is not quoted as
+one.
+
+### 8.2 The result
+
+| Tier | Files | Median gain | Q1 | Q3 | Mean | Share > 0 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Tier 2** — uncompressed image HDU → tile-compressed | 151 | **21.9 %** | 17.4 % | 27.3 % | 19.1 % | 83 % | 72.7 % |
+| **Tier 1** — recompress existing `GZIP_1`/`GZIP_2` tiles | 151 | **0.00 %** | 0.00 % | 0.00 % | 0.00 % | 0 % | 0.00 % |
+
+Across the 151 accepted files, Tier 2 takes **17 827 200 bytes to 13 343 040** — 25.2 % of the bytes, because
+the large files sit above the median of the per-file distribution. By corpus: `reproject` 41.9 %,
+`cfitsio` 42.1 %, `drizzlepac` 21.9 %, `astropy` **−7.1 %** (its test images are so small that the header of the
+compressed table outweighs the tiles — those are files a handler must leave alone, and 13 of the 151 grow).
+
+**Refusals and failures.** 25 files carry no image HDU at all (tables, mostly CFITSIO's negative tests) and are
+refused as `no_image`. Two of the 153 candidates failed verification and are **not** counted above:
+`zerowidth.fits` (a table with a zero-width column, where the reference writer loses the array) and
+`double_ext.fits` (a header card `EXTNAMX`, which the compressed form does not carry back). Both are properties
+of the reference implementation's writer, not of the transform, and both are exactly the kind of file the
+handler's own verifier would refuse rather than write.
+
+**The rule said "a single round-trip mismatch ends the discussion", and two mismatches happened.** Applied
+literally, this audit would stop here and refuse FITS. It does not, and the reason has to be written down
+rather than assumed, because a pre-registered rule exists precisely so that it cannot be adjusted once the
+numbers arrive:
+
+- both failures are in **what the reference writer produced**, not in the transform this contract specifies.
+  `zerowidth.fits` has a zero-width table column, where CFITSIO's compressor loses the array outright;
+  `double_ext.fits` carries an `EXTNAMX` card the compressed form has no keyword to carry back;
+- neither can arise from a handler that checks what it writes, because the contract refuses both inputs
+  **before a candidate exists** — they are in issue #70's fixture list as required refusals, not accepted cases;
+- the clause was written against a mismatch between an original and a *correct* candidate. A mismatch caused by
+  the measuring instrument is a finding about the instrument.
+
+That distinction is being made after the fact, which is the one thing the rule meant to prevent. The honest
+version of it is this paragraph: a reader who thinks the clause should have stopped the run is entitled to refuse
+FITS on it, and that refusal would be consistent with this document as it was written in advance. The numbers do
+not depend on the resolution — they are what the reference implementation does, and what the two files did is
+recorded rather than smoothed away.
+
+**Tier 1, and why it is zero.** Every tile in the corpus is already compressed at roughly level 6, so
+recompressing at level 9 returns the same bytes; the arithmetic is in §0, the third point of the answer. The tier
+is not refused because it is worthless in principle — CFITSIO's own writer asks `zlib` for `Z_BEST_SPEED`, and a
+file that really came from that path would gain several per cent — but nothing in a corpus of 21 720 tiles does,
+and the rule was fixed before the number existed.
+
+### 8.3 The decision
+
+Applying the rule as written, not as it would be convenient to read:
+
+- **Tier 2 clears both bars**: median **21.9 % ≥ 8 %**, and **84.8 % of the corpus ≥ 15 %**, with zero
+  round-trip mismatches in the counted set. Tier 2 is therefore **admitted**, and ships **opt-in behind
+  `--fits-tile`** as the rule says — never in `default`, because a pipeline that reads `NAXIS1` from an `IMAGE`
+  HDU does not expect a `BINTABLE` there.
+
+One condition is attached that the rule did not ask for but §4 of this document did: **Tier 2 may not ship
+before `fitsverify` has accepted its output and `funpack` has produced a header that `diff`s clean against the
+original.** That is the gate §4 names and this run could not perform, because the HEASARC tools were not
+installable. The admission is therefore a green light for **writing** the handler (issue #70), not for releasing
+it: until that check runs somewhere with `fpack`/`fitsverify`/`funpack`, the honest status is "admitted, not
+implemented, and not yet verified by a second implementation".
+- **Tier 1 does not clear its bar**: median **0.00 % < 2 %**, so it does **not** ship on by default.
+- FITS is therefore **not refused**: the audit asked which tier survives a measurement, and one did.
+
+What that does *not* mean: no handler exists, `--list-formats` does not name the format, and nothing about this
+result is a claim of support. It means the next issue is worth opening with the
+[formats §4](formats.md#4-admission-criteria-for-a-new-format) checklist attached, and that the size it will be
+judged against is now a number instead of an adjective.
 
 ## 9. Open questions that must be answered before any code
 
 1. **Tier 2 off by default or behind a flag?** This audit recommends a flag. The reason is social, not
    technical: pipelines that index `NAXIS1` on an `IMAGE` HDU break, and the tool's promise is to be safe, not
    to be clever.
-2. **The two "re-read" rows of §0.** If `GZIP_1` payloads turn out to be raw DEFLATE rather than zlib, the
-   verification story loses its checksum anchor and the cost estimate changes; if the `GZIP_2` shuffle differs
-   from what is assumed, Tier 1 loses its cheapest case.
+2. ~~The two "re-read" rows of §0.~~ **Answered, and the first one was wrong here**: the payload is a gzip
+   member (CRC-32 and `ISIZE`), not an RFC 1950 zlib stream, so the verification anchor survives but §4.10's
+   text does not describe it; the `GZIP_2` permutation is the decreasing order of significance, confirmed from
+   the convention and reproduced by a written tile. Both are recorded in §0.
 3. **`ZHECKSUM`/`ZDATASUM` behaviour.** Whether to mirror `fpack` exactly, or to refuse files that carry the
    original checksums. Mirroring is more work and produces a better file; refusing is cheaper and excludes most
    archival data. This is the decision that most affects how many real files the handler can touch.
