@@ -116,12 +116,18 @@ Full flag reference: [docs/cli.md](docs/cli.md).
 | TIFF (classic, strips) | v0.7 | Recompress strips; every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
 | zlib (`.zlib`, `.zz`) | v0.9 | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | G3 |
 | FLAC | — | **Refused after measurement**: a stronger encoder buys 0.4 % on music for ~150–300 KiB of binary ([audit](docs/flac-audit.md)) | — |
-| FITS | — | **Admitted by measurement, not implemented**: an uncompressed image HDU rewritten as a tile-compressed table saves a median 21.9 % on 84.8 % of the corpus; recompressing existing `GZIP_1`/`GZIP_2` tiles saves 0.00 %, and the change turns `IMAGE` into `BINTABLE`, so it can only be opt-in ([contract](docs/guarantees.md#412-fits--admitted-by-measurement-not-implemented) · [audit](docs/fits-audit.md)) | — |
+| FITS | v0.14 (not in the default build) | Tile-compress an uncompressed image HDU into a `BINTABLE` (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off); every other HDU copied verbatim; opt-in via `--fits-tile`, and the `fits` feature is off by default | G3 |
 | PDF | — | **Refused after measurement**: the permitted slice covers 45.7 % of the corpus and saves a median 0.08 %, while the repacking that would save 20.1 % is exactly what the contract forbids ([contract](docs/guarantees.md#411-pdf--refused-after-measurement) · [audit](docs/pdf-audit.md)) | — |
 | WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **Not planned** ([why](docs/formats.md#5-refused-formats)) | — |
 
 A format is listed as supported only when its contract and its tests exist. JPEG is off by default and enabled
 by name (`--formats jpeg`), because it is the riskiest handler here and typically saves only 1–3 %.
+
+FITS is the first format with **two** switches, and both are off. `--fits-tile` is the transformation: without
+it the handler only says why it did nothing, because turning an `IMAGE` HDU into a `BINTABLE` is visible to
+every reader that indexes `NAXIS1`. The `fits` cargo feature is the code: it is not in `default`, so a build
+that wants FITS is `cargo build --release --features fits`, and [size-budget §3](docs/size-budget.md#3-feature-matrix)
+carries what it costs. `--list-formats` names FITS only when the feature is compiled in.
 
 ## Why tzim
 

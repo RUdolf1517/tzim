@@ -92,8 +92,8 @@ Additional requirements:
 
 | Crate | Direct | Compiled by | Purpose | In the binary |
 | --- | --- | --- | --- | --- |
-| `flate2` | yes | features `png`, `gzip`, `zip`, `tiff`, `zlib` | DEFLATE decode/encode | with any of those |
-| `crc32fast` | yes | features `png`, `gzip`, `zip` | checksums | with any of those |
+| `flate2` | yes | features `png`, `gzip`, `zip`, `tiff`, `zlib`, `fits` | DEFLATE decode/encode | with any of those |
+| `crc32fast` | yes | features `png`, `gzip`, `zip`, `fits` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
 | `jpeg-decoder` | yes | feature `jpeg-v1` (**not** in `default`) | second opinion on a JPEG candidate | only with `jpeg-v1` |
@@ -104,9 +104,10 @@ unconditional crate any more — the progress line, which used to be one (§2.9)
 `src/progress.rs` again. `jpeg-v1` is the first dependency since v0.1 that a *published* build does not carry:
 it is available, tested on every CI run, and off by default (§2.10).
 
-The JPEG, ICO, TIFF and zlib handlers add code, not crates. **v0.4, v0.6, v0.7 and v0.9 added none**:
-§2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a codec that
-was already in the tree. **v0.10 added one** for the progress line and **v0.13 removed it** (§2.9);
+The JPEG, ICO, TIFF, zlib and FITS handlers add code, not crates. **v0.4, v0.6, v0.7, v0.9 and v0.14 added
+none**: §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a
+codec that was already in the tree. FITS (§2.11) needs a gzip member and its inflater, both of which `flate2`
+already provides, so it is the first format since v0.9 that went through §1 and was granted nothing. **v0.10 added one** for the progress line and **v0.13 removed it** (§2.9);
 **v0.13 added `jpeg-decoder`** for the `jpeg-v1` feature after the argument in §2.10. Each grant is argued on
 its own, and the next candidate still has to answer every question in §1.
 
@@ -247,6 +248,19 @@ sample and a frame that could be wider than the terminal.
   `docs/guarantees.md` §2.6 says in the JPEG row what each kind of build can prove.
 
 ---
+
+### 2.11 FITS: no CFITSIO, and why that is not a gap
+
+The obvious dependency for a FITS handler is CFITSIO, through a binding crate such as `fitsio`. It is refused
+on two counts from §1: it is C, so the static cross-platform build stops being static, and it would be the same
+implementation on both sides of the comparison — a candidate checked by the writer's own library is exactly
+the symmetry [guarantees §2.6](../docs/guarantees.md#26-verification-independence) calls a hole.
+
+What the transformation actually needs is a gzip member (§2.1), an inflater and a CRC-32, so `fits` is
+`fits = ["dep:flate2", "dep:crc32fast"]` and nothing else. The CRC crate is the verifier's: the writer's
+framing comes from `flate2`, and the candidate's trailer is recomputed with an implementation it never calls. The second implementation lives outside the binary, in
+`.github/scripts/fits-oracle.py`, where `astropy` — CFITSIO underneath — reads every candidate back. It costs
+the binary nothing and the CI job one `pip install`.
 
 ## 3. Rejected dependencies
 

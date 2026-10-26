@@ -1,6 +1,6 @@
 # FITS: the audit the contract has to pass
 
-Related: [guarantees §4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) · [formats](formats.md) ·
+Related: [guarantees §4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [pdf-audit](pdf-audit.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FITS, in the order the FLAC and PDF work established: the audit first, the contract second,
@@ -8,7 +8,7 @@ the code only if the numbers justify it. FITS was not refused anywhere — it wa
 [formats](formats.md) §5, which is a gap this document closes one way or the other.
 
 **Status: not implemented, not measured.** No FITS code exists and `--list-formats` does not name the format.
-The contract in [§4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) says what an implementation
+The contract in [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) says what an implementation
 would have to preserve; §8 below fixes the decision rule **before** the numbers exist.
 
 Unlike the PDF audit, this one has a confidence problem that has to be stated up front rather than buried.
