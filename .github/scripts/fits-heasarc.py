@@ -679,27 +679,35 @@ def add_external_double_ext(root, source_path):
     if [card[10:30].strip() for card in extnamx_cards] != ["'COMPRESSED_IMAGE'", "'ccd00   '"]:
         raise ValueError("the pinned external fixture's literal EXTNAMX values changed")
     # In Astropy's compressed extension, the last EXTNAME names the source
-    # image; the first names the compressed-table extension. Build a small,
-    # uncompressed image from deterministic data, but use the two exact raw
-    # EXTNAMX cards from the independently pinned external file. This enters
-    # the real tzim writer/acceptance path without relying on funpack's failure
-    # to decompress this RICE_1 test input.
-    source_extname = extname_cards[-1]
-    if "'ccd00" not in source_extname[10:30]:
+    # image; the first names the compressed-table extension. Build one small,
+    # uncompressed image per external EXTNAMX card from deterministic data.
+    # A single card per rewrite keeps CFITSIO's duplicate-keyword warning
+    # allowlist empty; the byte-pinned real input below separately proves that
+    # both duplicate external cards survive the no-rewrite path. This exercises
+    # the actual writer without relying on funpack's failure to decompress the
+    # RICE_1 source file.
+    external_source_extname = extname_cards[-1]
+    if "'ccd00" not in external_source_extname[10:30]:
         raise ValueError("the pinned external source-image EXTNAME card changed")
-    rewrite_name = "external_extnamx_rewrite.fits"
-    rewrite_path = os.path.join(root, rewrite_name)
-    rewrite_bytes = (
-        empty_primary()
-        + image_hdu(
-            16,
-            [64, 128],
-            int16_pattern(64, 128),
-            extra=[source_extname.encode("ascii"), *(card.encode("ascii") for card in extnamx_cards)],
+    # EXTNAME is generated normally; the coverage target is the exact external
+    # EXTNAMX card, not Astropy's comment formatting on an EXTNAME card.
+    source_extname = string_card("EXTNAME", "ccd00")
+    rewrite_cases = []
+    for label, external_card in zip(("compressed_image", "ccd00"), extnamx_cards):
+        rewrite_name = "external_extnamx_%s.fits" % label
+        rewrite_path = os.path.join(root, rewrite_name)
+        rewrite_bytes = (
+            empty_primary()
+            + image_hdu(
+                16,
+                [64, 128],
+                int16_pattern(64, 128),
+                extra=[source_extname, external_card.encode("ascii")],
+            )
         )
-    )
-    with open(rewrite_path, "wb") as handle:
-        handle.write(rewrite_bytes)
+        with open(rewrite_path, "wb") as handle:
+            handle.write(rewrite_bytes)
+        rewrite_cases.append((rewrite_name, external_card))
 
     external_case = dict(
         name="external_double_ext.fits",
@@ -717,36 +725,41 @@ def add_external_double_ext(root, source_path):
             "The pinned external file is already a RICE_1 ZIMAGE table, outside this build's "
             "Tier 2 rewrite path. The contract says an unsupported RICE_1 codec is refused as "
             "skipped; tzim must preserve the exact file, and both external EXTNAMX cards must "
-            "remain byte-identical. The source-derived rewrite "
-            "case separately sends those literal cards through the actual writer and acceptance path."
+            "remain byte-identical. Two separate rewrite cases send each literal card through the "
+            "actual writer and acceptance path, one card per input so CFITSIO reports no duplicate-keyword warning."
         ),
         why=(
             "external real-file coverage for the Astropy double_ext.fits EXTNAMX cards; "
             "the RICE_1 compressed input is outside the writer's accepted rewrite subset"
         ),
     )
-    rewrite_case = dict(
-        name=rewrite_name,
-        expect="rewritten",
-        images=1,
-        hdu_delta=0,
-        required_card_counts={"EXTNAMX": 2},
-        input_case=(
-            "Uncompressed synthetic IMAGE data with EXTNAME and the two literal EXTNAMX cards "
-            "copied byte-for-byte from pinned external Astropy file %s (commit %s, SHA-256 %s). "
-            "The pixel array is deterministic harness data; it is not claimed to be a decompression "
-            "of the RICE_1 source file."
-            % ("astropy/io/fits/tests/data/double_ext.fits", ASTROPY_COMMIT, ASTROPY_DOUBLE_EXT_SHA256)
-        ),
-        contract_expectation=(
-            "The actual rewritten candidate must contain both externally sourced EXTNAMX cards "
-            "byte-for-byte, and the shared fitsverify/funpack/array/literal-header acceptance "
-            "path must pass. This isolates header preservation from the source file's unsupported "
-            "RICE_1 codec and the known funpack failure."
-        ),
-        why="external Astropy EXTNAMX literal cards exercised through the writer's rewrite path",
-    )
-    return [external_case, rewrite_case]
+    rewrite_fixture_cases = []
+    for rewrite_name, external_card in rewrite_cases:
+        label = external_card[10:30].strip().strip("'").strip()
+        rewrite_case = dict(
+            name=rewrite_name,
+            expect="rewritten",
+            images=1,
+            hdu_delta=0,
+            required_card_counts={"EXTNAMX": 1},
+            input_case=(
+                "Uncompressed synthetic IMAGE data with EXTNAME and one literal EXTNAMX card "
+                "(%s) copied byte-for-byte from pinned external Astropy file %s (commit %s, "
+                "SHA-256 %s). The pixel array is deterministic harness data; it is not claimed "
+                "to be a decompression of the RICE_1 source file."
+                % (label, "astropy/io/fits/tests/data/double_ext.fits", ASTROPY_COMMIT,
+                   ASTROPY_DOUBLE_EXT_SHA256)
+            ),
+            contract_expectation=(
+                "The actual rewritten candidate must contain this single external EXTNAMX card "
+                "byte-for-byte and pass the shared fitsverify/funpack/array/literal-header "
+                "acceptance path with no warnings. The two-card external file is checked separately "
+                "on its unchanged path, avoiding a duplicate-keyword warning allowlist."
+            ),
+            why="external Astropy EXTNAMX %s literal card exercised through the writer's rewrite path" % label,
+        )
+        rewrite_fixture_cases.append(rewrite_case)
+    return [external_case, *rewrite_fixture_cases]
 
 
 # ---------------------------------------------------------------------------
@@ -1663,7 +1676,7 @@ def render_diagnostics(summary, evidence):
             external.get("input_case"), external.get("input_sha256", "not recorded"),
             external.get("candidate_sha256", "not recorded")))
         lines.append("")
-        lines.append("The byte-pinned external input is already a RICE_1 compressed image outside this build's rewrite subset. The contract expects `skipped`, unchanged bytes, and two literal EXTNAMX cards. The same raw cards also feed a separate uncompressed harness image that exercises the writer path; its pixel data is explicitly synthetic, not a claimed RICE_1 decompression.")
+        lines.append("The byte-pinned external input is already a RICE_1 compressed image outside this build's rewrite subset. The contract expects `skipped`, unchanged bytes, and both literal EXTNAMX cards preserved. Each card is also exercised separately through a rewritten synthetic harness image; the pixel arrays are explicitly synthetic, not claimed RICE_1 decompressions. Single-card inputs avoid a duplicate-keyword warning, so no warning allowlist is introduced.")
         lines.append("")
         lines.append("External no-op card check: `%s`." % json.dumps(
             external.get("external_card_checks", {}), sort_keys=True))
@@ -1671,24 +1684,27 @@ def render_diagnostics(summary, evidence):
     else:
         lines.append("The external fixture did not run.")
         lines.append("")
-    external_rewrite = next(
-        (f for f in summary["fixtures"] if f["name"] == "external_extnamx_rewrite.fits"), None
-    )
-    lines.append("### External-card-derived rewrite path")
+    external_rewrites = [
+        f for f in summary["fixtures"] if f["name"].startswith("external_extnamx_")
+    ]
+    lines.append("### External-card-derived rewrite paths")
     lines.append("")
-    if external_rewrite:
-        lines.append("Input: %s" % external_rewrite.get("input_case", "description not recorded"))
-        lines.append("")
-        lines.append("Candidate SHA-256 `%s`; accepted by the shared candidate path: `%s`." % (
-            external_rewrite.get("candidate_sha256", "not recorded"),
-            external_rewrite.get("candidate_acceptance", "not reached")))
-        lines.append("")
-        lines.append("Exact-card check and acceptance problems: `%s`; `%s`." % (
-            json.dumps(external_rewrite.get("required_card_checks", {}), sort_keys=True),
-            json.dumps(external_rewrite.get("acceptance", {}).get("problems", []), sort_keys=True)))
-        lines.append("")
+    if external_rewrites:
+        for external_rewrite in external_rewrites:
+            lines.append("#### %s" % external_rewrite["name"])
+            lines.append("")
+            lines.append("Input: %s" % external_rewrite.get("input_case", "description not recorded"))
+            lines.append("")
+            lines.append("Candidate SHA-256 `%s`; accepted by the shared candidate path: `%s`." % (
+                external_rewrite.get("candidate_sha256", "not recorded"),
+                external_rewrite.get("candidate_acceptance", "not reached")))
+            lines.append("")
+            lines.append("Exact-card check and acceptance problems: `%s`; `%s`." % (
+                json.dumps(external_rewrite.get("required_card_checks", {}), sort_keys=True),
+                json.dumps(external_rewrite.get("acceptance", {}).get("problems", []), sort_keys=True)))
+            lines.append("")
     else:
-        lines.append("The external-card-derived rewrite fixture did not run.")
+        lines.append("No external-card-derived rewrite fixture ran.")
         lines.append("")
     lines += ["## Controls: two negative controls plus one positive toolchain sanity check", ""]
     for control in summary.get("controls", []):
