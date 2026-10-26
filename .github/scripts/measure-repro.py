@@ -45,6 +45,7 @@ import platform
 import subprocess
 import sys
 import time
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,17 +93,9 @@ PUBLISHED = {
     ),
 }
 
-#: Metrics whose disagreement is recorded and explained rather than failed: either
-#: the publication prints them more coarsely than the run can, or the number depends
-#: on a library version the run does not pin to the audit's.
-SOFT = {
-    "pdf": {
-        "render_pages":
-            "the publication reports 173 pages for the same seeded 140-file sample; a different page "
-            "count means MuPDF renders these documents differently from the version the audit used — "
-            "recorded, and a reason to look, not a reason to stop",
-    },
-}
+#: No metric discrepancy is soft. The older report has no per-file render sample,
+#: so the difference is unresolved rather than attributed to a library by guesswork.
+SOFT = {}
 
 #: How far a percentage may sit from the rounded published value.
 PERCENT_TOLERANCE = 0.051
@@ -132,8 +125,12 @@ def run(argv, log_path):
 
 
 def percentile(sorted_values, fraction):
+    """Nearest-rank quartile; at p=0.5 use the conventional arithmetic median."""
     if not sorted_values:
         return None
+    if fraction == 0.5 and len(sorted_values) % 2 == 0:
+        middle = len(sorted_values) // 2
+        return (sorted_values[middle - 1] + sorted_values[middle]) / 2
     index = int(fraction * len(sorted_values))
     return sorted_values[min(index, len(sorted_values) - 1)]
 
@@ -179,7 +176,21 @@ def render_totals(text):
                 )
             except (IndexError, ValueError):
                 continue
+    if not out:
+        return dict(render_files=0, render_pages=0, render_differences=0)
     return out
+
+
+def render_aggregates(rows):
+    """Derive render totals from the selected-file records, not only stdout."""
+    rendered = [row for row in rows if row.get("rendered")]
+    return dict(
+        render_files=len(rendered),
+        render_pages=sum(row.get("compared_pages", 0) for row in rendered),
+        render_differences=sum(1 for row in rendered if not row.get("identical")),
+        render_sampled_files=len(rows),
+        render_errors=sum(1 for row in rows if row.get("render_error")),
+    )
 
 
 def fits_aggregates(rows):
@@ -246,6 +257,10 @@ def pdf_aggregates(rows):
         q3=faithful.get("q3"),
         mean=faithful.get("mean"),
         share_positive=faithful.get("share_positive"),
+        share_positive_count=sum(1 for r in accepted if r["faithful_pct"] > 0),
+        share_positive_denominator=len(accepted),
+        share_zero_count=sum(1 for r in accepted if r["faithful_pct"] == 0),
+        share_negative_count=sum(1 for r in accepted if r["faithful_pct"] < 0),
         maximum=faithful.get("maximum"),
         qpdf_median=qpdf.get("median"),
         qpdf_q1=qpdf.get("q1"),
@@ -312,6 +327,8 @@ def environment():
         platform=platform.platform(),
         machine=platform.machine(),
         processor=platform.processor(),
+        zlib_compile_version=zlib.ZLIB_VERSION,
+        zlib_runtime_version=zlib.ZLIB_RUNTIME_VERSION,
         started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         packages={},
         scripts={},
@@ -401,6 +418,13 @@ def write_summary(path, payload):
             for failure in failures:
                 lines.append("* `%s` (`%s`, `%s`)" % (failure["path"], failure["corpus"], failure["why"]))
             lines.append("")
+    details = os.path.join(os.path.dirname(path), "metric-definitions.md")
+    if os.path.exists(details):
+        lines.append("## Source-row definitions for the disputed metrics")
+        lines.append("")
+        with open(details, encoding="utf-8") as handle:
+            lines.extend(handle.read().rstrip().splitlines())
+        lines.append("")
     lines.append("## What this does not prove")
     lines.append("")
     lines.append(
@@ -414,6 +438,113 @@ def write_summary(path, payload):
     lines.append("")
     with open(path, "w") as handle:
         handle.write("\n".join(lines))
+
+
+def _relative(path, root):
+    try:
+        return os.path.relpath(path, root)
+    except (TypeError, ValueError):
+        return path
+
+
+def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
+    """Emit row-level inputs to every disputed aggregate in the evidence bundle."""
+    fits_source = []
+    for row in fits_rows:
+        if row.get("corpus") not in ("astropy", "reproject") or row.get("status") != "tier2":
+            continue
+        fits_source.append(dict(
+            metric="fits_corpus_median",
+            corpus=row["corpus"],
+            path=_relative(row["path"], root),
+            manifest_sha256=row.get("manifest_sha256"),
+            status=row.get("status"),
+            included_in_median=bool(row.get("exact")),
+            exact=row.get("exact"),
+            reason=row.get("why"),
+            bytes=row.get("bytes"),
+            new_size=row.get("new_size"),
+            pct=row.get("pct"),
+        ))
+    with open(os.path.join(out, "fits-corpus-median-source.jsonl"), "w", encoding="utf-8") as handle:
+        for row in fits_source:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+    pdf_source = []
+    for row in pdf_rows:
+        if row.get("status") != "accepted":
+            continue
+        pdf_source.append(dict(
+            metric="pdf_share_positive",
+            corpus=row.get("corpus"),
+            path=_relative(row["path"], root),
+            manifest_sha256=row.get("manifest_sha256"),
+            bytes=row.get("bytes"),
+            status=row.get("status"),
+            streams=row.get("streams"),
+            flate_bytes=row.get("flate_bytes"),
+            flate_after=row.get("flate_after"),
+            faithful_pct=row.get("faithful_pct"),
+            positive=bool(row.get("faithful_pct", 0) > 0),
+        ))
+    with open(os.path.join(out, "pdf-share-positive-source.jsonl"), "w", encoding="utf-8") as handle:
+        for row in pdf_source:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+    # Preserve the 140 selected records and per-page hashes exactly as emitted by
+    # pdf-measure.py; the file itself is `render-sample.jsonl` in this bundle.
+    formulas = [
+        "# Metric definitions and source rows", "",
+        "Old published values are comparison targets, not assumed ground truth. The original audit bundles did not preserve per-file JSONL or a render-sample list, so historical source rows cannot be reconstructed from those rounded table entries alone.", "",
+        "## FITS median by corpus: astropy and reproject", "",
+        "Per-file value: `pct = 100 * (bytes - new_size) / bytes`. Include only `status=tier2` rows with `exact=true`; the median denominator is the number of such rows in the corpus. For an even count, median is the arithmetic mean of the two middle sorted values. Quartiles use the instrument's nearest-rank indices `int(p*n)`.", "",
+        "The earlier re-run used the upper middle element for even counts. That is a different definition, not a change in input data. The source rows in `fits-corpus-median-source.jsonl` include all Tier 2 rows from these two corpora, including failed-verification rows (marked `included_in_median=false`).", "",
+        "## PDF share with a positive faithful recompression", "",
+        "For each accepted PDF, `faithful_pct = 100 * (F - F9) / S`, where `S` is whole-file bytes, `F` is the sum of original encoded bytes of in-scope Flate streams, and `F9` is the sum over those streams of `min(original_encoded_length, zlib_level_9_length(inflated_payload))`. A file is positive exactly when `faithful_pct > 0`. `pdf-share-positive-source.jsonl` contains all accepted rows, with the positive flag; `pdf.jsonl` retains all accepted, already-optimal and refused rows.", "",
+        "## PDF render-page count", "",
+        "Selection: `random.seed(57)` then `random.sample(accepted_rows, min(140, len(accepted_rows)))` in manifest order. Original and allowed-recompression candidate are rendered by PyMuPDF at 100 dpi; at most the first 6 pages per document are compared. `render_pages` is the sum of `compared_pages` for successfully rendered sample files, not the sum of each document's full page count. `render-sample.jsonl` records all selected paths, manifest hashes, original/candidate page totals, compared-page counts, page-image SHA-256 lists and equality result. Render failures are retained and make the run red.", "",
+        "## Current source counts and medians", "",
+    ]
+    from collections import defaultdict
+    by_corpus = defaultdict(list)
+    for row in fits_source:
+        if row["included_in_median"]:
+            by_corpus[row["corpus"]].append(row)
+    for corpus in ("astropy", "reproject"):
+        ordered = sorted(by_corpus[corpus], key=lambda row: row["pct"])
+        n = len(ordered)
+        if n % 2:
+            center = [ordered[n // 2]]
+            med = center[0]["pct"]
+            center_text = "row %d = %.9f%%" % (n // 2 + 1, med)
+        else:
+            center = ordered[n // 2 - 1:n // 2 + 1]
+            med = sum(row["pct"] for row in center) / 2
+            center_text = "rows %d–%d = %.9f%% and %.9f%%" % (
+                n // 2, n // 2 + 1, center[0]["pct"], center[1]["pct"])
+        formulas.append("- `%s`: n=%d; median %.9f%% (%s)." % (corpus, n, med, center_text))
+        for row in center:
+            formulas.append("  - center source: `%s`, %d → %d bytes, SHA-256 `%s`." % (
+                row["path"], row["bytes"], row["new_size"], row["manifest_sha256"]))
+    positive = sum(1 for row in pdf_source if row["positive"])
+    denominator = len(pdf_source)
+    zero = sum(1 for row in pdf_source if row["faithful_pct"] == 0)
+    formulas += ["", "## Current PDF source counts", "",
+                 "- Positive accepted PDFs: %d / %d = %.9f%%; exactly zero: %d; negative: %d." % (
+                     positive, denominator, 100.0 * positive / denominator if denominator else 0,
+                     zero, sum(1 for row in pdf_source if row["faithful_pct"] < 0)),
+                 "- Positive and zero/negative source rows are listed in `pdf-share-positive-source.jsonl` (one record per accepted input)."]
+    selected = len(render_rows)
+    rendered = [row for row in render_rows if row.get("rendered")]
+    formulas += ["", "## Current render sample counts", "",
+                 "- Selected: %d; rendered: %d; compared pages: %d; differences: %d; errors: %d." % (
+                     selected, len(rendered),
+                     sum(row.get("compared_pages", 0) for row in rendered),
+                     sum(1 for row in rendered if not row.get("identical")),
+                     sum(1 for row in render_rows if row.get("render_error"))),
+                 "- Prior aggregate 173 has no preserved old sample path list, so it cannot be asserted to refer to these same 140 documents/pages."]
+    with open(os.path.join(out, "metric-definitions.md"), "w", encoding="utf-8") as handle:
+        handle.write("\n".join(formulas) + "\n")
 
 
 def main():
@@ -467,6 +598,8 @@ def main():
         problems=[],
     )
 
+    source_rows = {"fits": [], "pdf": []}
+    render_rows = []
     for name, script, enabled in (
         ("fits", "fits-measure.py", not args.no_fits),
         ("pdf", "pdf-measure.py", not args.no_pdf),
@@ -477,8 +610,9 @@ def main():
         jsonl = os.path.join(args.out, "%s.jsonl" % name)
         argv = [sys.executable, os.path.join(HERE, script),
                 "--root", args.root, "--manifest", manifest, "--out", jsonl]
+        render_jsonl = os.path.join(args.out, "render-sample.jsonl")
         if name == "pdf":
-            argv += ["--render-sample", str(args.render_sample)]
+            argv += ["--render-sample", str(args.render_sample), "--render-out", render_jsonl]
         payload["commands"].append(" ".join(argv))
         completed, elapsed = run(argv, os.path.join(args.out, "%s-stdout.txt" % name))
         if completed.returncode != 0 or not os.path.exists(jsonl):
@@ -489,9 +623,23 @@ def main():
                 "%s-measure.py exited %d" % (name, completed.returncode)])
             continue
         rows = load_jsonl(jsonl)
+        source_rows[name] = rows
         aggregates = fits_aggregates(rows) if name == "fits" else pdf_aggregates(rows)
         if name == "pdf":
-            aggregates.update(render_totals(completed.stdout))
+            if not os.path.exists(render_jsonl):
+                payload["problems"].append("pdf-measure.py did not produce render-sample.jsonl")
+                render_rows = []
+            else:
+                render_rows = load_jsonl(render_jsonl)
+            from_log = render_totals(completed.stdout)
+            from_rows = render_aggregates(render_rows)
+            if any(from_log.get(key) != from_rows.get(key)
+                   for key in ("render_files", "render_pages", "render_differences")):
+                payload["problems"].append(
+                    "render stdout totals disagree with per-file source rows: %s vs %s"
+                    % (from_log, from_rows)
+                )
+            aggregates.update(from_rows)
         comparison, problems = compare(aggregates, PUBLISHED[name], SOFT.get(name))
         payload[name] = dict(
             aggregates=aggregates,
@@ -501,6 +649,18 @@ def main():
             rows=len(rows),
         )
         payload["problems"].extend("%s: %s" % (name, problem) for problem in problems)
+        if name == "pdf":
+            if aggregates.get("render_errors"):
+                render_problem = "%d of %d selected render files could not be compared" % (
+                    aggregates["render_errors"], aggregates.get("render_sampled_files", 0))
+                payload["pdf"]["problems"].append(render_problem)
+                payload["problems"].append("pdf: " + render_problem)
+            if aggregates.get("render_sampled_files") != min(args.render_sample, aggregates.get("accepted", 0)):
+                render_problem = "render sample has %d records; expected %d" % (
+                    aggregates.get("render_sampled_files", 0),
+                    min(args.render_sample, aggregates.get("accepted", 0)))
+                payload["pdf"]["problems"].append(render_problem)
+                payload["problems"].append("pdf: " + render_problem)
         if name == "fits":
             expected = PUBLISHED["fits"]["exact_failures"]
             found = len(aggregates["exact_failures"])
@@ -516,6 +676,7 @@ def main():
                 )
 
     payload["elapsed_seconds"] = round(time.time() - started, 1)
+    write_metric_sources(args.out, args.root, source_rows["fits"], source_rows["pdf"], render_rows)
     for name, path in (("aggregates", "aggregates.json"), ("summary", "summary.md")):
         target = os.path.join(args.out, path)
         if name == "aggregates":

@@ -34,10 +34,45 @@ def load(name):
 
 fits_measure = load("fits-measure.py")
 pdf_measure = load("pdf-measure.py")
+measure_repro = load("measure-repro.py")
 
 import numpy as np  # noqa: E402
 import pikepdf  # noqa: E402
 from astropy.io import fits  # noqa: E402
+
+
+class MeasurementDefinitions(unittest.TestCase):
+    """The arithmetic and denominators behind #72's reported aggregates."""
+
+    def test_even_count_median_averages_the_two_middle_values(self):
+        rows = [dict(corpus="astropy", status="tier2", exact=True,
+                     pct=value, bytes=100, new_size=100 - value)
+                for value in (1.0, 2.0, 3.0, 4.0)]
+        got = measure_repro.fits_aggregates(rows)["by_corpus"]["astropy"]
+        self.assertEqual(got, 2.5)
+
+    def test_pdf_positive_share_uses_accepted_file_denominator(self):
+        rows = [dict(corpus="pdfjs", status="accepted", faithful_pct=value,
+                     qpdf_pct=value, repack_pct=value)
+                for value in (0.25, 0.0, -0.1)]
+        result = measure_repro.pdf_aggregates(rows)
+        self.assertEqual(result["share_positive_count"], 1)
+        self.assertEqual(result["share_positive_denominator"], 3)
+        self.assertEqual(result["share_zero_count"], 1)
+        self.assertEqual(result["share_negative_count"], 1)
+        self.assertAlmostEqual(result["share_positive"], 100.0 / 3.0)
+
+    def test_render_totals_are_recomputed_from_every_selected_record(self):
+        rows = [
+            dict(rendered=True, compared_pages=2, identical=True),
+            dict(rendered=True, compared_pages=4, identical=False),
+            dict(rendered=False, render_error="synthetic read error"),
+        ]
+        self.assertEqual(
+            measure_repro.render_aggregates(rows),
+            dict(render_files=2, render_pages=6, render_differences=1,
+                 render_sampled_files=3, render_errors=1),
+        )
 
 
 class FitsHistoricalBug(unittest.TestCase):

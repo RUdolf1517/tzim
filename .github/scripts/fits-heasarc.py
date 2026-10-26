@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import difflib
 import hashlib
 import json
 import os
@@ -103,6 +104,10 @@ def commentary_card(keyword: str, text: str) -> bytes:
 
 def end_card() -> bytes:
     return _card("END")
+
+
+def end_card_text() -> str:
+    return end_card().decode("ascii")
 
 
 def header_bytes(cards) -> bytes:
@@ -182,8 +187,9 @@ def empty_primary() -> bytes:
 class Hdu:
     """One HDU, parsed: its cards in order and the bytes it occupied."""
 
-    def __init__(self, cards, data, raw, start):
+    def __init__(self, cards, data, raw, start, end_card=None):
         self.cards = cards          # list of str, 80 columns each, END excluded
+        self.end_card = end_card or end_card_text()
         self.data = data            # bytes, unpadded
         self.raw = raw              # header + data + padding
         self.start = start          # offset in the file
@@ -236,13 +242,17 @@ def parse(raw: bytes):
     while offset < len(raw):
         start = offset
         cards = []
+        raw_end_card = None
         end_at = None
         while end_at is None:
             if offset + RECORD > len(raw):
                 raise ValueError("a header record runs past the end of the file")
             for within in range(0, RECORD, CARD):
-                text = raw[offset + within:offset + within + CARD].decode("ascii", "replace")
+                # Latin-1 is a one-to-one mapping for all 256 byte values, so a
+                # card diff remains byte-literal even for malformed non-ASCII input.
+                text = raw[offset + within:offset + within + CARD].decode("latin-1")
                 if text[:8].strip() == "END":
+                    raw_end_card = text
                     end_at = offset + RECORD
                     offset += within + CARD
                     break
@@ -265,7 +275,7 @@ def parse(raw: bytes):
         padded = data_end + (-length % RECORD)
         if padded > len(raw):
             raise ValueError("HDU at %d runs past the end of the file" % start)
-        out.append(Hdu(cards, raw[data_start:data_end], raw[start:padded], start))
+        out.append(Hdu(cards, raw[data_start:data_end], raw[start:padded], start, raw_end_card))
         offset = padded
     if offset != len(raw):
         raise ValueError("trailing bytes after the last HDU")
@@ -549,7 +559,20 @@ def build_fixtures(root):
             images=1,
             hdu_delta=0,
             verbatim=["BINTABLE"],
-            why="§4.12: a zero-width column is not an image HDU, so the table is copied verbatim",
+            input_case=(
+                "HDU 0: empty primary (BITPIX=8, NAXIS=0); HDU 1: IMAGE extension "
+                "(BITPIX=16, NAXIS=2, NAXIS1=32, NAXIS2=64, EXTNAME='SCI'); HDU 2: "
+                "BINTABLE (BITPIX=8, NAXIS=2, NAXIS1=8, NAXIS2=2, TFIELDS=2, "
+                "TFORM1='0A' [zero-width], TFORM2='8A', PCOUNT=0, GCOUNT=1; 16 data bytes)."
+            ),
+            contract_expectation=(
+                "§4.12 says each eligible IMAGE HDU is replaced when the candidate is "
+                "smaller, and every other HDU is copied byte for byte. That reading "
+                "requires IMAGE HDU 1 rewritten and BINTABLE HDU 2 copied verbatim; "
+                "the accepted-subset clause separately excludes zero-length IMAGE axes, "
+                "not a zero-width BINTABLE column."
+            ),
+            why="§4.12: rewrite the eligible IMAGE HDU; copy the zero-width BINTABLE verbatim",
         )
     )
 
@@ -660,58 +683,75 @@ def map_candidate(before, candidate):
 
 
 def literal_card_diff(original_hdu, reconstructed_hdu):
-    """Every card that differs between two headers, compared by keyword.
+    """A sequence diff of complete 80-column cards, including comments and order.
 
-    The comparison is on the **80 columns** of each card, so it is literal; it is
-    keyed by keyword rather than by position because a single inserted card (the
-    `Z*` set, or the `EXTNAME` the convention adds) would otherwise shift every
-    card after it and bury the one real difference in a cascade of false ones.
-    Repeated keywords — `COMMENT`, `HISTORY`, and the blank keyword — are
-    compared as the ordered list they are.
+    The HDU reader keeps the bytes of each card as text and excludes only the
+    FITS record padding. `END` is added explicitly. This deliberately does not
+    key by keyword or compare only parsed values: either would hide card reordering,
+    comment changes, spacing changes, or duplicate-card movement.
     """
-    before = cards_of(original_hdu)
-    after = cards_of(reconstructed_hdu)
+    before = list(original_hdu.cards) + [original_hdu.end_card]
+    after = list(reconstructed_hdu.cards) + [reconstructed_hdu.end_card]
+    matcher = difflib.SequenceMatcher(a=before, b=after, autojunk=False)
     diffs = []
 
-    def occurrences(pairs):
-        seen = {}
-        for index, pair in enumerate(pairs):
-            seen.setdefault(pair[0], []).append((index, pair))
-        return seen
+    def keyword(card):
+        return card[:8].strip() if card else None
 
-    left = occurrences(before)
-    right = occurrences(after)
-    for keyword in sorted(set(left) | set(right)):
-        a = [pair for _, pair in left.get(keyword, [])]
-        b = [pair for _, pair in right.get(keyword, [])]
-        if a == b:
-            continue
-        if len(a) == len(b) == 1:
-            diffs.append(dict(keyword=keyword, original=a[0], reconstructed=b[0], kind="changed"))
-        elif not a:
-            for pair in b:
-                diffs.append(dict(keyword=keyword, original=None, reconstructed=pair, kind="invented"))
-        elif not b:
-            for pair in a:
-                diffs.append(dict(keyword=keyword, original=pair, reconstructed=None, kind="dropped"))
+    def add(kind, original_index, reconstructed_index, original, reconstructed):
+        old_key, new_key = keyword(original), keyword(reconstructed)
+        if old_key == new_key:
+            key = old_key or "<blank>"
+        elif old_key is None:
+            key = new_key or "<blank>"
+        elif new_key is None:
+            key = old_key or "<blank>"
         else:
-            for index in range(max(len(a), len(b))):
-                one = a[index] if index < len(a) else None
-                two = b[index] if index < len(b) else None
-                diffs.append(dict(keyword=keyword, original=one, reconstructed=two, kind="reordered"))
+            key = "%s -> %s" % (old_key, new_key)
+        diffs.append(dict(
+            keyword=key,
+            original_keyword=old_key,
+            reconstructed_keyword=new_key,
+            original_index=original_index,
+            reconstructed_index=reconstructed_index,
+            original=original,
+            reconstructed=reconstructed,
+            kind=kind,
+        ))
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace":
+            paired = min(i2 - i1, j2 - j1)
+            for offset in range(paired):
+                add("changed", i1 + offset + 1, j1 + offset + 1,
+                    before[i1 + offset], after[j1 + offset])
+            for offset in range(paired, i2 - i1):
+                add("dropped", i1 + offset + 1, None, before[i1 + offset], None)
+            for offset in range(paired, j2 - j1):
+                add("invented", None, j1 + offset + 1, None, after[j1 + offset])
+        elif tag == "delete":
+            for index in range(i1, i2):
+                add("dropped", index + 1, None, before[index], None)
+        elif tag == "insert":
+            for index in range(j1, j2):
+                add("invented", None, index + 1, None, after[index])
     return diffs
 
 
 def classify_diff(diff):
     """Whether §4.12 permits this difference — for the report, never to excuse it."""
     keyword = diff["keyword"]
+    keywords = {diff.get("original_keyword"), diff.get("reconstructed_keyword"), keyword}
     structural = {
         "SIMPLE", "XTENSION", "BITPIX", "NAXIS", "PCOUNT", "GCOUNT", "EXTEND",
         "TFIELDS", "TTYPE1", "TFORM1", "NAXIS1", "NAXIS2",
     }
-    if keyword.startswith("NAXIS") or keyword.startswith("Z") or keyword.startswith("TTYPE") or keyword.startswith("TFORM"):
+    if any(k and (k.startswith("NAXIS") or k.startswith("Z") or k.startswith("TTYPE") or k.startswith("TFORM"))
+           for k in keywords):
         return "structural (allowed to change on a rewritten HDU)"
-    if keyword in structural:
+    if keywords & structural:
         return "structural (allowed to change on a rewritten HDU)"
     if diff["kind"] == "invented":
         return "invented by the writer (allowed only for the generated structural set)"
@@ -876,10 +916,14 @@ def check_fixture(binary, case, root, scratch, evidence):
     kept = os.path.join(scratch, "original-" + case["name"])
     with open(kept, "wb") as handle:
         handle.write(original)
+    evidence.write_bytes("input-" + case["name"], original)
     result = dict(
         name=case["name"],
         why=case["why"],
         expect=case["expect"],
+        input_case=case.get("input_case"),
+        contract_expectation=case.get("contract_expectation"),
+        input_sha256=hashlib.sha256(original).hexdigest(),
         original=kept,
         problems=[],
     )
@@ -887,7 +931,10 @@ def check_fixture(binary, case, root, scratch, evidence):
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
     result["tzim"] = record
+    evidence.write_json("tzim-%s.json" % case["name"], record)
     after = open(path, "rb").read()
+    evidence.write_bytes("candidate-" + case["name"], after)
+    result["candidate_sha256"] = hashlib.sha256(after).hexdigest()
     result["bytes"] = dict(before=len(original), after=len(after))
     if code != 0:
         result["problems"].append("tzim exited %d: %s" % (code, output.strip()[:400]))
@@ -900,22 +947,25 @@ def check_fixture(binary, case, root, scratch, evidence):
             result["problems"].append("status is %r, expected %r" % (status, expected_status))
         if after != original:
             result["problems"].append("a file that must not be rewritten was rewritten")
-        evidence.write_json("tzim-%s.json" % case["name"], record)
         return result
+
+    verify_code, verify_output = fitsverify(path, scratch)
+    result["fitsverify_exit"] = verify_code
+    evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
+    if verify_code != 0:
+        result["problems"].append(
+            "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
+        )
 
     if after == original:
         # `tzim` reports the decision it made; "nothing was written" without that
         # reason is a riddle for whoever reads the log next.
-        decision = (record or {}).get("files") or []
         said = ""
-        for entry in decision:
-            if isinstance(entry, dict):
-                for key in ("reason", "decision", "detail", "action"):
-                    if entry.get(key):
-                        said = " (tzim said: %s)" % entry[key]
-                        break
-            if said:
-                break
+        if record:
+            said = " (tzim said: %s%s)" % (
+                record.get("status", "?"),
+                (": " + record["note"]) if record.get("note") else "",
+            )
         result["problems"].append("the file did not change, so nothing was written%s" % said)
         return result
     if status != "optimized":
@@ -964,19 +1014,11 @@ def check_fixture(binary, case, root, scratch, evidence):
                 "HDU count changed by %+d, the contract says %+d" % (delta, case["hdu_delta"])
             )
 
-    # (1) fitsverify on the candidate, warnings included.
-    verify_code, verify_output = fitsverify(path, scratch)
-    evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
-    result["fitsverify_exit"] = verify_code
-    if verify_code != 0:
-        result["problems"].append(
-            "fitsverify exited %d (errors + warnings); its output is in the evidence" % verify_code
-        )
-
     # (2) funpack rebuilds the file, and the arrays are compared as bytes.
     unpack_code, unpack_output, unpacked = funpack(path, scratch)
     evidence.write_text("funpack-%s.txt" % case["name"], unpack_output)
     result["funpack_exit"] = unpack_code
+    result["funpack_output"] = unpack_output
     if unpack_code != 0 or not unpacked:
         # The exit code alone is not evidence. `funpack` exits 255 for its own
         # errors and what it printed is the only thing that says which.
@@ -1013,8 +1055,10 @@ def check_fixture(binary, case, root, scratch, evidence):
         evidence.write_text(
             "header-diff-%s.txt" % case["name"],
             "\n".join(
-                "%s %s: original %r -> reconstructed %r  [%s]"
-                % (label, d["keyword"], d["original"], d["reconstructed"], d["classification"])
+                "%s: %s card; original index %s, reconstructed index %s; %s\n"
+                "  original: %r\n  reconstructed: %r\n  classification: %s"
+                % (label, d["kind"], d["original_index"], d["reconstructed_index"],
+                   d["keyword"], d["original"], d["reconstructed"], d["classification"])
                 for label, items in diffs.items()
                 for d in items
             ) + "\n",
@@ -1043,6 +1087,15 @@ class Evidence:
             handle.write(text)
         self.written.append(name)
 
+    def write_bytes(self, name, content):
+        with open(self._path(name), "wb") as handle:
+            handle.write(content)
+        self.written.append(name)
+
+    def read_text(self, name):
+        with open(self._path(name), encoding="utf-8") as handle:
+            return handle.read()
+
     def write_json(self, name, payload):
         with open(self._path(name), "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, sort_keys=True, default=str)
@@ -1066,6 +1119,97 @@ class Evidence:
         return digest.hexdigest()
 
 
+def render_diagnostics(summary, evidence):
+    """Human-readable, artifact-backed diagnostics that CI can relay verbatim."""
+    lines = ["# FITS gate diagnostics", ""]
+    diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
+    lines.append("## Literal header diffs")
+    lines.append("")
+    lines.append(
+        "These are sequence diffs of complete 80-column cards (including comments and spacing); "
+        "the `repr` strings retain trailing blanks. The JSON and text originals are sealed in the artifact."
+    )
+    lines.append("")
+    if not diffs:
+        lines.append("No header differences were found.")
+    for fixture in diffs:
+        lines.append("### " + fixture["name"])
+        lines.append("")
+        lines.extend(evidence.read_text("header-diff-%s.txt" % fixture["name"]).rstrip().splitlines())
+        lines.append("")
+
+    multi = next((f for f in summary["fixtures"] if f["name"] == "multi_hdu.fits"), None)
+    lines.append("## multi_hdu.fits tool diagnosis")
+    lines.append("")
+    if multi:
+        lines.append("Fixture result: %s; fitsverify exit %s; funpack exit %s." % (
+            "FAIL" if multi.get("problems") else "ok",
+            multi.get("fitsverify_exit", "not run"),
+            multi.get("funpack_exit", "not run"),
+        ))
+        for name, caption in (("fitsverify-multi_hdu.fits.txt", "fitsverify -l full output"),
+                              ("funpack-multi_hdu.fits.txt", "funpack full output")):
+            lines += ["", "### " + caption, "", "````text"]
+            try:
+                lines.extend(evidence.read_text(name).rstrip().splitlines())
+            except FileNotFoundError:
+                lines.append("(no output file was produced)")
+            lines += ["````", ""]
+    else:
+        lines.append("The fixture did not run.")
+
+    zero = next((f for f in summary["fixtures"] if f["name"] == "zero_width_column.fits"), None)
+    lines.append("## zero_width_column.fits — contract question, no writer change")
+    lines.append("")
+    if zero:
+        lines.append("**Input:** " + (zero.get("input_case") or "description not recorded"))
+        lines.append("")
+        lines.append("Input SHA-256: `%s`; candidate SHA-256: `%s`." % (
+            zero.get("input_sha256", "not recorded"), zero.get("candidate_sha256", "not recorded")))
+        lines.append("")
+        lines.append("**§4.12 reading encoded in the gate:** " +
+                     (zero.get("contract_expectation") or zero.get("why", "not recorded")))
+        lines.append("")
+        record = zero.get("tzim") or {}
+        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s; `fitsverify` exit %s."
+                     % (record.get("status", "?"), record.get("note"),
+                        zero.get("bytes", {}).get("before", "?"),
+                        zero.get("bytes", {}).get("after", "?"),
+                        zero.get("fitsverify_exit", "not run")))
+        lines.append("")
+        lines.append(
+            "The contract reading requires an eligible IMAGE rewrite and a verbatim BINTABLE copy; "
+            "the observed no-change is evidence against that reading, not authority to widen the "
+            "whole-file refusal rule. No writer behavior is changed pending owner agreement."
+        )
+    else:
+        lines.append("The fixture did not run.")
+    lines += ["", "## Controls: two negative controls plus one positive toolchain sanity check", ""]
+    for c in summary.get("controls", []):
+        role = c.get("control_type", "unclassified")
+        lines.append("- `%s` (%s): expected %s; record `%s`." % (
+            c.get("name"), role, c.get("expected", "not recorded"),
+            json.dumps(c, sort_keys=True)))
+    lines.append("")
+    lines.append(
+        "The corrupted-tile control is an integrity-comparison control, not a test that "
+        "fitsverify must reject valid FITS structure with changed image content. Its own "
+        "fitsverify exit is reported separately. The structural control must make "
+        "fitsverify nonzero; the fpack control is positive and must remain exit 0."
+    )
+    lines.append("")
+    for name, caption in (("control-corrupt-fitsverify.txt", "corrupted tile: fitsverify output"),
+                          ("control-structure-fitsverify.txt", "structurally invalid file: fitsverify output"),
+                          ("control-toolchain.txt", "fpack-produced valid file: fitsverify output")):
+        lines += ["### " + caption, "", "````text"]
+        try:
+            lines.extend(evidence.read_text(name).rstrip().splitlines())
+        except FileNotFoundError:
+            lines.append("(no output file was produced)")
+        lines += ["````", ""]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--binary", help="the tzim binary built with --features fits")
@@ -1074,7 +1218,7 @@ def main():
     parser.add_argument(
         "--self-check",
         action="store_true",
-        help="exercise the parser, the diff and both controls without any tool",
+        help="exercise the parser, the diff and both negative controls without tools",
     )
     args = parser.parse_args()
 
@@ -1155,7 +1299,9 @@ def main():
     )
     if good is None:
         summary["controls"].append(
-            dict(name="corrupt_tile", detected=None, note="no accepted candidate to corrupt")
+            dict(name="corrupt_tile", control_type="negative", detected=None,
+                 expected="the integrity comparison detects the changed tile",
+                 note="no accepted candidate to corrupt")
         )
         print("!! no accepted candidate is available, so the corruption control did not run")
         failures += 1
@@ -1195,8 +1341,9 @@ def main():
             ),
         )
         summary["controls"].append(
-            dict(name="corrupt_tile", fixture=good["name"], detected=detected,
-                 fitsverify_exit=verify_code, **detail)
+            dict(name="corrupt_tile", control_type="negative", fixture=good["name"],
+                 expected="intact tile bytes match source; flipped tile does not",
+                 detected=detected, fitsverify_exit=verify_code, note=note, **detail)
         )
         print("control: one bit flipped in a tile -> tiles still match the original: %s;"
               " after the flip: %s; fitsverify exit %d"
@@ -1209,13 +1356,20 @@ def main():
     # the run, not a reason to skip the control silently.
     if good is None:
         summary["controls"].append(
-            dict(name="broken_structure", detected=None, note="no candidate to break")
+            dict(name="broken_structure", control_type="negative", detected=None,
+                 expected="fitsverify rejects NAXIS1 inconsistent with TFORM1",
+                 note="no candidate to break")
         )
         print("!! the structural control did not run: there is no candidate")
         summary["ok"] = False
         evidence.write_json("summary.json", summary)
-        evidence.write_text("summary.md", render_summary(summary))
+        diagnostics = render_diagnostics(summary, evidence)
+        evidence.write_text("ci-diagnostics.md", diagnostics)
+        evidence.write_text("summary.md", render_summary(summary) + "\n" + diagnostics)
         print("evidence digest: %s" % evidence.seal())
+        print("\n=== BEGIN CI diagnostic report (same content as ci-diagnostics.md) ===")
+        print(diagnostics.rstrip())
+        print("=== END CI diagnostic report ===")
         return 1
     candidate_path = os.path.join(root, good["name"])
     broken_path = os.path.join(scratch, "broken-structure.fits")
@@ -1226,7 +1380,9 @@ def main():
         "control-structure.json", dict(**detail, fitsverify_exit=verify_code)
     )
     summary["controls"].append(
-        dict(name="broken_structure", fitsverify_exit=verify_code, **detail)
+        dict(name="broken_structure", control_type="negative",
+             expected="fitsverify exit must be nonzero for NAXIS1/TFORM1 contradiction",
+             detected=(verify_code != 0), fitsverify_exit=verify_code, **detail)
     )
     print("control: NAXIS1 made inconsistent with TFORM1 -> fitsverify exit %d" % verify_code)
     if verify_code == 0:
@@ -1247,7 +1403,8 @@ def main():
     if pack_code != 0 or not os.path.exists(packed):
         tail = " / ".join(line.strip() for line in pack_output.splitlines()[-6:] if line.strip())
         summary["controls"].append(
-            dict(name="toolchain", ok=False, note="fpack failed: %s" % (tail or "no output"))
+            dict(name="toolchain", control_type="positive_sanity", ok=False,
+                 expected="fpack output passes fitsverify", note="fpack failed: %s" % (tail or "no output"))
         )
         # The annotation is the only channel that survives when neither the log nor
         # the artifact can be read: put the tool's own words in it.
@@ -1259,7 +1416,10 @@ def main():
     else:
         verify_code, verify_output = fitsverify(packed, sane_src)
         evidence.write_text("control-toolchain.txt", verify_output)
-        summary["controls"].append(dict(name="toolchain", fpack=pack_code, fitsverify=verify_code))
+        summary["controls"].append(dict(name="toolchain", control_type="positive_sanity",
+                                         expected="fpack output passes fitsverify",
+                                         fpack=pack_code, fitsverify=verify_code,
+                                         ok=(verify_code == 0)))
         print("control: fpack's own output -> fitsverify exit %d" % verify_code)
         if verify_code != 0:
             print("::error::fitsverify rejected fpack's own output; a red gate would say"
@@ -1288,15 +1448,22 @@ def main():
 
     summary["ok"] = failures == 0
     evidence.write_json("summary.json", summary)
-    evidence.write_text("summary.md", render_summary(summary))
+    diagnostics = render_diagnostics(summary, evidence)
+    evidence.write_text("ci-diagnostics.md", diagnostics)
+    evidence.write_text("summary.md", render_summary(summary) + "\n" + diagnostics)
     digest = evidence.seal()
     print()
     for case in summary["fixtures"]:
         for problem in case["problems"][:3]:
             print("::error::%s: %s" % (case["name"], problem))
-    print("%d fixture(s), %d control(s), %d failure(s)"
-          % (len(summary["fixtures"]), len(summary["controls"]), failures))
+    negative_count = sum(1 for c in summary["controls"] if c.get("control_type") == "negative")
+    positive_count = sum(1 for c in summary["controls"] if c.get("control_type") == "positive_sanity")
+    print("%d fixture(s), %d negative control(s), %d positive sanity control(s), %d failure(s)"
+          % (len(summary["fixtures"]), negative_count, positive_count, failures))
     print("evidence digest: %s" % digest)
+    print("\n=== BEGIN CI diagnostic report (same content as ci-diagnostics.md) ===")
+    print(diagnostics.rstrip())
+    print("=== END CI diagnostic report ===")
     return 0 if failures == 0 else 1
 
 
@@ -1340,7 +1507,25 @@ def self_check(root, cases, scratch, evidence, summary):
     check(len(diffs) == 1, "the diff found %d differences for one changed card" % len(diffs))
     if diffs:
         check("changed" in classify_diff(diffs[0]), "a changed card was not classified as changed")
-    print("header diff: one changed card is reported once")
+        check(len(diffs[0].get("original", "")) == CARD,
+              "the header diff did not retain the full 80-column original card")
+
+    # A change in a trailing/comment column that the old parsed-value comparison
+    # ignored must be visible; card order is also part of the literal sequence.
+    object_index = next(i for i, card in enumerate(base.cards) if card[:8].strip() == "OBJECT")
+    card = list(base.cards[object_index])
+    card[55] = "X"
+    changed_comment = list(base.cards)
+    changed_comment[object_index] = "".join(card)
+    comment_diff = literal_card_diff(base, Hdu(changed_comment, base.data, base.raw, 0))
+    check(bool(comment_diff), "the literal diff ignored a change beyond column 30")
+    reordered = list(base.cards)
+    object_index = next(i for i, card in enumerate(reordered) if card[:8].strip() == "OBJECT")
+    bunit_index = next(i for i, card in enumerate(reordered) if card[:8].strip() == "BUNIT")
+    reordered[object_index], reordered[bunit_index] = reordered[bunit_index], reordered[object_index]
+    order_diff = literal_card_diff(base, Hdu(reordered, base.data, base.raw, 0))
+    check(bool(order_diff), "the literal diff ignored a card reordering")
+    print("header diff: complete 80-column content, comments and card order are compared")
 
     # The corruption control flips exactly one bit inside the heap of a table we
     # build ourselves (no tzim is available here), and the byte comparison sees it.
@@ -1475,9 +1660,29 @@ def render_summary(summary):
                 "; ".join(problems) if problems else "none",
             )
         )
+    zero = next((f for f in summary["fixtures"] if f["name"] == "zero_width_column.fits"), None)
+    if zero:
+        lines += ["", "## zero-width column: unresolved contract reading", ""]
+        lines.append("**Input:** " + (zero.get("input_case") or "description not recorded"))
+        lines.append("")
+        lines.append("Input SHA-256: `%s`; candidate SHA-256: `%s`." % (
+            zero.get("input_sha256", "not recorded"), zero.get("candidate_sha256", "not recorded")))
+        lines.append("")
+        lines.append("**Contract reading:** " + (zero.get("contract_expectation") or zero.get("why", "not recorded")))
+        lines.append("")
+        record = zero.get("tzim") or {}
+        lines.append("**Observed:** status `%s`, note `%s`; bytes %s → %s; `fitsverify` exit %s."
+                     % (record.get("status", "?"), record.get("note"),
+                        zero.get("bytes", {}).get("before", "?"),
+                        zero.get("bytes", {}).get("after", "?"),
+                        zero.get("fitsverify_exit", "not run")))
+        lines.append("")
+        lines.append("No writer behavior is changed pending agreement; no whole-file refusal is inferred.")
     lines += ["", "## controls", ""]
     for c in summary["controls"]:
-        lines.append("- `%s`: %s" % (c.get("name"), json.dumps(c, sort_keys=True)))
+        lines.append("- `%s` (%s; expected: %s): %s" % (
+            c.get("name"), c.get("control_type", "unclassified"),
+            c.get("expected", "not recorded"), json.dumps(c, sort_keys=True)))
     lines += ["", "Overall: **%s**" % ("PASS" if summary["ok"] else "FAIL")]
     return "\n".join(lines) + "\n"
 

@@ -252,6 +252,7 @@ def main():
     ap.add_argument("--root", default="/tmp/corpus", help="directory holding the checkouts")
     ap.add_argument("--manifest", default="", help="per-file manifest from measure-fetch.py")
     ap.add_argument("--out", default="/tmp/pdf.jsonl")
+    ap.add_argument("--render-out", default="", help="JSONL records for the exact render sample")
     ap.add_argument("--render-sample", type=int, default=140,
                     help="files rendered and compared; 0 disables the check")
     args = ap.parse_args()
@@ -272,6 +273,7 @@ def main():
 
     scratch = "/tmp/pdf-measure-check.out"
     outdir = "/tmp/pdf-measure-out"
+    render_path = args.render_out or (args.out + ".render-sample.jsonl")
     os.makedirs(outdir, exist_ok=True)
     rows, n = [], 0
     for corpus, _single, batch in work:
@@ -290,6 +292,7 @@ def main():
                    "status": status, "reason": reason, **info}
             if recorded is not None:
                 row["manifest_sha256"] = recorded["sha256"]
+                row["manifest_path"] = recorded["path"]
             if status == "accepted":
                 nstr, total, after = faithful(path)
                 cand, repack = qpdf_jobs(path, outdir, tag)
@@ -322,25 +325,63 @@ def main():
                      100 * sum(1 for x in p if x > 0) / len(p)))
         print("qpdf --check passed: %d/%d" % (sum(1 for r in acc if r["check_ok"]), len(acc)))
 
+    render_rows = []
     if args.render_sample and acc:
-        random.seed(57)
+        render_seed = 57
+        random.seed(render_seed)
         sample = random.sample(acc, min(args.render_sample, len(acc)))
-        compared = pages = bad = 0
-        for r in sample:
+        compared = pages = bad = errors = 0
+        for order, r in enumerate(sample, start=1):
             cand = os.path.join(outdir, "render.pdf")
-            pikepdf.Job(["--recompress-flate", "--compression-level=9",
-                         "--object-streams=preserve", r["path"], cand]).run()
+            record = dict(
+                sample_order=order,
+                sample_seed=render_seed,
+                sample_size=len(sample),
+                corpus=r["corpus"],
+                path=r["path"],
+                relative_path=r.get("manifest_path") or os.path.relpath(r["path"], args.root),
+                bytes=r["bytes"],
+                manifest_sha256=r.get("manifest_sha256"),
+                status=r["status"],
+                dpi=100,
+                page_cap=6,
+                rendered=False,
+                render_error=None,
+            )
             try:
+                pikepdf.Job(["--recompress-flate", "--compression-level=9",
+                             "--object-streams=preserve", r["path"], cand]).run()
                 a, na = render_digests(r["path"])
                 b, nb = render_digests(cand)
-            except Exception:                       # noqa: BLE001
+            except Exception as error:               # noqa: BLE001
+                record["render_error"] = "%s: %s" % (type(error).__name__, error)
+                render_rows.append(record)
+                errors += 1
+                print("render error:", r["path"], record["render_error"])
                 continue
+            record.update(
+                rendered=True,
+                original_pages=na,
+                candidate_pages=nb,
+                original_page_digests=a,
+                candidate_page_digests=b,
+                compared_pages=len(a),
+                identical=(a == b and na == nb),
+            )
             compared += 1
             pages += len(a)
-            if a != b or na != nb:
+            if not record["identical"]:
                 bad += 1
                 print("render difference:", r["path"])
+            render_rows.append(record)
         print("rendered %d files, %d pages, %d differences" % (compared, pages, bad))
+        if errors:
+            print("render errors %d/%d sampled files" % (errors, len(sample)))
+
+    os.makedirs(os.path.dirname(os.path.abspath(render_path)), exist_ok=True)
+    with open(render_path, "w", encoding="utf-8") as handle:
+        for record in render_rows:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":
