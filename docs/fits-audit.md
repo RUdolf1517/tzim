@@ -221,7 +221,11 @@ distribution (median, quartiles, share above zero) **separately for the two tier
 ### 8.1 What was actually run, and with what
 
 The measurement was made where `fpack`, `fitsverify` and `funpack` were not installable and no archive was
-reachable. The substitutes are named, because a substitute is only honest when it is named:
+reachable. The instrument is committed: [`.github/scripts/fits-measure.py`](../.github/scripts/fits-measure.py)
+reproduces the numbers in §8.2 from the checkouts listed below — it is not part of the build and not a
+dependency of the crate, and its header carries the exact `git clone` commands and the pinned commits. A number
+nobody can re-run is a claim; the script is what makes this one a measurement. The substitutes are named,
+because a substitute is only honest when it is named:
 
 | Needed | Used instead | Why it is equivalent enough |
 | --- | --- | --- |

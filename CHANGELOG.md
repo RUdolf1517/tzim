@@ -13,6 +13,19 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ### Added
 
+- **FITS: an uncompressed image HDU becomes a tile-compressed table** (#70), behind two doors that are both
+  shut by default. `--fits-tile` is the transformation: without it the handler refuses and says why, because an
+  `IMAGE` extension becoming a `BINTABLE` is visible to every reader that indexes `NAXIS1`. The `fits` cargo
+  feature is the code, and it is **not** in `default` — it measures **+36 864 bytes** (36 KiB), which would move
+  the release binary off its byte-exact gate ([size-budget §3](docs/size-budget.md#3-feature-matrix)) — so a
+  build that wants FITS is `cargo build --release --features fits` and `--list-formats` names FITS only there.
+  One tile per row, `GZIP_1` for integer data and `GZIP_2` for floating point with the decreasing-significance
+  permutation the convention specifies, quantisation off and stated in the header (`ZNAME1 = 'NOISEBIT'`,
+  `ZVAL1 = 0`), every other HDU copied verbatim including `NonstandardExtHDU`s such as `HDRLET`, and an HDU
+  carrying `CHECKSUM`/`DATASUM` refused rather than rewritten with a checksum that no longer matches. Verification
+  is this repository's own reader for structure and a gzip member's CRC-32 and `ISIZE` for content, with
+  `astropy` reading every candidate back in the `fits oracle` job. The contract is
+  [guarantees §4.12](docs/guarantees.md); the release is still gated on `fitsverify`, which has not run anywhere.
 - **`--info` states the JPEG verification level of the build it is in** (#66). The shipped binary verifies a
   JPEG candidate with the codec that wrote it, and [guarantees §2.6](docs/guarantees.md#26-verification-independence)
   has said so since v0.4 — but the tool did not, so a user could only learn it from the documentation. The line
@@ -72,10 +85,7 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   the corpus, against a bar of 8 % and 15 %, with every array compared bit for bit after the round trip;
   recompressing tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %**, because the ones in the corpus are
   already at roughly level 6. The first tier is admissible as an opt-in `--fits-tile`; the second does not ship.
-  No handler existed when the audit landed — [guarantees
-  §4.12](docs/guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) said "admitted, not implemented"
-  rather than "not yet justified" — and the handler that admission allowed is in this release, behind
-  `--fits-tile`, out of `default` because it measures +36 KiB.
+  The handler that follows from the admission is under `### Added` below.
 - **A correction the FITS audit earned:** the tile payload of `GZIP_1`/`GZIP_2` is a **gzip** member (RFC 1952,
   CRC-32 and `ISIZE`), not an RFC 1950 zlib stream as [fits-audit §0](docs/fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source)
   had assumed, and the `GZIP_2` permutation is the decreasing order of significance the convention states. Both

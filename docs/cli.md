@@ -102,7 +102,8 @@ reproducible and diffable.
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
 | `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
-| `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`); naming `jpeg` is the only way to enable it |
+| `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`); naming `jpeg` is the only way to enable it |
+| `--fits-tile` | off | FITS: rewrite an uncompressed image HDU as a tile-compressed binary table (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off, one tile per row, every other HDU copied verbatim). Off because it turns an `IMAGE` extension into a `BINTABLE`; without it the handler refuses and says why. The handler is compiled in only with the `fits` cargo feature, so a `default` build answers `unsupported` — see §4.12 of [guarantees](guarantees.md) |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
 | `--max-depth <N>` | `3` | how deep `--nested` may recurse (`0` is rejected) |
