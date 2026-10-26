@@ -214,7 +214,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/fits-heasarc.log" fits-heasarc
+        run: |
+          set -uo pipefail
+          log="${RUNNER_TEMP}/fits-heasarc.log"
+          if [ ! -s "$log" ]; then
+            echo "no gate log was produced; the failure is in an earlier step" > "$log"
+          fi
+          bash .github/scripts/ci-report.sh "$log" fits-heasarc
+          echo "relayed $((wc -c < "$log")) bytes to the pull request"
 
       - name: Keep the evidence
         if: always()

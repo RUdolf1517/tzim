@@ -1234,10 +1234,14 @@ def main():
     pack_code, pack_output = run(["fpack", "-O", "sanity.fits"], cwd=sane_src)
     packed = os.path.join(sane_src, "sanity.fits.fz")
     if pack_code != 0 or not os.path.exists(packed):
-        tail = " / ".join(line.strip() for line in pack_output.splitlines()[-3:] if line.strip())
+        tail = " / ".join(line.strip() for line in pack_output.splitlines()[-6:] if line.strip())
         summary["controls"].append(
             dict(name="toolchain", ok=False, note="fpack failed: %s" % (tail or "no output"))
         )
+        # The annotation is the only channel that survives when neither the log nor
+        # the artifact can be read: put the tool's own words in it.
+        print("::error::fpack exited %d and produced no reference file: %s"
+              % (pack_code, tail or "no output"))
         evidence.write_text("control-toolchain.txt", pack_output)
         print("::error::fpack could not produce a reference file, so the tools are not trustworthy")
         failures += 1
@@ -1276,6 +1280,9 @@ def main():
     evidence.write_text("summary.md", render_summary(summary))
     digest = evidence.seal()
     print()
+    for case in summary["fixtures"]:
+        for problem in case["problems"][:3]:
+            print("::error::%s: %s" % (case["name"], problem))
     print("%d fixture(s), %d control(s), %d failure(s)"
           % (len(summary["fixtures"]), len(summary["controls"]), failures))
     print("evidence digest: %s" % digest)
