@@ -1078,6 +1078,15 @@ def main():
     if not args.binary:
         parser.error("--binary is required unless --self-check is given")
 
+    # Every candidate is produced by running the binary from the fixture's own
+    # directory, so a relative path is resolved **once**, here: `cwd=` would
+    # otherwise look for `target/release/tzim` inside the scratch directory, which
+    # is how the first real run of this gate died with FileNotFoundError.
+    args.binary = os.path.abspath(args.binary)
+    if not os.access(args.binary, os.X_OK):
+        print("::error::%s is not an executable file" % args.binary)
+        return 2
+
     # The tools first: a missing tool must not look like a rejected candidate.
     for name in ("fitsverify", "funpack", "fpack"):
         if shutil.which(name) is None:
