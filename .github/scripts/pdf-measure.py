@@ -10,19 +10,21 @@ than from a paragraph.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pikepdf PyMuPDF
     /tmp/v/bin/python .github/scripts/pdf-measure.py --root /tmp/corpus --out /tmp/pdf.jsonl
 
-`--root` is a directory holding the checkouts below; the corpus is fetched, never
-committed, exactly as `.github/scripts/corpus.sh` does it for the other formats:
+The corpus is **not** fetched here. `--root` holds a tree that
+`.github/scripts/measure-fetch.py` produced from pinned codeload archives, together
+with a per-file manifest; `--manifest` makes this script read exactly the files that
+manifest names, at the byte length it records, instead of globbing whatever is on
+disk:
 
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/mozilla/pdf.js.git
-    git -C pdf.js sparse-checkout set test/pdfs
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/qpdf/qpdf.git
-    git -C qpdf sparse-checkout set qpdf/qtest
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/veraPDF/veraPDF-corpus.git
-    git -C veraPDF-corpus sparse-checkout set PDF_A-1b
+    python3 .github/scripts/measure-fetch.py --root /tmp/corpus --manifest /tmp/corpus/manifest.json
+    /tmp/v/bin/python .github/scripts/pdf-measure.py --root /tmp/corpus \
+        --manifest /tmp/corpus/manifest.json --out /tmp/pdf.jsonl
 
 Pinned at the commits the audit quotes: pdf.js `606bd6a4e138`, qpdf `4eba95899886`,
-veraPDF-corpus `bb75f4f0073d`. A commit pins the exact bytes; an archive hash does
-not survive a re-tarball.
+veraPDF-corpus `bb75f4f0073d`. A commit pins the exact bytes; a codeload tarball at
+that commit does **not** have to (GitHub regenerates it on demand), which is why the
+manifest's per-file hashes — not the archive hash — are what a re-run is checked
+against.
 
 `pikepdf` ships libqpdf and `PyMuPDF` ships MuPDF, so `qpdf` and `mutool` do not
 have to be installed: the same libraries, driven in-process. The audit records the
@@ -232,30 +234,62 @@ def render_digests(path, pages=6, dpi=100):
     return out, n
 
 
+def from_manifest(path):
+    """(corpus, path, row) for every PDF the manifest names, in manifest order."""
+    with open(path) as f:
+        manifest = json.load(f)
+    out = []
+    for corpus in manifest["corpora"]:
+        if corpus["format"] != "pdf":
+            continue
+        for row in corpus["entries"]:
+            out.append((corpus["name"], row["path"], row))
+    return manifest, out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default="/tmp/corpus", help="directory holding the checkouts")
+    ap.add_argument("--manifest", default="", help="per-file manifest from measure-fetch.py")
     ap.add_argument("--out", default="/tmp/pdf.jsonl")
     ap.add_argument("--render-sample", type=int, default=140,
                     help="files rendered and compared; 0 disables the check")
     args = ap.parse_args()
 
+    if args.manifest:
+        manifest, named = from_manifest(args.manifest)
+        print("manifest digest %s, %d PDF files" % (manifest["manifest_digest"], len(named)))
+        work = [(corpus, None, [(path, row)]) for corpus, path, row in named]
+    else:
+        work = []
+        for corpus, (repo, sub) in CORPORA.items():
+            root = os.path.join(args.root, repo)
+            if not os.path.isdir(root):
+                print("missing checkout: %s (see the docstring)" % root, file=sys.stderr)
+                continue
+            for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.pdf"), recursive=True)):
+                work.append((corpus, path, [(path, None)]))
+
     scratch = "/tmp/pdf-measure-check.out"
     outdir = "/tmp/pdf-measure-out"
     os.makedirs(outdir, exist_ok=True)
     rows, n = [], 0
-    for corpus, (repo, sub) in CORPORA.items():
-        root = os.path.join(args.root, repo)
-        if not os.path.isdir(root):
-            print("missing checkout: %s (see the docstring)" % root, file=sys.stderr)
-            continue
-        for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.pdf"), recursive=True)):
+    for corpus, _single, batch in work:
+        for path, recorded in batch:
+            path = path if os.path.isabs(path) else os.path.join(args.root, path)
+            if recorded is not None and os.path.getsize(path) != recorded["bytes"]:
+                raise SystemExit(
+                    "%s is %d bytes, the manifest says %d — run measure-fetch.py --verify"
+                    % (path, os.path.getsize(path), recorded["bytes"])
+                )
             n += 1
             size = os.path.getsize(path)
             tag = "%s_%05d" % (corpus, n)
             status, reason, info = classify(path, scratch)
             row = {"corpus": corpus, "path": path, "bytes": size,
                    "status": status, "reason": reason, **info}
+            if recorded is not None:
+                row["manifest_sha256"] = recorded["sha256"]
             if status == "accepted":
                 nstr, total, after = faithful(path)
                 cand, repack = qpdf_jobs(path, outdir, tag)

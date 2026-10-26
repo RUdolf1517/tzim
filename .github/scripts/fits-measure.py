@@ -8,19 +8,22 @@ numbers in the audit can be reproduced.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install numpy astropy
     /tmp/v/bin/python .github/scripts/fits-measure.py --root /tmp/corpus --out /tmp/fits.jsonl
 
-`--root` holds the checkouts; the corpus is fetched, never committed:
+The corpus is **not** fetched here. `--root` holds a tree that
+`.github/scripts/measure-fetch.py` produced from pinned codeload archives and
+described in a per-file manifest, and `--manifest` makes this script read exactly
+the files that manifest names — no `glob` of whatever happens to be on disk:
 
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/astropy/astropy.git
-    git -C astropy sparse-checkout set astropy/io/fits/tests/data
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/heasarc/cfitsio.git
-    git -C cfitsio sparse-checkout set testprog
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/spacetelescope/drizzlepac.git
-    git -C drizzlepac sparse-checkout set tests drizzlepac/pars
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/astropy/reproject.git
-    git -C reproject sparse-checkout set reproject
+    python3 .github/scripts/measure-fetch.py --root /tmp/corpus --manifest /tmp/corpus/manifest.json
+    /tmp/v/bin/python .github/scripts/fits-measure.py --root /tmp/corpus \
+        --manifest /tmp/corpus/manifest.json --out /tmp/fits.jsonl
 
 Pinned at the commits the audit quotes: astropy `dbbf2acd6dbb`, cfitsio
 `113781d8aa44`, drizzlepac `635834581ea2`, reproject `9dddd419111a`.
+
+The earlier instruction here was `git clone --depth 1` of a default branch, which
+does **not** contain the commit the audit quotes, and `git fetch origin <sha>`,
+which GitHub refuses (no arbitrary SHA is a ref). That is why the acquisition
+moved to codeload-at-a-SHA plus a SHA-256 and a manifest — see issue #72.
 
 `fpack` and `fitsverify` are not needed and were not available where this ran:
 `astropy`'s `CompImageHDU` calls the same CFITSIO tile writer `fpack` calls, and
@@ -71,6 +74,16 @@ def eligible(hdu):
     return not hdu.header.get("GROUPS")
 
 
+def eligible_count(path):
+    """The denominator: how many image HDUs a correct rebuild has to carry.
+
+    One definition, used by the instrument and by the tests that guard it, so that
+    "every image HDU was processed" cannot be answered by two different counts.
+    """
+    with fits.open(path) as hdul:
+        return sum(1 for h in hdul if eligible(h))
+
+
 def rebuild(path, out):
     """The whole file, every eligible image HDU compressed the way fpack would.
 
@@ -102,10 +115,20 @@ def rebuild(path, out):
 
 
 def verify(path, out, mapping):
-    """Every image array identical bit for bit, and every carried keyword equal."""
+    """Every image array identical bit for bit, and every carried keyword equal.
+
+    The count is checked against the **source**, not against the caller's mapping.
+    A mapping that quietly omits an eligible image HDU would otherwise leave that
+    HDU unexamined and the file looking correct — which is exactly the shape of
+    the bug this measurement once had: a numerator that shrinks with the work.
+    """
     with fits.open(path) as a, fits.open(out) as b:
         if len(b) < len(a):
             return False, "hdu_count"
+        expected = eligible_count(path)
+        covered = {orig for orig, _ in mapping}
+        if len(mapping) != expected or len(covered) != expected:
+            return False, "images_%d_of_%d" % (len(covered), expected)
         for orig, cand in mapping:
             ha, hb = a[orig], b[cand]
             da, db = np.asarray(ha.data), np.asarray(hb.data)
@@ -150,24 +173,64 @@ def recompress(payloads, level=9):
     return old, new
 
 
+def from_manifest(path):
+    """(corpus, absolute path) for every FITS file the manifest names.
+
+    The manifest is the single acquisition authority: a file it does not name is
+    not measured, and a file it names that is missing is an error rather than a
+    quietly smaller corpus.
+    """
+    with open(path) as f:
+        manifest = json.load(f)
+    out = []
+    for corpus in manifest["corpora"]:
+        if corpus["format"] != "fits":
+            continue
+        for row in corpus["entries"]:
+            out.append((corpus["name"], row["path"], row))
+    return manifest, out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default="/tmp/corpus")
+    ap.add_argument("--manifest", default="", help="per-file manifest from measure-fetch.py")
     ap.add_argument("--out", default="/tmp/fits.jsonl")
     args = ap.parse_args()
 
+    if args.manifest:
+        manifest, files = from_manifest(args.manifest)
+        corpora = [(name, "", [(path, row)]) for name, path, row in files]
+        print("manifest digest %s, %d FITS files" % (manifest["manifest_digest"], len(files)))
+    else:
+        corpora = []
+        for corpus, repo, sub in CORPORA:
+            root = os.path.join(args.root, repo)
+            if not os.path.isdir(root):
+                print("missing checkout:", root)
+                continue
+            for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.fit*"), recursive=True)):
+                if path.lower().endswith((".fits", ".fit", ".fts")):
+                    corpora.append((corpus, path, [(path, None)]))
+
     rows, seen = [], set()
-    for corpus, repo, sub in CORPORA:
-        root = os.path.join(args.root, repo)
-        if not os.path.isdir(root):
-            print("missing checkout:", root)
-            continue
-        for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.fit*"), recursive=True)):
-            if not path.lower().endswith((".fits", ".fit", ".fts")) or path in seen:
+    for corpus, single, batch in corpora:
+        for path, recorded in batch:
+            path = path if os.path.isabs(path) else os.path.join(args.root, path)
+            if recorded is not None:
+                size = os.path.getsize(path)
+                if size != recorded["bytes"]:
+                    raise SystemExit(
+                        "%s is %d bytes, the manifest says %d — run measure-fetch.py --verify"
+                        % (path, size, recorded["bytes"])
+                    )
+            if path in seen:
                 continue
             seen.add(path)
             size = os.path.getsize(path)
             row = {"corpus": corpus, "path": path, "bytes": size}
+            if recorded is not None:
+                row["manifest_sha256"] = recorded["sha256"]
             try:
                 with fits.open(path) as hdul:
                     n = sum(1 for h in hdul if eligible(h))
@@ -191,7 +254,7 @@ def main():
             ok, why = verify(path, out, mapping)
             new_size = os.path.getsize(out)
             result = recompress(tiles(out))
-            row.update(status="tier2", images=images, new_size=new_size,
+            row.update(status="tier2", images=images, eligible_images=n, new_size=new_size,
                        pct=100.0 * (size - new_size) / size if size else 0.0,
                        exact=ok, why=why)
             if result:

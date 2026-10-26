@@ -1222,6 +1222,26 @@ def main():
                   " nothing about this program")
             failures += 1
 
+    # --- what the owner has to decide, counted but not excused ----------------
+    # A rewritten HDU that gains an `EXTNAME` it did not have is a *design*
+    # difference between this program and `fpack`, not a defect of the rewrite,
+    # and §4.12 does not obviously permit it. It is kept as a failure — nothing
+    # here normalises it away — but it is counted separately so that the owner can
+    # tell "the gate found the known open question" from "the gate found something
+    # new". #71 escalation, see the hand-off note.
+    escalation = []
+    for case in summary["fixtures"]:
+        diffs = case.get("header_diff") or {}
+        cards = [d for items in diffs.values() for d in items]
+        if cards and all(d["keyword"] == "EXTNAME" and d["kind"] == "invented" for d in cards):
+            escalation.append(case["name"])
+    summary["escalation"] = escalation
+    if escalation:
+        print(
+            "escalation: %d fixture(s) differ only by an `EXTNAME` this writer adds — owner decision,"
+            " still a failure here: %s" % (len(escalation), ", ".join(escalation))
+        )
+
     summary["ok"] = failures == 0
     evidence.write_json("summary.json", summary)
     evidence.write_text("summary.md", render_summary(summary))

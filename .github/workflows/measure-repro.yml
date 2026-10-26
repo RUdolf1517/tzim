@@ -1,0 +1,148 @@
+name: measure-repro
+
+# #72: re-run the two published measurements from a corpus that a stranger can
+# re-create, and say out loud whether the numbers still reproduce.
+#
+# The audits' figures (`docs/fits-audit.md` §8.2, `docs/pdf-audit.md` §9.2) came
+# from a corpus fetched by hand and recorded as "repository plus commit". That is
+# not re-runnable: `git clone --depth 1` takes a default branch, and GitHub does
+# not serve an arbitrary SHA as a ref, so the commit the audit quotes is not what
+# a reader would get. This job anchors the corpus on
+#
+#   * `codeload` URLs at full commit SHAs,
+#   * a SHA-256 for each of the seven archives,
+#   * and a per-file manifest — size and SHA-256 — for all 2 386 files,
+#
+# and then verifies the extracted tree against that manifest immediately before
+# measuring, and refuses to read a file the manifest does not name. The archive
+# hashes are the **first** recorded baseline for those URLs; nobody is claiming
+# they are the archives the original runs used, and a changed tarball is detected
+# only because the baseline exists from now on.
+#
+# Not a merge requirement, and not allowed to be quiet either: no
+# `continue-on-error`, and a disagreement with the publication is a red run. It is
+# a question for the owner — is the audit wrong, or did the environment move — not
+# something to normalise away.
+#
+# Open gaps this job does not close, and cannot: no archive survey FITS product
+# (still small test cutouts, so the FITS gains remain gains on small images), and
+# no PDF from the toolchain that produced the published PDF corpus. The eight and
+# fifteen per cent thresholds quoted in the audits are the old pre-registered
+# numbers, reported — not a new pre-registration.
+
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/fits-measure.py"
+      - ".github/scripts/pdf-measure.py"
+      - ".github/scripts/measure-fetch.py"
+      - ".github/scripts/measure-repro.py"
+      - ".github/scripts/measure-requirements.txt"
+      - ".github/scripts/test_measure.py"
+      - ".github/workflows/measure-repro.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Largest single download is veraPDF's corpus at 140 967 512 bytes; the seven
+  # together are about 290 MB, and they are not cached between runs, because a
+  # cache hit would hide exactly the tarball change this job exists to notice.
+  MEASURE_ROOT: ${{ github.workspace }}/.measure-corpus
+
+jobs:
+  measure:
+    name: re-run the published measurements
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Record what the runner is
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          {
+            echo "runner: ubuntu-24.04, $(nproc) cpu, $(free -g | awk '/Mem:/ {print $2}') GiB"
+            echo "workflow: measure-repro, run ${{ github.run_id }}, commit ${{ github.sha }}"
+            uname -a
+            date -u
+          } | tee evidence/runner.txt
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned measurement environment
+        # `--require-hashes` is the whole point: every wheel is named and hashed,
+        # so a different numpy, astropy, libqpdf or MuPDF than the one these
+        # numbers were recorded with cannot slip in. The versions this installs
+        # are written to the evidence below.
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --require-hashes \
+            -r .github/scripts/measure-requirements.txt
+          {
+            python -VV
+            python -m pip freeze
+          } | tee evidence/environment.txt
+
+      - name: Negative controls for the two bugs these instruments have had
+        # Runs before the corpus is touched, so a broken guard is not buried
+        # under a two-minute download. Both tests fail if the instrument is put
+        # back into the state where it counted fewer things than it looked at.
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s .github/scripts -p 'test_*.py' -v 2>&1 \
+            | tee evidence/negative-controls.txt
+
+      - name: Fetch the corpus from pinned archives and write the manifest
+        run: |
+          set -euo pipefail
+          python .github/scripts/measure-fetch.py \
+            --root "$MEASURE_ROOT" \
+            --manifest "$MEASURE_ROOT/manifest.json" 2>&1 | tee evidence/fetch.txt
+          cp "$MEASURE_ROOT/manifest.json" evidence/manifest.json
+
+      - name: Re-run the measurements and compare with the publication
+        # The script verifies the manifest itself before measuring and returns
+        # non-zero on any disagreement; `set -e` is what makes this step red.
+        run: |
+          set -euo pipefail
+          python .github/scripts/measure-repro.py \
+            --root "$MEASURE_ROOT" \
+            --manifest "$MEASURE_ROOT/manifest.json" \
+            --out evidence/run 2>&1 | tee evidence/repro.txt
+
+      - name: Seal the evidence
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ -f evidence/run/SHA256SUMS ]; then
+            ( cd evidence/run && sha256sum -c SHA256SUMS ) | tee evidence/bundle-check.txt
+          fi
+          ( cd evidence && find . -type f ! -name SHA256SUMS -print0 | sort -z | \
+              xargs -0 sha256sum > SHA256SUMS ) || true
+          echo "evidence digest: $(sha256sum evidence/SHA256SUMS | cut -d' ' -f1)" | tee evidence/digest.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### Measurement re-run"
+            if [ -f evidence/run/summary.md ]; then
+              tail -n +2 evidence/run/summary.md
+            else
+              echo "The run did not produce a summary; see the step logs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: measure-repro-evidence
+          path: evidence
+          retention-days: 90
+          if-no-files-found: error
