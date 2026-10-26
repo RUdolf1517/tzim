@@ -962,12 +962,13 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
     // unchecked `table` indexes past the bytes instead of failing. Every step is
     // checked, because `NAXIS2` and `PCOUNT` are numbers a file chose.
     if heap_len < 0 || table > b.data_len {
-        return Err(Error::verify(
-            "fits: the row count does not fit the table's own data",
-        ));
+        return Err(Error::verify("fits: the row count does not fit the data"));
     }
     let heap_len = heap_len as u64;
-    if table.checked_add(heap_len).is_none_or(|used| used > b.data_len) {
+    if table
+        .checked_add(heap_len)
+        .is_none_or(|used| used > b.data_len)
+    {
         return Err(Error::verify("fits: PCOUNT does not describe the heap"));
     }
     let heap_start = b.data_start + table as usize;

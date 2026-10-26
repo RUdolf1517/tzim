@@ -266,6 +266,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # `ci-report.sh` publishes the failing log as a pull-request comment, and
+      # a job-level `permissions` block *replaces* the workflow's: with
+      # `contents` alone the comment is a 403 and the failure is silent, which
+      # is what happened to this job's own log until it was noticed.
+      pull-requests: write
     # The same group as the `lockfile` job: the two writers must not race.
     concurrency:
       group: branch-write-${{ github.ref }}
