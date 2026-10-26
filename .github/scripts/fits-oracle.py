@@ -292,7 +292,7 @@ def build_fixtures(root):
     )
     with open(os.path.join(root, "scaled.fits"), "wb") as handle:
         handle.write(scaled)
-    cases.append({"name": "scaled.fits", "expect": "skipped", "reason": "BSCALE"})
+    cases.append({"name": "scaled.fits", "expect": "skipped", "reason": "BZERO"})
 
     return cases
 

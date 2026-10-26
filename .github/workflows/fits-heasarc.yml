@@ -38,8 +38,8 @@ env:
   # Pinned provenance. The SHA-256 values were computed from the archives this
   # workflow downloads; the feedstock identity is what the alternative route
   # would have installed.
-  CFITSIO_COMMIT: "113781d8aa44"
-  CFITSIO_SHA256: "cc5f1cc219b0de8f8d8500236b080bff13d2de12b9ed253c7a417b1b7d962509"
+  CFITSIO_COMMIT: "113781d8aa442cf8d3c27295d9084674b8b039f2"
+  CFITSIO_SHA256: "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e"
   FITSVERIFY_FEEDSTOCK_COMMIT: "dc6109b2629c8e24c51ca7d2f042060a87fdd1f8"
   FITSVERIFY_FEEDSTOCK_VERSION: "4.22"
   FITSVERIFY_FEEDSTOCK_SHA256: "6c45e803a7e0edbcb7d13918615bae6361d2b333c292b849c509ec9bebdb18b4"

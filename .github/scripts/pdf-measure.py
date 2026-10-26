@@ -20,8 +20,10 @@ disk:
     /tmp/v/bin/python .github/scripts/pdf-measure.py --root /tmp/corpus \
         --manifest /tmp/corpus/manifest.json --out /tmp/pdf.jsonl
 
-Pinned at the commits the audit quotes: pdf.js `606bd6a4e138`, qpdf `4eba95899886`,
-veraPDF-corpus `bb75f4f0073d`. A commit pins the exact bytes; a codeload tarball at
+Pinned at the full commits the audit quotes: pdf.js
+`606bd6a4e138bbbc22fad10872d2ffa93365b6b1`, qpdf
+`4eba95899886e851cc41d76886483b347612f2a8`, veraPDF-corpus
+`bb75f4f0073d9350dfd058c0162a367e6fadf25e`. A commit pins the exact source revision; a codeload tarball at
 that commit does **not** have to (GitHub regenerates it on demand), which is why the
 manifest's per-file hashes — not the archive hash — are what a re-run is checked
 against.
@@ -235,16 +237,28 @@ def render_digests(path, pages=6, dpi=100):
 
 
 def from_manifest(path):
-    """(corpus, path, row) for every PDF the manifest names, in manifest order."""
+    """(corpus, path, row) for each PDF, in original per-corpus path order.
+
+    The original instrument walked ``sorted(glob.glob(...))``. Manifests are
+    ordered by the fetcher, but sorting here makes the contract explicit and
+    prevents a valid-yet-reordered manifest from changing accepted-row order or
+    the seeded render sample.
+    """
     with open(path) as f:
         manifest = json.load(f)
     out = []
     for corpus in manifest["corpora"]:
         if corpus["format"] != "pdf":
             continue
-        for row in corpus["entries"]:
+        for row in sorted(corpus["entries"], key=lambda item: item["path"]):
             out.append((corpus["name"], row["path"], row))
     return manifest, out
+
+
+def select_render_sample(accepted_rows, sample_size=140, seed=57):
+    """The audit's seeded sample, isolated so order/selection is regression-tested."""
+    random.seed(seed)
+    return random.sample(accepted_rows, min(sample_size, len(accepted_rows)))
 
 
 def main():
@@ -328,8 +342,7 @@ def main():
     render_rows = []
     if args.render_sample and acc:
         render_seed = 57
-        random.seed(render_seed)
-        sample = random.sample(acc, min(args.render_sample, len(acc)))
+        sample = select_render_sample(acc, args.render_sample, render_seed)
         compared = pages = bad = errors = 0
         for order, r in enumerate(sample, start=1):
             cand = os.path.join(outdir, "render.pdf")

@@ -50,7 +50,7 @@ permissions:
   pull-requests: write
 
 env:
-  # Largest single download is veraPDF's corpus at 140 967 512 bytes; the seven
+  # Largest single download is veraPDF's corpus at 140 980 346 bytes; the seven
   # together are about 290 MB, and they are not cached between runs, because a
   # cache hit would hide exactly the tarball change this job exists to notice.
   MEASURE_ROOT: ${{ github.workspace }}/.measure-corpus
@@ -92,10 +92,10 @@ jobs:
             python -m pip freeze
           } | tee evidence/environment.txt
 
-      - name: Negative controls for the two bugs these instruments have had
+      - name: Verify corpus selection and measurement guard tests
         # Runs before the corpus is touched, so a broken guard is not buried
-        # under a two-minute download. Both tests fail if the instrument is put
-        # back into the state where it counted fewer things than it looked at.
+        # under a two-minute download. This covers full-SHA pins, explicit
+        # case-sensitive exclusions, and the two historical measurement bugs.
         run: |
           set -euo pipefail
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v 2>&1 \

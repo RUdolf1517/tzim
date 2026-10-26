@@ -1,0 +1,67 @@
+{
+  "accepted_rows_sorted_by_path": true,
+  "corpora": {
+    "pdfjs": {
+      "accepted": 343,
+      "accepted_first_path": "pdfjs/test/pdfs/22060_A1_01_Plans.pdf",
+      "accepted_last_path": "pdfjs/test/pdfs/zerowidthline.pdf",
+      "accepted_path_sha256": "4127850dbe65e5632e939454ec273404cc8e514e3d3f834447aa84ec3ffdfb8e",
+      "accepted_paths_sorted": true,
+      "files": 1009,
+      "first_path": "pdfjs/test/pdfs/160F-2019.pdf",
+      "input_path_sha256": "b877ee8ae1a16de546cf54cca66d36d92573a90a5974044689a3daf4c2a465f7",
+      "input_paths_sorted": true,
+      "last_path": "pdfjs/test/pdfs/zerowidthline.pdf"
+    },
+    "qpdf": {
+      "accepted": 124,
+      "accepted_first_path": "qpdf/qpdf/qtest/qpdf/11-pages-with-labels.pdf",
+      "accepted_last_path": "qpdf/qpdf/qtest/storage/form.pdf",
+      "accepted_path_sha256": "896e634aa3dcb509da313df1d9e37a51045ec1c1442b446c4504edc45998a0bc",
+      "accepted_paths_sorted": true,
+      "files": 630,
+      "first_path": "qpdf/qpdf/qtest/qpdf/11-pages-with-labels.pdf",
+      "input_path_sha256": "a2145818e22e6c11653f5d494574119f4aff72c53e4c83724552ad660df5504e",
+      "input_paths_sorted": true,
+      "last_path": "qpdf/qpdf/qtest/storage/form.pdf"
+    },
+    "verapdf": {
+      "accepted": 542,
+      "accepted_first_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-a.pdf",
+      "accepted_last_path": "verapdf/PDF_A-1b/6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-d.pdf",
+      "accepted_path_sha256": "88783d81a45b6b571a2698e93df2805d17479cc646bea3d8c2ff5d47cd124802",
+      "accepted_paths_sorted": true,
+      "files": 569,
+      "first_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-a.pdf",
+      "input_path_sha256": "b2e250094f300fae8fbcfd05a7025efc6a3a4f8b196b7a3246e9bd62302f2d8e",
+      "input_paths_sorted": true,
+      "last_path": "verapdf/PDF_A-1b/6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-d.pdf"
+    }
+  },
+  "corpus_order": [
+    "pdfjs",
+    "qpdf",
+    "verapdf"
+  ],
+  "corpus_order_matches": true,
+  "expected_corpus_order": [
+    "pdfjs",
+    "qpdf",
+    "verapdf"
+  ],
+  "expected_render_sample_paths_sha256": "c29f948d20ab97bf401c0b8dcf0e6bf64ea15bc8e27060e43c94a420443b412b",
+  "manifest_rows_sorted_by_path": true,
+  "ok": true,
+  "original_instrument": "per-corpus sorted(glob.glob(...)) then preserve accepted-row order",
+  "python_tested": "3.11.2; saved comparison render run was Python 3.12.15",
+  "render_sample_first_path": "pdfjs/test/pdfs/bug1473809.pdf",
+  "render_sample_last_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-d.pdf",
+  "render_sample_paths_match_seeded_accepted_rows": true,
+  "render_sample_paths_sha256": "c29f948d20ab97bf401c0b8dcf0e6bf64ea15bc8e27060e43c94a420443b412b",
+  "render_sample_seed": 57,
+  "render_sample_selected": 140,
+  "source_manifest_digest": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "source_pdf_jsonl": "handoff/i74-metric-source-records/pdf.jsonl",
+  "source_pdf_jsonl_sha256": "a1f71a5a216e089726af58c3358059a2b1038550066b48e1a907aad3f5a4138d",
+  "source_render_jsonl": "handoff/i74-metric-source-records/render-sample.jsonl"
+}

@@ -13,3 +13,15 @@ in the source bundle's `SHA256SUMS`.
 The records include both local render-sample rows and an explicit note that the
 CI run's render-sample artifact is authoritative for that run. The original CI
 artifact is not being represented as available in this Git copy.
+
+## Follow-up evidence
+
+The current PR #73 follow-up adds `fullsha-repin-comparison.md` and
+`fullsha-source-manifest.json` (2,386 selected files, same per-file manifest
+digest), `pdf-order-runtime-audit.md` and `pdf-order-verification-previous.json`
+(the exact saved render paths, sorted accepted-row order, and Python 3.11/3.12
+sample comparison), and `zlib-borderline-classification.json` (6,344 stream
+comparisons across zlib 1.2.13 and 1.3.1). The #71 fail-before output and the
+latest failed HEASARC diagnostics are retained as `i71-fail-before-run-40350665261.md`
+and `i71-fits-heasarc-run-40350674612.md`; they are explicitly not pass-after
+results.

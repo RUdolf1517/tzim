@@ -148,6 +148,105 @@ impl Card {
     }
 }
 
+/// Parses a FITS decimal or exponent value without converting it to `f64`.
+/// The coefficient digits and decimal-point position are kept exact; a very
+/// large exponent is saturated because it cannot make a nonzero coefficient
+/// equal to either identity value, while a zero coefficient remains exactly 0.
+fn decimal_parts(text: &str) -> Option<(bool, Vec<u8>, usize, i64)> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let (negative, text) = match text.as_bytes()[0] {
+        b'+' => (false, &text[1..]),
+        b'-' => (true, &text[1..]),
+        _ => (false, text),
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let exponent_at = text
+        .bytes()
+        .position(|byte| matches!(byte, b'E' | b'e' | b'D' | b'd'));
+    let (mantissa, exponent) = if let Some(at) = exponent_at {
+        let exponent = &text[at + 1..];
+        if exponent.is_empty() {
+            return None;
+        }
+        let (exponent_negative, digits) = match exponent.as_bytes()[0] {
+            b'+' => (false, &exponent[1..]),
+            b'-' => (true, &exponent[1..]),
+            _ => (false, exponent),
+        };
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let magnitude = digits.bytes().fold(0u64, |value, byte| {
+            value
+                .saturating_mul(10)
+                .saturating_add(u64::from(byte - b'0'))
+        });
+        let exponent = if exponent_negative {
+            if magnitude > i64::MAX as u64 {
+                i64::MIN
+            } else {
+                -(magnitude as i64)
+            }
+        } else {
+            magnitude.min(i64::MAX as u64) as i64
+        };
+        (&text[..at], exponent)
+    } else {
+        (text, 0)
+    };
+
+    let mut digits = Vec::new();
+    let mut fractional_digits = 0usize;
+    let mut after_point = false;
+    for byte in mantissa.bytes() {
+        match byte {
+            b'.' if !after_point => after_point = true,
+            b'0'..=b'9' => {
+                digits.push(byte);
+                if after_point {
+                    fractional_digits += 1;
+                }
+            }
+            _ => return None,
+        }
+    }
+    if digits.is_empty() {
+        return None;
+    }
+    Some((negative, digits, fractional_digits, exponent))
+}
+
+/// Whether a syntactically valid FITS number is exactly zero.
+fn decimal_is_zero(text: &str) -> Option<bool> {
+    let (_, digits, _, _) = decimal_parts(text)?;
+    Some(digits.iter().all(|digit| *digit == b'0'))
+}
+
+/// Whether a syntactically valid FITS number is exactly one, with no rounding.
+fn decimal_is_one(text: &str) -> Option<bool> {
+    let (negative, digits, fractional_digits, exponent) = decimal_parts(text)?;
+    if negative {
+        return Some(false);
+    }
+    let Some(first) = digits.iter().position(|digit| *digit != b'0') else {
+        return Some(false);
+    };
+    if digits[first] != b'1' || digits[first + 1..].iter().any(|digit| *digit != b'0') {
+        return Some(false);
+    }
+    let fractional_digits = i64::try_from(fractional_digits).ok()?;
+    let trailing_zeros = i64::try_from(digits.len() - first - 1).ok()?;
+    let scale = exponent
+        .checked_sub(fractional_digits)
+        .and_then(|scale| scale.checked_add(trailing_zeros));
+    Some(scale == Some(0))
+}
+
 /// An 80-byte card, split out so that a malformed record is a parse failure
 /// rather than a slice panic.
 fn card_at(record: &[u8], offset: usize) -> Result<Card> {
@@ -296,11 +395,12 @@ fn parse_header(data: &[u8], start: usize) -> Result<Header> {
 
 /// The number of bytes of data an HDU holds, from its own cards.
 ///
-/// One formula covers every HDU type, which is what the standard says and what
-/// the reference reader does: `|BITPIX|/8 × GCOUNT × (PCOUNT + Π NAXISn)`. For an
-/// image `PCOUNT` is 0, for a `BINTABLE` the product is the table and `PCOUNT`
-/// is the heap, and for an extension this handler does not know it is still the
-/// only length the file itself declares.
+/// The declared data length is `|BITPIX|/8 × GCOUNT × (PCOUNT + Π axes)`.
+/// Random groups are the one special case: `NAXIS1` is the required zero
+/// placeholder and the product starts at `NAXIS2`, with `PCOUNT` added for each
+/// group. For a `BINTABLE`, the product is the table and `PCOUNT` is the heap;
+/// for any extension this handler does not know, the cards are still the only
+/// length the file itself declares.
 fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
     let bitpix = header
         .int("BITPIX")
@@ -321,6 +421,22 @@ fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
             "fits: NAXIS = {naxis} is beyond the standard's limit of {MAX_NAXIS}"
         )));
     }
+    let random_groups = header.truth("GROUPS") == Some(true);
+    if random_groups {
+        if !header.has("SIMPLE") {
+            return Err(Error::parse(
+                "fits: GROUPS = T is only valid in a primary HDU",
+            ));
+        }
+        if naxis < 2 {
+            return Err(Error::parse("fits: random groups require NAXIS >= 2"));
+        }
+        if !header.has("PCOUNT") || !header.has("GCOUNT") {
+            return Err(Error::parse(
+                "fits: random groups require PCOUNT and GCOUNT",
+            ));
+        }
+    }
     let mut axes = Vec::with_capacity(naxis as usize);
     let mut product: u64 = 1;
     for axis in 1..=naxis {
@@ -332,10 +448,15 @@ fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
             return Err(Error::parse(format!("fits: {keyword} is negative")));
         }
         let length = length as u64;
+        if random_groups && axis == 1 && length != 0 {
+            return Err(Error::parse("fits: random groups require NAXIS1 = 0"));
+        }
         axes.push(length);
-        product = product
-            .checked_mul(length)
-            .ok_or_else(|| Error::limit("fits: the array size overflows"))?;
+        if !random_groups || axis > 1 {
+            product = product
+                .checked_mul(length)
+                .ok_or_else(|| Error::limit("fits: the array size overflows"))?;
+        }
     }
     if naxis == 0 {
         product = 0;
@@ -363,6 +484,11 @@ fn classify(header: &Header, index: usize) -> Result<Kind> {
     if header.has("SIMPLE") {
         if index != 0 {
             return Err(Error::parse("fits: a second primary HDU"));
+        }
+        if header.truth("SIMPLE") != Some(true) {
+            return Err(Error::refused(
+                "fits: SIMPLE must be T; SIMPLE = F is not accepted",
+            ));
         }
         return Ok(Kind::Primary);
     }
@@ -452,10 +578,10 @@ impl Decision {
 /// True for a keyword the generated table header owns, so that it is not copied
 /// from the original header a second time.
 fn structural(keyword: &str) -> bool {
-    const EXACT: [&str; 20] = [
+    const EXACT: [&str; 21] = [
         "SIMPLE", "XTENSION", "BITPIX", "NAXIS", "PCOUNT", "GCOUNT", "EXTEND", "TFIELDS", "THEAP",
         "EXTNAME", "ZIMAGE", "ZSIMPLE", "ZTENSION", "ZBITPIX", "ZNAXIS", "ZPCOUNT", "ZGCOUNT",
-        "ZCMPTYPE", "ZNAME1", "ZVAL1",
+        "ZEXTEND", "ZCMPTYPE", "ZNAME1", "ZVAL1",
     ];
     if EXACT.contains(&keyword) {
         return true;
@@ -468,6 +594,42 @@ fn structural(keyword: &str) -> bool {
         }
     }
     false
+}
+
+/// The Z-form keyword corresponding to an image's structural card.
+fn z_form_keyword(keyword: &str) -> Option<String> {
+    let fixed = match keyword {
+        "SIMPLE" => Some("ZSIMPLE"),
+        "XTENSION" => Some("ZTENSION"),
+        "BITPIX" => Some("ZBITPIX"),
+        "NAXIS" => Some("ZNAXIS"),
+        "PCOUNT" => Some("ZPCOUNT"),
+        "GCOUNT" => Some("ZGCOUNT"),
+        "EXTEND" => Some("ZEXTEND"),
+        _ => None,
+    };
+    if let Some(mapped) = fixed {
+        return Some(mapped.to_string());
+    }
+    let suffix = keyword.strip_prefix("NAXIS")?;
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("ZNAXIS{suffix}"))
+}
+
+/// Replaces only columns 1–8 of a card; the value, comment, spacing and all
+/// other bytes remain exactly as they appeared in the source.
+fn renamed_card(card: &Card, keyword: &str) -> Result<[u8; CARD]> {
+    if keyword.len() > 8 {
+        return Err(Error::refused(format!(
+            "fits: Z-form keyword {keyword} does not fit in eight columns"
+        )));
+    }
+    let mut raw = card.raw;
+    raw[..8].fill(b' ');
+    raw[..keyword.len()].copy_from_slice(keyword.as_bytes());
+    Ok(raw)
 }
 
 /// The decision for one image HDU, which is where every refusal lives.
@@ -484,18 +646,26 @@ fn decide_image(hdu: &Hdu) -> Decision {
     if header.int("PCOUNT").unwrap_or(0) != 0 || header.int("GCOUNT").unwrap_or(1) != 1 {
         return Decision::Decline("fits: an image HDU with PCOUNT or GCOUNT set".to_string());
     }
-    // Scaling: `BSCALE = 0` makes the numbers meaningless, and any other
-    // non-identity pair means a reader has to re-derive the scaling from a
-    // compressed HDU. The stored bytes would survive either way, but what a
-    // reader *sees* goes through the scaling, and this build cannot check that
-    // with a second implementation yet — so a scaled image is refused rather
-    // than argued about (issue #70, refusal list).
-    let scale = header.int("BSCALE").unwrap_or(1);
-    let zero = header.int("BZERO").unwrap_or(0);
-    if scale != 1 || zero != 0 {
-        return Decision::Decline(format!(
-            "fits: the image is scaled (BSCALE = {scale}, BZERO = {zero})"
-        ));
+    // Scaling cards are FITS decimals, not necessarily integers. Compare their
+    // exact decimal values against identity without rounding through `f64`:
+    // 1.00000000000000001 is not 1, and 1D-400 is not 0 even if a binary-float
+    // conversion underflows. A malformed value is refused as well; treating an
+    // unparsed card as the default would silently open a lossy rewrite.
+    if let Some(card) = header.get("BSCALE") {
+        if decimal_is_one(card.field()) != Some(true) {
+            return Decision::Decline(format!(
+                "fits: BSCALE is not exactly 1 (value {})",
+                card.field().trim()
+            ));
+        }
+    }
+    if let Some(card) = header.get("BZERO") {
+        if decimal_is_zero(card.field()) != Some(true) {
+            return Decision::Decline(format!(
+                "fits: BZERO is not exactly 0 (value {})",
+                card.field().trim()
+            ));
+        }
     }
     if header.has("CHECKSUM") || header.has("DATASUM") {
         return Decision::Decline(
@@ -717,29 +887,39 @@ fn write_tiled(hdu: &Hdu, data: &[u8], out: &mut Vec<u8>) -> Result<()> {
         true,
         "extension contains compressed image",
     ));
-    if hdu.kind == Kind::Primary {
-        cards.push(boolean_card("ZSIMPLE", true, ""));
+    let (source_kind, z_kind) = if hdu.kind == Kind::Primary {
+        ("SIMPLE", "ZSIMPLE")
     } else {
-        cards.push(string_card("ZTENSION", "IMAGE", "Image extension"));
+        ("XTENSION", "ZTENSION")
+    };
+    let kind_card = hdu.header.get(source_kind).ok_or_else(|| {
+        Error::internal(format!("fits: missing {source_kind} card while writing"))
+    })?;
+    cards.push(renamed_card(kind_card, z_kind)?);
+
+    for (source_keyword, z_keyword) in [("BITPIX", "ZBITPIX"), ("NAXIS", "ZNAXIS")] {
+        let source_card = hdu.header.get(source_keyword).ok_or_else(|| {
+            Error::internal(format!("fits: missing {source_keyword} card while writing"))
+        })?;
+        cards.push(renamed_card(source_card, z_keyword)?);
     }
-    cards.push(numeric_card("ZBITPIX", hdu.bitpix, "array data type"));
-    cards.push(numeric_card(
-        "ZNAXIS",
-        hdu.axes.len() as i64,
-        "number of array dimensions",
-    ));
-    for (index, axis) in hdu.axes.iter().enumerate() {
-        cards.push(numeric_card(
-            &format!("ZNAXIS{}", index + 1),
-            *axis as i64,
-            "",
-        ));
+    for index in 0..hdu.axes.len() {
+        let axis = index + 1;
+        let source_keyword = format!("NAXIS{axis}");
+        let z_keyword = format!("ZNAXIS{axis}");
+        let source_card = hdu.header.get(&source_keyword).ok_or_else(|| {
+            Error::internal(format!("fits: missing {source_keyword} card while writing"))
+        })?;
+        cards.push(renamed_card(source_card, &z_keyword)?);
     }
-    if hdu.header.has("PCOUNT") {
-        cards.push(numeric_card("ZPCOUNT", 0, "number of parameters"));
-    }
-    if hdu.header.has("GCOUNT") {
-        cards.push(numeric_card("ZGCOUNT", 1, "number of groups"));
+    for (source_keyword, z_keyword) in [
+        ("PCOUNT", "ZPCOUNT"),
+        ("GCOUNT", "ZGCOUNT"),
+        ("EXTEND", "ZEXTEND"),
+    ] {
+        if let Some(source_card) = hdu.header.get(source_keyword) {
+            cards.push(renamed_card(source_card, z_keyword)?);
+        }
     }
     // The tiling rule: one tile per row along the first axis.
     cards.push(numeric_card(
@@ -903,9 +1083,37 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
             )));
         }
     }
-    // No card of the original header may be dropped, and none invented. The
-    // cards this header generates are exactly the structural keywords, so the
-    // two sequences of everything else have to be identical.
+    // Every source structural card is carried as its Z-form with only the
+    // keyword changed. This checks the complete value and comment bytes, not
+    // merely the parsed number; in particular EXTEND must survive as ZEXTEND.
+    for source in &a.header.cards {
+        let Some(z_keyword) = z_form_keyword(source.keyword()) else {
+            continue;
+        };
+        let expected = renamed_card(source, &z_keyword)
+            .map_err(|_| Error::verify("fits: a structural Z-form keyword is too long"))?;
+        let target = b.header.get(&z_keyword).ok_or_else(|| {
+            Error::verify(format!(
+                "fits: {z_keyword} is missing from the compressed header"
+            ))
+        })?;
+        if target.raw != expected {
+            return Err(Error::verify(format!(
+                "fits: {z_keyword} did not preserve the source card bytes"
+            )));
+        }
+    }
+    if let Some(source) = a.header.get("EXTNAME") {
+        let target = b
+            .header
+            .get("EXTNAME")
+            .ok_or_else(|| Error::verify("fits: EXTNAME was dropped from the compressed header"))?;
+        if target.raw != source.raw {
+            return Err(Error::verify("fits: EXTNAME was not copied verbatim"));
+        }
+    }
+    // No non-structural card of the original header may be dropped, and none
+    // invented; the two complete sequences must remain identical.
     let want: Vec<[u8; CARD]> = a
         .header
         .cards
@@ -1211,12 +1419,23 @@ mod tests {
     }
 
     #[test]
-    fn a_random_groups_primary_is_refused() {
-        let original = image_hdu(16, &[8, 4], &sample(16, 4, 8), &[("GROUPS", "T")]);
+    fn a_legal_random_groups_primary_is_refused() {
+        let axis2 = 4096u64;
+        let pcount = 17u64;
+        let gcount = 3u64;
+        let data_len = 2 * gcount * (pcount + axis2);
+        let data = vec![0x5a; data_len as usize];
+        let original = image_hdu(
+            16,
+            &[0, axis2],
+            &data,
+            &[("GROUPS", "T"), ("PCOUNT", "17"), ("GCOUNT", "3")],
+        );
         let opts = options(true);
         let mut candidate = Vec::new();
         let err = optimize(&original, &mut candidate, &opts).expect_err("random groups");
         assert!(err.to_string().contains("GROUPS"), "{err}");
+        assert!(candidate.is_empty());
     }
 
     #[test]
@@ -1225,7 +1444,7 @@ mod tests {
         let opts = options(true);
         let mut candidate = Vec::new();
         let err = optimize(&original, &mut candidate, &opts).expect_err("a scaled image");
-        assert!(err.to_string().contains("BSCALE"), "{err}");
+        assert!(err.to_string().contains("BZERO"), "{err}");
     }
 
     #[test]

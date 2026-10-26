@@ -17,8 +17,11 @@ the files that manifest names — no `glob` of whatever happens to be on disk:
     /tmp/v/bin/python .github/scripts/fits-measure.py --root /tmp/corpus \
         --manifest /tmp/corpus/manifest.json --out /tmp/fits.jsonl
 
-Pinned at the commits the audit quotes: astropy `dbbf2acd6dbb`, cfitsio
-`113781d8aa44`, drizzlepac `635834581ea2`, reproject `9dddd419111a`.
+Pinned at the full commits the audit quotes: astropy
+`dbbf2acd6dbb177db184bff319d2a2950dd178bb`, cfitsio
+`113781d8aa442cf8d3c27295d9084674b8b039f2`, drizzlepac
+`635834581ea2b226a3f3028b6ac54efb5e180dfc`, reproject
+`9dddd419111a9ca159baaf7d5e2eb5729b447b58`.
 
 The earlier instruction here was `git clone --depth 1` of a default branch, which
 does **not** contain the commit the audit quotes, and `git fetch origin <sha>`,

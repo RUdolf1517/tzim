@@ -54,9 +54,9 @@ CORPORA = (
     dict(
         name="astropy",
         repo="astropy/astropy",
-        commit="dbbf2acd6dbb",
-        sha256="9e41903218933be74870e1723c08f856a503357618631a040475a88b3ee4f58c",
-        bytes=6982863,
+        commit="dbbf2acd6dbb177db184bff319d2a2950dd178bb",
+        sha256="3c6b762797ea8f292d5c35fbb3ebe82b7a28139783b5c6e870a38e576d62a46f",
+        bytes=6989587,
         format="fits",
         selected="astropy/io/fits/tests/data",
         suffixes=(".fits", ".fit", ".fts"),
@@ -65,9 +65,9 @@ CORPORA = (
     dict(
         name="cfitsio",
         repo="heasarc/cfitsio",
-        commit="113781d8aa44",
-        sha256="cc5f1cc219b0de8f8d8500236b080bff13d2de12b9ed253c7a417b1b7d962509",
-        bytes=2166070,
+        commit="113781d8aa442cf8d3c27295d9084674b8b039f2",
+        sha256="d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e",
+        bytes=2169497,
         format="fits",
         selected="",
         suffixes=(".fits", ".fit", ".fts"),
@@ -76,9 +76,9 @@ CORPORA = (
     dict(
         name="drizzlepac",
         repo="spacetelescope/drizzlepac",
-        commit="635834581ea2",
-        sha256="86cd9e8da51bf7e33de1ba0a844d27d3a0dbd82f730894430e3bf129f4b3b669",
-        bytes=14845763,
+        commit="635834581ea2b226a3f3028b6ac54efb5e180dfc",
+        sha256="c78e1eff17a80ddfbcfc78b1ba26fc542dec14e476cca4faf8af9d496f33386e",
+        bytes=14851757,
         format="fits",
         selected="",
         suffixes=(".fits", ".fit", ".fts"),
@@ -87,9 +87,9 @@ CORPORA = (
     dict(
         name="reproject",
         repo="astropy/reproject",
-        commit="9dddd419111a",
-        sha256="6b1c5b4e526d1c392b47ba2e98ec1b9fab99bae0765e110bf54ac3ef1a83f23d",
-        bytes=1672432,
+        commit="9dddd419111a9ca159baaf7d5e2eb5729b447b58",
+        sha256="d20377b7480f05869bb6666c01a32fd59b019f373553b13dc3feb0e7d514d222",
+        bytes=1672777,
         format="fits",
         selected="",
         suffixes=(".fits", ".fit", ".fts"),
@@ -98,9 +98,9 @@ CORPORA = (
     dict(
         name="pdfjs",
         repo="mozilla/pdf.js",
-        commit="606bd6a4e138",
-        sha256="222b1fb33e0bc09ebf125f0d4ce1f84226a6d7bdd26a0e3c1c5782583e8d3046",
-        bytes=105076418,
+        commit="606bd6a4e138bbbc22fad10872d2ffa93365b6b1",
+        sha256="33bac2537b4a5e3d1cfd74083c4b3bcca1f0bd1646a8046526a1b1de1b2830f3",
+        bytes=105087051,
         format="pdf",
         selected="test/pdfs",
         suffixes=(".pdf",),
@@ -109,9 +109,9 @@ CORPORA = (
     dict(
         name="qpdf",
         repo="qpdf/qpdf",
-        commit="4eba95899886",
-        sha256="a93d12cd81807006ec1e949229fe72211be2d0999ce5c48d4e597b7f01eb039c",
-        bytes=19381334,
+        commit="4eba95899886e851cc41d76886483b347612f2a8",
+        sha256="c6de7611d2651ac71eebbabd0132b1dc13e8def0e4e640e791190f903490c799",
+        bytes=19383624,
         format="pdf",
         selected="qpdf/qtest",
         suffixes=(".pdf",),
@@ -120,9 +120,9 @@ CORPORA = (
     dict(
         name="verapdf",
         repo="veraPDF/veraPDF-corpus",
-        commit="bb75f4f0073d",
-        sha256="3f45b024d31ba88fca5710976c84eb2d91c56cc12d863bd2be1b0dfd2ef91f1e",
-        bytes=140967512,
+        commit="bb75f4f0073d9350dfd058c0162a367e6fadf25e",
+        sha256="26e44331c4cbd5bbc98662e179704b8c13334f8f439cbb8e0a46f21fc8489c1b",
+        bytes=140980346,
         format="pdf",
         selected="PDF_A-1b",
         suffixes=(".pdf",),
@@ -186,31 +186,35 @@ def extract(entry, root, archive):
     only exists from Python 3.12).
     """
     dest = os.path.join(root, entry["name"])
-    if not os.path.isdir(dest):
-        os.makedirs(dest, exist_ok=True)
-        with tarfile.open(archive) as tarball:
-            for member in tarball.getmembers():
-                if not member.isfile():
-                    continue
-                parts = member.name.split("/", 1)
-                if len(parts) != 2:
-                    continue
-                relative = parts[1]
-                if entry["selected"] and not (
-                    relative == entry["selected"] or relative.startswith(entry["selected"] + "/")
-                ):
-                    continue
-                if not relative.endswith(entry["suffixes"]):
-                    continue
-                if os.path.isabs(relative) or ".." in relative.split("/"):
-                    raise SystemExit("archive member escapes the tree: %s" % member.name)
-                target = os.path.join(dest, relative)
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                source = tarball.extractfile(member)
-                with open(target, "wb") as handle:
-                    shutil.copyfileobj(source, handle)
-    files = []
+    extract_files = not os.path.isdir(dest)
+    os.makedirs(dest, exist_ok=True)
     near = []
+    with tarfile.open(archive) as tarball:
+        for member in tarball.getmembers():
+            if not member.isfile():
+                continue
+            parts = member.name.split("/", 1)
+            if len(parts) != 2:
+                continue
+            relative = parts[1]
+            if entry["selected"] and not (
+                relative == entry["selected"] or relative.startswith(entry["selected"] + "/")
+            ):
+                continue
+            if not relative.endswith(entry["suffixes"]):
+                if relative.lower().endswith(entry["suffixes"]):
+                    near.append(os.path.join(dest, relative))
+                continue
+            if not extract_files:
+                continue
+            if os.path.isabs(relative) or ".." in relative.split("/"):
+                raise SystemExit("archive member escapes the tree: %s" % member.name)
+            target = os.path.join(dest, relative)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            source = tarball.extractfile(member)
+            with open(target, "wb") as handle:
+                shutil.copyfileobj(source, handle)
+    files = []
     for dirpath, _, names in os.walk(dest):
         for name in names:
             if name.endswith(entry["suffixes"]):

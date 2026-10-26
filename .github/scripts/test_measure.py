@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Negative controls for the two bugs these instruments have already had (#72).
+"""Metric negative controls and corpus-selection guards for #72.
 
 Both numbers in the audits are per-file gains, so both instruments can be made to
 look better by *measuring less*: a FITS check that only compares the image HDUs it
@@ -17,7 +17,10 @@ exercise.
 """
 
 import importlib.util
+import io
+import json
 import os
+import tarfile
 import tempfile
 import unittest
 import zlib
@@ -35,6 +38,7 @@ def load(name):
 fits_measure = load("fits-measure.py")
 pdf_measure = load("pdf-measure.py")
 measure_repro = load("measure-repro.py")
+measure_fetch = load("measure-fetch.py")
 
 import numpy as np  # noqa: E402
 import pikepdf  # noqa: E402
@@ -73,6 +77,136 @@ class MeasurementDefinitions(unittest.TestCase):
             dict(render_files=2, render_pages=6, render_differences=1,
                  render_sampled_files=3, render_errors=1),
         )
+
+
+class FullShaCorpusSelection(unittest.TestCase):
+    """Archive refs are full commit IDs and near-miss files are explicit exclusions."""
+
+    def test_every_corpus_pin_is_a_full_commit_sha(self):
+        for corpus in measure_fetch.CORPORA:
+            with self.subTest(corpus=corpus["name"]):
+                self.assertRegex(corpus["commit"], r"^[0-9a-f]{40}$")
+                self.assertRegex(corpus["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_uppercase_suffix_is_recorded_but_not_selected_or_extracted(self):
+        with tempfile.TemporaryDirectory(prefix="measure-fetch-") as temporary:
+            archive = os.path.join(temporary, "qpdf.tar.gz")
+            corpus_root = os.path.join(temporary, "corpus")
+            root_name = "qpdf-4eba95899886e851cc41d76886483b347612f2a8"
+            selected_name = root_name + "/qpdf/qtest/selected.pdf"
+            excluded_name = root_name + "/qpdf/qtest/split-exp-01.Pdf"
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, payload in (
+                    (selected_name, b"selected PDF"),
+                    (excluded_name, b"uppercase near miss"),
+                ):
+                    member = tarfile.TarInfo(name)
+                    member.size = len(payload)
+                    member.mode = 0o644
+                    tar.addfile(member, io.BytesIO(payload))
+
+            entry = dict(
+                name="qpdf",
+                repo="qpdf/qpdf",
+                commit="4eba95899886e851cc41d76886483b347612f2a8",
+                sha256="0" * 64,
+                bytes=os.path.getsize(archive),
+                format="pdf",
+                selected="qpdf/qtest",
+                suffixes=(".pdf",),
+                files=1,
+            )
+            files, near = measure_fetch.extract(entry, corpus_root, archive)
+            self.assertEqual(len(files), 1)
+            self.assertEqual(os.path.basename(files[0]), "selected.pdf")
+            self.assertEqual(len(near), 1)
+            self.assertTrue(near[0].endswith("split-exp-01.Pdf"))
+            self.assertFalse(os.path.exists(near[0]), "an excluded file must not enter the measured tree")
+
+            # An existing selected tree must not make the archive's exclusions
+            # disappear on a rerun.
+            files_again, near_again = measure_fetch.extract(entry, corpus_root, archive)
+            self.assertEqual(files_again, files)
+            self.assertEqual(near_again, near)
+
+            payload = measure_fetch.manifest(corpus_root, [(entry, files_again, near_again)])
+            self.assertEqual(payload["corpora"][0]["files"], 1)
+            self.assertEqual(payload["corpora"][0]["excluded"], [
+                dict(path="qpdf/qpdf/qtest/split-exp-01.Pdf",
+                     why="not selected: the suffix is not lowercase")
+            ])
+            manifest_path = os.path.join(temporary, "manifest.json")
+            with open(manifest_path, "w") as handle:
+                json.dump(payload, handle)
+            self.assertEqual(measure_fetch.verify(corpus_root, manifest_path), [])
+
+
+class PdfRowOrdering(unittest.TestCase):
+    """Manifest order must reproduce sorted-glob inputs and the fixed sample."""
+
+    def test_manifest_entries_are_sorted_per_corpus(self):
+        with tempfile.TemporaryDirectory(prefix="pdf-order-") as temporary:
+            manifest_path = os.path.join(temporary, "manifest.json")
+            manifest = dict(corpora=[
+                dict(name="pdfjs", format="pdf", entries=[
+                    dict(path="pdfjs/test/pdfs/z.pdf"),
+                    dict(path="pdfjs/test/pdfs/a.pdf"),
+                ]),
+                dict(name="astropy", format="fits", entries=[dict(path="astropy/a.fits")]),
+                dict(name="qpdf", format="pdf", entries=[
+                    dict(path="qpdf/qpdf/qtest/z.pdf"),
+                    dict(path="qpdf/qpdf/qtest/a.pdf"),
+                ]),
+            ])
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(manifest, handle)
+
+            _manifest, named = pdf_measure.from_manifest(manifest_path)
+            self.assertEqual(
+                [(corpus, path) for corpus, path, _row in named],
+                [
+                    ("pdfjs", "pdfjs/test/pdfs/a.pdf"),
+                    ("pdfjs", "pdfjs/test/pdfs/z.pdf"),
+                    ("qpdf", "qpdf/qpdf/qtest/a.pdf"),
+                    ("qpdf", "qpdf/qpdf/qtest/z.pdf"),
+                ],
+            )
+
+    def test_sample_paths_match_the_saved_python_312_output(self):
+        records = os.path.join(
+            HERE, "..", "..", "handoff", "i74-metric-source-records"
+        )
+        pdf_rows = measure_repro.load_jsonl(os.path.join(records, "pdf.jsonl"))
+        accepted = [row for row in pdf_rows if row.get("status") == "accepted"]
+        render_rows = measure_repro.load_jsonl(os.path.join(records, "render-sample.jsonl"))
+
+        for corpus in ("pdfjs", "qpdf", "verapdf"):
+            paths = [
+                row["manifest_path"]
+                for row in pdf_rows
+                if row["corpus"] == corpus and row["status"] == "accepted"
+            ]
+            self.assertEqual(paths, sorted(paths), "%s accepted rows are not path-sorted" % corpus)
+
+        selected = pdf_measure.select_render_sample(accepted, sample_size=140, seed=57)
+        self.assertEqual(
+            [row["manifest_path"] for row in selected],
+            [row["relative_path"] for row in render_rows],
+            "the exact sample saved by the Python 3.12.15 run must match this interpreter",
+        )
+        audit = measure_repro.pdf_path_order_audit(
+            pdf_rows, render_rows, root="/tmp/mfetch", render_sample=140
+        )
+        self.assertTrue(audit["ok"], json.dumps(audit, sort_keys=True))
+        self.assertEqual(audit["render_sample_paths_sha256"],
+                         "c29f948d20ab97bf401c0b8dcf0e6bf64ea15bc8e27060e43c94a420443b412b")
+
+        reordered = list(pdf_rows)
+        reordered[0], reordered[1] = reordered[1], reordered[0]
+        bad_audit = measure_repro.pdf_path_order_audit(
+            reordered, render_rows, root="/tmp/mfetch", render_sample=140
+        )
+        self.assertFalse(bad_audit["ok"], "an out-of-order accepted row must fail the audit")
 
 
 class FitsHistoricalBug(unittest.TestCase):

@@ -1,0 +1,252 @@
+{
+  "corpora": [
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 6989587,
+      "full_archive_sha256": "3c6b762797ea8f292d5c35fbb3ebe82b7a28139783b5c6e870a38e576d62a46f",
+      "full_commit": "dbbf2acd6dbb177db184bff319d2a2950dd178bb",
+      "full_url": "https://codeload.github.com/astropy/astropy/tar.gz/dbbf2acd6dbb177db184bff319d2a2950dd178bb",
+      "missing_paths": [],
+      "name": "astropy",
+      "new_corpus_manifest_digest": "09eaed68c131ee2f523322ce9a8c86edcc77d78d22c69e0f0853f692499565a3",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 6982863,
+      "old_archive_sha256": "9e41903218933be74870e1723c08f856a503357618631a040475a88b3ee4f58c",
+      "old_corpus_manifest_digest": "09eaed68c131ee2f523322ce9a8c86edcc77d78d22c69e0f0853f692499565a3",
+      "old_excluded": [],
+      "old_manifest_files": 34,
+      "old_short_commit": "dbbf2acd6dbb",
+      "repo": "astropy/astropy",
+      "selected_bytes": 691200,
+      "selected_files": 34
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 2169497,
+      "full_archive_sha256": "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e",
+      "full_commit": "113781d8aa442cf8d3c27295d9084674b8b039f2",
+      "full_url": "https://codeload.github.com/heasarc/cfitsio/tar.gz/113781d8aa442cf8d3c27295d9084674b8b039f2",
+      "missing_paths": [],
+      "name": "cfitsio",
+      "new_corpus_manifest_digest": "e36cbf8b5ca3b796398c8d0000224e4194146a8d6e58eeff131c12ac1fbfd090",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 2166070,
+      "old_archive_sha256": "cc5f1cc219b0de8f8d8500236b080bff13d2de12b9ed253c7a417b1b7d962509",
+      "old_corpus_manifest_digest": "e36cbf8b5ca3b796398c8d0000224e4194146a8d6e58eeff131c12ac1fbfd090",
+      "old_excluded": [],
+      "old_manifest_files": 5,
+      "old_short_commit": "113781d8aa44",
+      "repo": "heasarc/cfitsio",
+      "selected_bytes": 694080,
+      "selected_files": 5
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 14851757,
+      "full_archive_sha256": "c78e1eff17a80ddfbcfc78b1ba26fc542dec14e476cca4faf8af9d496f33386e",
+      "full_commit": "635834581ea2b226a3f3028b6ac54efb5e180dfc",
+      "full_url": "https://codeload.github.com/spacetelescope/drizzlepac/tar.gz/635834581ea2b226a3f3028b6ac54efb5e180dfc",
+      "missing_paths": [],
+      "name": "drizzlepac",
+      "new_corpus_manifest_digest": "0adee01e30c740e31af2ada9fe261ecaa5d936b1cbabbc67ff858f8ad27d2c3d",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 14845763,
+      "old_archive_sha256": "86cd9e8da51bf7e33de1ba0a844d27d3a0dbd82f730894430e3bf129f4b3b669",
+      "old_corpus_manifest_digest": "0adee01e30c740e31af2ada9fe261ecaa5d936b1cbabbc67ff858f8ad27d2c3d",
+      "old_excluded": [],
+      "old_manifest_files": 123,
+      "old_short_commit": "635834581ea2",
+      "repo": "spacetelescope/drizzlepac",
+      "selected_bytes": 15488640,
+      "selected_files": 123
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 1672777,
+      "full_archive_sha256": "d20377b7480f05869bb6666c01a32fd59b019f373553b13dc3feb0e7d514d222",
+      "full_commit": "9dddd419111a9ca159baaf7d5e2eb5729b447b58",
+      "full_url": "https://codeload.github.com/astropy/reproject/tar.gz/9dddd419111a9ca159baaf7d5e2eb5729b447b58",
+      "missing_paths": [],
+      "name": "reproject",
+      "new_corpus_manifest_digest": "0034d4d097f7dbb695da4c71360194f69777f7f3bbf7c1037941f55748190380",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 1672432,
+      "old_archive_sha256": "6b1c5b4e526d1c392b47ba2e98ec1b9fab99bae0765e110bf54ac3ef1a83f23d",
+      "old_corpus_manifest_digest": "0034d4d097f7dbb695da4c71360194f69777f7f3bbf7c1037941f55748190380",
+      "old_excluded": [],
+      "old_manifest_files": 16,
+      "old_short_commit": "9dddd419111a",
+      "repo": "astropy/reproject",
+      "selected_bytes": 1903680,
+      "selected_files": 16
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 105087051,
+      "full_archive_sha256": "33bac2537b4a5e3d1cfd74083c4b3bcca1f0bd1646a8046526a1b1de1b2830f3",
+      "full_commit": "606bd6a4e138bbbc22fad10872d2ffa93365b6b1",
+      "full_url": "https://codeload.github.com/mozilla/pdf.js/tar.gz/606bd6a4e138bbbc22fad10872d2ffa93365b6b1",
+      "missing_paths": [],
+      "name": "pdfjs",
+      "new_corpus_manifest_digest": "321909aba8eceac551a476365835faea600380476d97acd347b81d5c7ab612a1",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 105076418,
+      "old_archive_sha256": "222b1fb33e0bc09ebf125f0d4ce1f84226a6d7bdd26a0e3c1c5782583e8d3046",
+      "old_corpus_manifest_digest": "321909aba8eceac551a476365835faea600380476d97acd347b81d5c7ab612a1",
+      "old_excluded": [],
+      "old_manifest_files": 1009,
+      "old_short_commit": "606bd6a4e138",
+      "repo": "mozilla/pdf.js",
+      "selected_bytes": 124725746,
+      "selected_files": 1009
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 19383624,
+      "full_archive_sha256": "c6de7611d2651ac71eebbabd0132b1dc13e8def0e4e640e791190f903490c799",
+      "full_commit": "4eba95899886e851cc41d76886483b347612f2a8",
+      "full_url": "https://codeload.github.com/qpdf/qpdf/tar.gz/4eba95899886e851cc41d76886483b347612f2a8",
+      "missing_paths": [],
+      "name": "qpdf",
+      "new_corpus_manifest_digest": "f0ba324de030f697cac2f2b38bfa83388783e8dbfb8606b4d93d39983f6dd888",
+      "new_excluded": [
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-01.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-02.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-03.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-04.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-05.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-06.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-07.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-08.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-09.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-10.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-11.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        }
+      ],
+      "newly_recorded_exclusions": [
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-01.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-02.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-03.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-04.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-05.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-06.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-07.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-08.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-09.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-10.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        },
+        {
+          "path": "qpdf/qpdf/qtest/qpdf/split-exp-11.Pdf",
+          "why": "not selected: the suffix is not lowercase"
+        }
+      ],
+      "old_archive_bytes": 19381334,
+      "old_archive_sha256": "a93d12cd81807006ec1e949229fe72211be2d0999ce5c48d4e597b7f01eb039c",
+      "old_corpus_manifest_digest": "f0ba324de030f697cac2f2b38bfa83388783e8dbfb8606b4d93d39983f6dd888",
+      "old_excluded": [],
+      "old_manifest_files": 630,
+      "old_short_commit": "4eba95899886",
+      "repo": "qpdf/qpdf",
+      "selected_bytes": 38235783,
+      "selected_files": 630
+    },
+    {
+      "changed_files": [],
+      "extra_paths": [],
+      "full_archive_bytes": 140980346,
+      "full_archive_sha256": "26e44331c4cbd5bbc98662e179704b8c13334f8f439cbb8e0a46f21fc8489c1b",
+      "full_commit": "bb75f4f0073d9350dfd058c0162a367e6fadf25e",
+      "full_url": "https://codeload.github.com/veraPDF/veraPDF-corpus/tar.gz/bb75f4f0073d9350dfd058c0162a367e6fadf25e",
+      "missing_paths": [],
+      "name": "verapdf",
+      "new_corpus_manifest_digest": "ca054fcfdbb20e894c329e5f3eacc971482a1e7a9be43f848dce3aba1070faa3",
+      "new_excluded": [],
+      "newly_recorded_exclusions": [],
+      "old_archive_bytes": 140967512,
+      "old_archive_sha256": "3f45b024d31ba88fca5710976c84eb2d91c56cc12d863bd2be1b0dfd2ef91f1e",
+      "old_corpus_manifest_digest": "ca054fcfdbb20e894c329e5f3eacc971482a1e7a9be43f848dce3aba1070faa3",
+      "old_excluded": [],
+      "old_manifest_files": 569,
+      "old_short_commit": "bb75f4f0073d",
+      "repo": "veraPDF/veraPDF-corpus",
+      "selected_bytes": 8891630,
+      "selected_files": 569
+    }
+  ],
+  "fullsha_manifest_digest": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "previous_archive_baselines_are_not_claimed_to_be_the_fullsha_archive_hashes": true,
+  "previous_manifest_digest": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "protocol": "Per-file manifest comparison only; no corpus measurement was run."
+}

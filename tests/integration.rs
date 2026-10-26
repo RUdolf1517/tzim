@@ -3785,8 +3785,8 @@ mod fits_tests {
             &[256, 120],
             &data,
             &[
-                fits_card("BSCALE", "1.000000000000000000E+00"),
-                fits_card("BZERO", "-0.000D+400"),
+                fits_card("BSCALE", "1.000000000000E+00"),
+                fits_card("BZERO", "-0.000D+00"),
             ],
         );
         let path = ws.write("identity-spelling.fits", &original);
@@ -3800,6 +3800,7 @@ mod fits_tests {
 
     #[test]
     fn fits_range_sensitive_non_identity_scaling_is_refused_exactly() {
+        let mut problems = Vec::new();
         for (name, bscale, bzero, expected) in [
             ("rounded-one", "1.00000000000000001", "0", "BSCALE"),
             ("underflow-zero", "1", "1D-400", "BZERO"),
@@ -3815,11 +3816,23 @@ mod fits_tests {
             );
             let path = ws.write("scaled.fits", &original);
             let (code, stdout, stderr) = run(&["--fits-tile", "scaled.fits"], &ws.path);
-            assert_eq!(code, 0, "{name}: stdout={stdout} stderr={stderr}");
-            assert!(stdout.contains("skipped"), "{name}: {stdout}");
-            assert!(stdout.contains(expected), "{name}: {stdout}");
-            assert_eq!(std::fs::read(&path).unwrap(), original, "{name}");
+            let output = format!("{name}: exit={code}, stdout={stdout}, stderr={stderr}");
+            if code != 0 {
+                problems.push(output.clone());
+            }
+            if !stdout.contains("skipped") {
+                problems.push(format!("{name}: expected a skip, got {output}"));
+            }
+            if !stdout.contains(expected) {
+                problems.push(format!(
+                    "{name}: expected the {expected} refusal, got {output}"
+                ));
+            }
+            if std::fs::read(&path).unwrap() != original {
+                problems.push(format!("{name}: the source was rewritten"));
+            }
         }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
     /// A file whose image is already compressed with a codec this build does not

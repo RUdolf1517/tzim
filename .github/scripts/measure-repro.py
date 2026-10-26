@@ -42,6 +42,7 @@ import hashlib
 import json
 import os
 import platform
+import random
 import subprocess
 import sys
 import time
@@ -447,7 +448,80 @@ def _relative(path, root):
         return path
 
 
-def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
+def _path_digest(paths):
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.encode("utf-8") + b"\0")
+    return digest.hexdigest()
+
+
+def pdf_path_order_audit(pdf_rows, render_rows, root, render_sample=140):
+    """Prove input/accepted order matches the original sorted-glob instrument."""
+    by_corpus = {}
+    corpus_order = []
+    for row in pdf_rows:
+        corpus = row.get("corpus", "")
+        if corpus not in by_corpus:
+            by_corpus[corpus] = []
+            corpus_order.append(corpus)
+        path = row.get("manifest_path") or _relative(row.get("path", ""), root)
+        by_corpus[corpus].append((path, row))
+
+    corpus_records = {}
+    all_sorted = True
+    accepted_sorted = True
+    for corpus, entries in by_corpus.items():
+        paths = [path for path, _row in entries]
+        accepted_paths = [path for path, row in entries if row.get("status") == "accepted"]
+        input_sorted = paths == sorted(paths)
+        accepted_in_order = accepted_paths == sorted(accepted_paths)
+        all_sorted = all_sorted and input_sorted
+        accepted_sorted = accepted_sorted and accepted_in_order
+        corpus_records[corpus] = dict(
+            files=len(paths),
+            input_paths_sorted=input_sorted,
+            first_path=paths[0] if paths else None,
+            last_path=paths[-1] if paths else None,
+            input_path_sha256=_path_digest(paths),
+            accepted=len(accepted_paths),
+            accepted_paths_sorted=accepted_in_order,
+            accepted_first_path=accepted_paths[0] if accepted_paths else None,
+            accepted_last_path=accepted_paths[-1] if accepted_paths else None,
+            accepted_path_sha256=_path_digest(accepted_paths),
+        )
+
+    expected_corpus_order = ["pdfjs", "qpdf", "verapdf"] if pdf_rows else []
+    corpus_order_matches = corpus_order == expected_corpus_order
+    accepted_rows = [row for row in pdf_rows if row.get("status") == "accepted"]
+    random.seed(57)
+    expected_sample = random.sample(accepted_rows, min(render_sample, len(accepted_rows)))
+    expected_sample_paths = [
+        row.get("manifest_path") or _relative(row.get("path", ""), root)
+        for row in expected_sample
+    ]
+    actual_sample_paths = [row.get("relative_path", "") for row in render_rows]
+    sample_matches = actual_sample_paths == expected_sample_paths
+
+    return dict(
+        original_instrument="per-corpus sorted(glob.glob(...)) then preserve accepted-row order",
+        manifest_rows_sorted_by_path=all_sorted,
+        accepted_rows_sorted_by_path=accepted_sorted,
+        corpus_order=corpus_order,
+        expected_corpus_order=expected_corpus_order,
+        corpus_order_matches=corpus_order_matches,
+        corpora=corpus_records,
+        render_sample_seed=57,
+        render_sample_selected=len(actual_sample_paths),
+        render_sample_paths_match_seeded_accepted_rows=sample_matches,
+        render_sample_paths_sha256=_path_digest(actual_sample_paths),
+        expected_render_sample_paths_sha256=_path_digest(expected_sample_paths),
+        render_sample_first_path=actual_sample_paths[0] if actual_sample_paths else None,
+        render_sample_last_path=actual_sample_paths[-1] if actual_sample_paths else None,
+        ok=all_sorted and accepted_sorted and corpus_order_matches and sample_matches,
+    )
+
+
+def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows, render_sample=140):
     """Emit row-level inputs to every disputed aggregate in the evidence bundle."""
     fits_source = []
     for row in fits_rows:
@@ -471,13 +545,23 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
     pdf_source = []
-    for row in pdf_rows:
+    corpus_positions = {}
+    accepted_positions = {}
+    for jsonl_order, row in enumerate(pdf_rows, start=1):
+        corpus = row.get("corpus")
+        corpus_position = corpus_positions.get(corpus, 0) + 1
+        corpus_positions[corpus] = corpus_position
         if row.get("status") != "accepted":
             continue
+        accepted_position = accepted_positions.get(corpus, 0) + 1
+        accepted_positions[corpus] = accepted_position
         pdf_source.append(dict(
             metric="pdf_share_positive",
-            corpus=row.get("corpus"),
-            path=_relative(row["path"], root),
+            corpus=corpus,
+            path=row.get("manifest_path") or _relative(row["path"], root),
+            jsonl_order=jsonl_order,
+            corpus_path_order=corpus_position,
+            accepted_path_order=accepted_position,
             manifest_sha256=row.get("manifest_sha256"),
             bytes=row.get("bytes"),
             status=row.get("status"),
@@ -491,6 +575,11 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
         for row in pdf_source:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
+    order_audit = pdf_path_order_audit(pdf_rows, render_rows, root, render_sample)
+    with open(os.path.join(out, "pdf-order-verification.json"), "w", encoding="utf-8") as handle:
+        json.dump(order_audit, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+
     # Preserve the 140 selected records and per-page hashes exactly as emitted by
     # pdf-measure.py; the file itself is `render-sample.jsonl` in this bundle.
     formulas = [
@@ -502,9 +591,30 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
         "## PDF share with a positive faithful recompression", "",
         "For each accepted PDF, `faithful_pct = 100 * (F - F9) / S`, where `S` is whole-file bytes, `F` is the sum of original encoded bytes of in-scope Flate streams, and `F9` is the sum over those streams of `min(original_encoded_length, zlib_level_9_length(inflated_payload))`. A file is positive exactly when `faithful_pct > 0`. `pdf-share-positive-source.jsonl` contains all accepted rows, with the positive flag; `pdf.jsonl` retains all accepted, already-optimal and refused rows.", "",
         "## PDF render-page count", "",
-        "Selection: `random.seed(57)` then `random.sample(accepted_rows, min(140, len(accepted_rows)))` in manifest order. Original and allowed-recompression candidate are rendered by PyMuPDF at 100 dpi; at most the first 6 pages per document are compared. `render_pages` is the sum of `compared_pages` for successfully rendered sample files, not the sum of each document's full page count. `render-sample.jsonl` records all selected paths, manifest hashes, original/candidate page totals, compared-page counts, page-image SHA-256 lists and equality result. Render failures are retained and make the run red.", "",
-        "## Current source counts and medians", "",
+        "Selection: manifest entries are explicitly sorted by path within each corpus, matching the original `sorted(glob.glob(...))` input order; accepted rows preserve that order. Then `random.seed(57)` and `random.sample(accepted_rows, min(140, len(accepted_rows)))` select the render sample. `pdf-order-verification.json` records the per-corpus input/accepted order checks, path digests, and whether the exact render path sequence matches the seeded selection. `pdf-share-positive-source.jsonl` carries global JSONL, per-corpus path, and accepted-row order numbers. Original and allowed-recompression candidate are rendered by PyMuPDF at 100 dpi; at most the first 6 pages per document are compared. `render_pages` is the sum of `compared_pages` for successfully rendered sample files, not the sum of each document's full page count. `render-sample.jsonl` records all selected paths, manifest hashes, original/candidate page totals, compared-page counts, page-image SHA-256 lists and equality result. Render failures are retained and make the run red.", "",
+        "## PDF path-order verification", "",
+        "The original tool used sorted paths within each corpus. This run checks that every corpus block and its accepted subset are still in that order; `pdf-order-verification.json` contains counts, first/last paths, and SHA-256 digests of each ordered path sequence. The accepted source rows also carry 1-based `jsonl_order`, `corpus_path_order`, and `accepted_path_order` fields.", "",
+        "- Corpus order: `%s`; expected original order: `%s`; match: `%s`." % (
+            ", ".join(order_audit["corpus_order"]),
+            ", ".join(order_audit["expected_corpus_order"]),
+            order_audit["corpus_order_matches"]),
+        "- All per-corpus rows sorted: `%s`; accepted subsets sorted: `%s`." % (
+            order_audit["manifest_rows_sorted_by_path"],
+            order_audit["accepted_rows_sorted_by_path"]),
+        "- Exact seeded render paths match accepted-row order: `%s`; sample path-sequence SHA-256: `%s`." % (
+            order_audit["render_sample_paths_match_seeded_accepted_rows"],
+            order_audit["render_sample_paths_sha256"]),
+        "",
+        "",
     ]
+    for corpus, order in order_audit["corpora"].items():
+        formulas.append(
+            "- `%s`: %d rows, sorted=%s, %d accepted sorted=%s; accepted path SHA-256 `%s`." % (
+                corpus, order["files"], order["input_paths_sorted"],
+                order["accepted"], order["accepted_paths_sorted"],
+                order["accepted_path_sha256"])
+        )
+    formulas += ["", "## Current source counts and medians", ""]
     from collections import defaultdict
     by_corpus = defaultdict(list)
     for row in fits_source:
@@ -545,6 +655,7 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows):
                  "- Prior aggregate 173 has no preserved old sample path list, so it cannot be asserted to refer to these same 140 documents/pages."]
     with open(os.path.join(out, "metric-definitions.md"), "w", encoding="utf-8") as handle:
         handle.write("\n".join(formulas) + "\n")
+    return order_audit
 
 
 def main():
@@ -676,7 +787,15 @@ def main():
                 )
 
     payload["elapsed_seconds"] = round(time.time() - started, 1)
-    write_metric_sources(args.out, args.root, source_rows["fits"], source_rows["pdf"], render_rows)
+    order_audit = write_metric_sources(
+        args.out, args.root, source_rows["fits"], source_rows["pdf"], render_rows, args.render_sample
+    )
+    if source_rows["pdf"]:
+        payload["pdf"]["path_order"] = order_audit
+        if not order_audit["ok"]:
+            problem = "PDF input/accepted path order or seeded render selection differs from the original instrument"
+            payload["pdf"]["problems"].append(problem)
+            payload["problems"].append("pdf: " + problem)
     for name, path in (("aggregates", "aggregates.json"), ("summary", "summary.md")):
         target = os.path.join(args.out, path)
         if name == "aggregates":

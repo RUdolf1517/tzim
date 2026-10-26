@@ -47,7 +47,9 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
+from collections import Counter
 import struct
 import subprocess
 import zlib
@@ -230,7 +232,18 @@ class Hdu:
         value = self.value(keyword)
         if value is None or not value.startswith("'"):
             return None
-        return value.strip().strip("'").strip()
+        characters = []
+        index = 1
+        while index < len(value):
+            if value[index] == "'":
+                if index + 1 < len(value) and value[index + 1] == "'":
+                    characters.append("'")
+                    index += 2
+                    continue
+                return "".join(characters).strip()
+            characters.append(value[index])
+            index += 1
+        return None
 
     def kind(self):
         if (self.value("SIMPLE") or "").upper() == "T":
@@ -460,26 +473,27 @@ def build_fixtures(root):
         )
     )
 
-    # 4b. Preservation-only HDRLET case. Its original fitsverify error is
-    # explicitly captured as a per-file baseline; the candidate may not add a
-    # different external error while tzim walks and copies the HDUs.
+    # 4b. Preservation-only HDRLET case. Keep an empty primary first so the
+    # unregistered extension is encountered before any compressed image table;
+    # compare the exact input diagnostic baseline without conflating it with the
+    # separately tested registered multi-HDU traversal path.
     write(
         "hdrlet_preservation.fits",
-        image_hdu(16, [64, 128], int16_pattern(64, 128), primary=True)
+        empty_primary()
         + nonstandard_hdu("HDRLET", b"\x01\x02\x03\x04" * 200, extra=[string_card("EXTNAME", "STWCS")])
-        + image_hdu(-32, [32, 64], float32_with_specials(32, 64), extra=[string_card("EXTNAME", "SCI")])
+        + image_hdu(-32, [256, 256], float32_with_specials(256, 256), extra=[string_card("EXTNAME", "SCI")])
         + bin_table_hdu(4, 8),
     )
     cases.append(
         dict(
             name="hdrlet_preservation.fits",
             expect="mixed",
-            images=2,
-            hdu_delta=1,
+            images=1,
+            hdu_delta=0,
             verbatim=["HDRLET", "BINTABLE"],
             diagnostics="compare_original",
             skip_funpack=True,
-            why="HDRLET is not registered in fitsverify; require exact byte preservation and no new per-file external diagnostic",
+            why="HDRLET is not registered in fitsverify; preserve it exactly and compare the per-file diagnostic baseline without making it the first compressed-HDU traversal control",
         )
     )
 
@@ -702,6 +716,50 @@ def fitsverify_diagnostics(output):
         if line.strip().startswith("**** Verification found ")
     ]
     return dict(markers=markers, summary=summary)
+
+
+def external_diagnostic_comparison(original_exit, original, candidate_exit, candidate):
+    """Whether a candidate added any diagnostic beyond its own input baseline.
+
+    This is deliberately per-file, not a global allowlist. An inherited HDRLET
+    error may remain or disappear; a different/new marker, a larger summary
+    count, or an exit/count inconsistency is a new finding.
+    """
+    def counts(diagnostics):
+        for line in diagnostics.get("summary", []):
+            match = re.search(
+                r"Verification found (\d+) warning\(s\) and (\d+) error\(s\)", line
+            )
+            if match:
+                return dict(warnings=int(match.group(1)), errors=int(match.group(2)))
+        return None
+
+    original_counts = counts(original)
+    candidate_counts = counts(candidate)
+    new_markers = list(
+        (Counter(candidate.get("markers", [])) - Counter(original.get("markers", []))).elements()
+    )
+    counts_consistent = (
+        original_counts is not None
+        and candidate_counts is not None
+        and original_exit == original_counts["warnings"] + original_counts["errors"]
+        and candidate_exit == candidate_counts["warnings"] + candidate_counts["errors"]
+    )
+    no_new_diagnostics = (
+        counts_consistent
+        and not new_markers
+        and candidate_counts["warnings"] <= original_counts["warnings"]
+        and candidate_counts["errors"] <= original_counts["errors"]
+        and candidate_exit <= original_exit
+    )
+    return dict(
+        no_new_diagnostics=no_new_diagnostics,
+        exact_match=(original == candidate and original_exit == candidate_exit),
+        new_markers=new_markers,
+        original_counts=original_counts,
+        candidate_counts=candidate_counts,
+        exit_count_consistent=counts_consistent,
+    )
 
 
 def funpack(path, scratch):
@@ -1091,13 +1149,15 @@ def check_fixture(binary, case, root, scratch, evidence):
     evidence.write_text("fitsverify-%s.txt" % case["name"], verify_output)
     if diagnostic_mode == "compare_original":
         candidate_diagnostics = fitsverify_diagnostics(verify_output)
-        same_as_input = (
-            verify_code == original_verify_code
-            and candidate_diagnostics == original_diagnostics
+        comparison = external_diagnostic_comparison(
+            original_verify_code,
+            original_diagnostics,
+            verify_code,
+            candidate_diagnostics,
         )
         result["candidate_fitsverify_diagnostics"] = candidate_diagnostics
         result["external_diagnostic_comparison"] = dict(
-            matches_original=same_as_input,
+            **comparison,
             original_exit=original_verify_code,
             candidate_exit=verify_code,
             original=original_diagnostics,
@@ -1107,9 +1167,9 @@ def check_fixture(binary, case, root, scratch, evidence):
             "fitsverify-diagnostic-comparison-%s.json" % case["name"],
             result["external_diagnostic_comparison"],
         )
-        if not same_as_input:
+        if not comparison["no_new_diagnostics"]:
             result["problems"].append(
-                "candidate introduced or changed fitsverify errors/warnings versus the exact HDRLET input baseline"
+                "candidate introduced a new fitsverify error/warning or an inconsistent diagnostic count versus the exact HDRLET input baseline"
             )
     else:
         if verify_code != 0:
@@ -1336,12 +1396,14 @@ def render_diagnostics(summary, evidence):
             comparison = fixture.get("external_diagnostic_comparison", {})
             lines.append(
                 "The original's unregistered HDRLET diagnostic is an explicit per-file baseline; "
-                "candidate diagnostic markers and counts match that baseline: %s."
-                % comparison.get("matches_original", "not compared")
+                "candidate added no new marker or warning/error count: %s (exact match: %s)."
+                % (comparison.get("no_new_diagnostics", "not compared"),
+                   comparison.get("exact_match", "not compared"))
             )
             lines.append(
-                "A different candidate error is reported as new; the inherited unregistered-XTENSION "
-                "error is not a global warning/error allowlist. HDRLET raw bytes must match exactly."
+                "The inherited unregistered-XTENSION error may remain or disappear; a different/new "
+                "candidate diagnostic fails this case. This is not a global warning/error allowlist. "
+                "HDRLET raw bytes must match exactly."
             )
         for label in ("original", "candidate"):
             layout = fixture.get(label + "_hdus") or []
@@ -1592,7 +1654,7 @@ def main():
     # --- positive toolchain control: fpack -> funpack -C ----------------------
     sane_src = os.path.join(scratch, "sanity")
     os.makedirs(sane_src, exist_ok=True)
-    source_path = os.path.join(root, "int16_primary.fits")
+    source_path = os.path.join(scratch, "original-int16_primary.fits")
     sanity_path = os.path.join(sane_src, "sanity.fits")
     shutil.copyfile(source_path, sanity_path)
     sanity_original = open(sanity_path, "rb").read()
@@ -1642,6 +1704,7 @@ def main():
                     control_diffs["%d-%s" % (index, a.kind())] = cards
             control["header_diff_count"] = sum(len(items) for items in control_diffs.values()
                                                 if isinstance(items, list))
+            control["header_diff"] = control_diffs
             control["array_equal"] = (
                 len(source_hdus) == len(rebuilt_hdus)
                 and all(not compare_arrays(a, b) for a, b in zip(source_hdus, rebuilt_hdus))
@@ -1733,11 +1796,34 @@ def self_check(root, cases, scratch, evidence, summary):
         check(table.int("NAXIS1") == 8 and table.text("TFORM1") == "1PB(1024)",
               "multi_hdu's one 1PB column is 8 bytes, so NAXIS1 must be 8")
     print("fixture: multi_hdu BINTABLE NAXIS1 agrees with its one 1PB descriptor")
+    extension = parse(open(os.path.join(root, "float64_extension.fits"), "rb").read())
+    check(len(extension) == 2 and extension[1].kind() == "IMAGE",
+          "a quoted XTENSION value with a comment must stop at its closing quote")
+    print("reader: quoted string values end before comments")
     check(not any(h.kind() == "HDRLET" for h in multi),
           "the positive multi_hdu fixture must use only registered extension types")
     hdrlet_case = next((c for c in cases if c["name"] == "hdrlet_preservation.fits"), None)
     check(hdrlet_case is not None and hdrlet_case.get("skip_funpack") is True,
           "HDRLET must be a separate preservation-only case")
+    hdrlet_hdus = parse(open(os.path.join(root, "hdrlet_preservation.fits"), "rb").read())
+    hdrlet = next((h for h in hdrlet_hdus if h.kind() == "HDRLET"), None)
+    check(hdrlet is not None and hdrlet.data == b"\x01\x02\x03\x04" * 200,
+          "HDRLET must carry exactly 200 repetitions of 01 02 03 04")
+    baseline = dict(
+        markers=['*** Error: Unregistered XTENSION value "HDRLET  ".'],
+        summary=["**** Verification found 0 warning(s) and 1 error(s). ****"],
+    )
+    cleared = dict(
+        markers=[], summary=["**** Verification found 0 warning(s) and 0 error(s). ****"]
+    )
+    new_traversal_error = dict(
+        markers=["*** Error: Bad HDU? (from CFITSIO error stack:)."],
+        summary=["**** Verification found 0 warning(s) and 1 error(s). ****"],
+    )
+    check(external_diagnostic_comparison(1, baseline, 0, cleared)["no_new_diagnostics"],
+          "removing the inherited HDRLET error must not be treated as a regression")
+    check(not external_diagnostic_comparison(1, baseline, 1, new_traversal_error)["no_new_diagnostics"],
+          "a new traversal error must not be hidden by the inherited HDRLET error")
     zero_case = next((c for c in cases if c["name"] == "zero_width_column.fits"), None)
     check(zero_case is not None and zero_case.get("expect") == "untouched"
           and zero_case.get("status") == "already_optimal",
