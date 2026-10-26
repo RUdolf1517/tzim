@@ -85,21 +85,43 @@ jobs:
           tar xzf cfitsio.tar.gz
           src="$(find . -maxdepth 1 -type d -name 'cfitsio-*' | head -1)"
           cd "$src"
-          ./configure --prefix="${RUNNER_TEMP}/cfitsio-install" > configure.log
+          prefix="${RUNNER_TEMP}/cfitsio-install"
+          ./configure --prefix="$prefix" > configure.log
           make -j"$(nproc)" > build.log 2>&1
-          # `make install` on some CFITSIO versions installs the library only, so
-          # the three tools are placed next to it explicitly rather than assumed:
-          # a missing `fitsverify` must be an error here, not a mystery later.
           make install > install.log 2>&1
-          bindir="${RUNNER_TEMP}/cfitsio-install/bin"
+
+          # These programs are linked through libtool, so what `make` leaves at the
+          # top of the tree — `fpack`, `funpack`, `fitsverify` — is a **wrapper
+          # script**, and the programs themselves are in the `.libs` directories.
+          # Copying the wrapper installed a script whose exec path did not survive,
+          # which is how the first run got `funpack exited 255` and a toolchain
+          # control that never fired. Take the real binaries, insist they are ELF,
+          # and put the freshly built library on the loader path.
+          bindir="$prefix/bin"
           mkdir -p "$bindir"
           for tool in fitsverify fpack funpack; do
-            if [ ! -x "$bindir/$tool" ]; then
-              cp "$tool" "$bindir/$tool"
+            placed=""
+            for candidate in "$bindir/$tool" "utilities/.libs/$tool" ".libs/$tool"; do
+              if [ -f "$candidate" ] && file -b "$candidate" | grep -qi 'ELF'; then
+                cp -f "$candidate" "$bindir/$tool"
+                placed="$candidate"
+                break
+              fi
+            done
+            if [ -z "$placed" ]; then
+              echo "::error::$tool was not built as an executable (libtool wrapper only)"
+              ls -l "$tool" utilities/.libs/ .libs/ 2>/dev/null || true
+              exit 1
             fi
-            test -x "$bindir/$tool" || { echo "::error::$tool was not built"; exit 1; }
+            chmod +x "$bindir/$tool"
+            echo "$tool <- $placed ($(file -b "$bindir/$tool" | cut -c1-40))"
+            file -b "$bindir/$tool" | grep -qi 'ELF' || { echo "::error::$tool is not a binary"; exit 1; }
           done
           echo "$bindir" >> "$GITHUB_PATH"
+          # The library the tools just linked against; without it the loader finds
+          # nothing and every tool exits before printing a thing.
+          echo "LD_LIBRARY_PATH=$prefix/lib:${RUNNER_TEMP}/cfitsio-install/lib" >> "$GITHUB_ENV"
+          ldd "$bindir/fpack" || true
           # The build logs are evidence: a verifier built from a patched tree is
           # not the verifier the audit names.
           cp configure.log build.log install.log "${RUNNER_TEMP}/evidence/"

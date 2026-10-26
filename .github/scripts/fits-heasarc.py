@@ -897,7 +897,19 @@ def check_fixture(binary, case, root, scratch, evidence):
         return result
 
     if after == original:
-        result["problems"].append("the file did not change, so nothing was written")
+        # `tzim` reports the decision it made; "nothing was written" without that
+        # reason is a riddle for whoever reads the log next.
+        decision = (record or {}).get("files") or []
+        said = ""
+        for entry in decision:
+            if isinstance(entry, dict):
+                for key in ("reason", "decision", "detail", "action"):
+                    if entry.get(key):
+                        said = " (tzim said: %s)" % entry[key]
+                        break
+            if said:
+                break
+        result["problems"].append("the file did not change, so nothing was written%s" % said)
         return result
     if status != "optimized":
         result["problems"].append("status is %r, expected 'optimized'" % status)
@@ -959,7 +971,12 @@ def check_fixture(binary, case, root, scratch, evidence):
     evidence.write_text("funpack-%s.txt" % case["name"], unpack_output)
     result["funpack_exit"] = unpack_code
     if unpack_code != 0 or not unpacked:
-        result["problems"].append("funpack exited %d and produced no file" % unpack_code)
+        # The exit code alone is not evidence. `funpack` exits 255 for its own
+        # errors and what it printed is the only thing that says which.
+        tail = " / ".join(line.strip() for line in unpack_output.splitlines()[-3:] if line.strip())
+        result["problems"].append(
+            "funpack exited %d and produced no file%s" % (unpack_code, (": " + tail) if tail else "")
+        )
         return result
     rebuilt = parse(open(unpacked, "rb").read())
     if rebuilt and rebuilt[0].kind() == "PRIMARY" and not rebuilt[0].axes() and before[0].axes():
@@ -1217,7 +1234,10 @@ def main():
     pack_code, pack_output = run(["fpack", "-O", "sanity.fits"], cwd=sane_src)
     packed = os.path.join(sane_src, "sanity.fits.fz")
     if pack_code != 0 or not os.path.exists(packed):
-        summary["controls"].append(dict(name="toolchain", ok=False, note="fpack failed"))
+        tail = " / ".join(line.strip() for line in pack_output.splitlines()[-3:] if line.strip())
+        summary["controls"].append(
+            dict(name="toolchain", ok=False, note="fpack failed: %s" % (tail or "no output"))
+        )
         evidence.write_text("control-toolchain.txt", pack_output)
         print("::error::fpack could not produce a reference file, so the tools are not trustworthy")
         failures += 1
