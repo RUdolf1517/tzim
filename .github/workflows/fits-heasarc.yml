@@ -81,6 +81,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Everything this step prints also lands in the log `ci-report.sh`
+          # relays, because a build failure that leaves the gate unrun is exactly
+          # the case where the artifact cannot be inspected.
+          exec > >(tee -a "${RUNNER_TEMP}/fits-heasarc.log") 2>&1
+          set -x
           cd "${RUNNER_TEMP}"
           tar xzf cfitsio.tar.gz
           src="$(find . -maxdepth 1 -type d -name 'cfitsio-*' | head -1)"
@@ -102,20 +107,24 @@ jobs:
           for tool in fitsverify fpack funpack; do
             placed=""
             for candidate in "$bindir/$tool" "utilities/.libs/$tool" ".libs/$tool"; do
-              if [ -f "$candidate" ] && file -b "$candidate" | grep -qi 'ELF'; then
-                cp -f "$candidate" "$bindir/$tool"
-                placed="$candidate"
-                break
-              fi
+              # No `file … | grep -q` here: under `pipefail` a `grep -q` that exits
+              # on the first match can kill `file` with SIGPIPE and make the test
+              # fail on a file that is perfectly good.
+              [ -f "$candidate" ] || continue
+              kind="$(file -b "$candidate" 2>/dev/null || true)"
+              case "$kind" in
+                *ELF*) cp -f "$candidate" "$bindir/$tool"; placed="$candidate"; break ;;
+              esac
             done
             if [ -z "$placed" ]; then
               echo "::error::$tool was not built as an executable (libtool wrapper only)"
-              ls -l "$tool" utilities/.libs/ .libs/ 2>/dev/null || true
+              for where in "$bindir/$tool" "$tool" utilities/.libs "$tool" ".libs/$tool"; do
+                [ -e "$where" ] && ls -l "$where"
+              done || true
               exit 1
             fi
             chmod +x "$bindir/$tool"
-            echo "$tool <- $placed ($(file -b "$bindir/$tool" | cut -c1-40))"
-            file -b "$bindir/$tool" | grep -qi 'ELF' || { echo "::error::$tool is not a binary"; exit 1; }
+            echo "$tool <- $placed: $(file -b "$bindir/$tool")"
           done
           echo "$bindir" >> "$GITHUB_PATH"
           # The library the tools just linked against; without it the loader finds
