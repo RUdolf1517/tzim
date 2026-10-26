@@ -24,4 +24,9 @@ sample comparison), and `zlib-borderline-classification.json` (6,344 stream
 comparisons across zlib 1.2.13 and 1.3.1). The #71 fail-before output and the
 latest failed HEASARC diagnostics are retained as `i71-fail-before-run-40350665261.md`
 and `i71-fits-heasarc-run-40350674612.md`; they are explicitly not pass-after
-results.
+results. The successful follow-up run and relay package for tested code SHA
+`04b303e7f8a410f8b71e86b2517bccae61079036` are indexed in
+`iteration-04b303/`: per-file/control assertions, and draft issue #71/#72 relay
+texts. The per-file record explicitly distinguishes run assertions from output
+fields unavailable because the final Actions artifact/log endpoints returned
+`EOF`.
