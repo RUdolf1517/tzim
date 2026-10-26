@@ -613,7 +613,14 @@ def funpack(path, scratch):
         os.unlink(os.path.join(work, stale))
     packed = os.path.join(work, "candidate.fits.fz")
     shutil.copyfile(path, packed)
-    code, output = run(["funpack", "-O", os.path.basename(packed)], cwd=work)
+    # `-O` is **not** "overwrite" in these tools: it names the output file, so
+    # `funpack -O candidate.fits.fz` means "write to candidate.fits.fz and read
+    # nothing", which the tool correctly rejects with "no FITS files to
+    # uncompress". The output is removed first instead, and the input named alone.
+    unpacked_name = os.path.join(work, "candidate.fits")
+    if os.path.exists(unpacked_name):
+        os.unlink(unpacked_name)
+    code, output = run(["funpack", os.path.basename(packed)], cwd=work)
     unpacked = os.path.join(work, "candidate.fits")
     if not os.path.exists(unpacked):
         others = [n for n in os.listdir(work) if n.endswith(".fits")]
@@ -1231,8 +1238,12 @@ def main():
     sane_src = os.path.join(scratch, "sanity")
     os.makedirs(sane_src, exist_ok=True)
     shutil.copyfile(os.path.join(root, "int16_primary.fits"), os.path.join(sane_src, "sanity.fits"))
-    pack_code, pack_output = run(["fpack", "-O", "sanity.fits"], cwd=sane_src)
     packed = os.path.join(sane_src, "sanity.fits.fz")
+    if os.path.exists(packed):
+        os.unlink(packed)
+    # Same `-O` trap as `funpack` above: it names the output, it does not mean
+    # "replace". `fpack sanity.fits` writes `sanity.fits.fz` next to it.
+    pack_code, pack_output = run(["fpack", "sanity.fits"], cwd=sane_src)
     if pack_code != 0 or not os.path.exists(packed):
         tail = " / ".join(line.strip() for line in pack_output.splitlines()[-6:] if line.strip())
         summary["controls"].append(
