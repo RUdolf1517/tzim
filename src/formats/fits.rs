@@ -957,7 +957,17 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
     let table = 8u64
         .checked_mul(rows)
         .ok_or_else(|| Error::verify("fits: the row count overflows"))?;
-    if heap_len < 0 || table + heap_len as u64 > b.data_len {
+    // The table has to fit inside the HDU it was found in, before the heap is
+    // looked for: the descriptors are read straight out of the candidate, so an
+    // unchecked `table` indexes past the bytes instead of failing. Every step is
+    // checked, because `NAXIS2` and `PCOUNT` are numbers a file chose.
+    if heap_len < 0 || table > b.data_len {
+        return Err(Error::verify(
+            "fits: the row count does not fit the table's own data",
+        ));
+    }
+    let heap_len = heap_len as u64;
+    if table.checked_add(heap_len).is_none_or(|used| used > b.data_len) {
         return Err(Error::verify("fits: PCOUNT does not describe the heap"));
     }
     let heap_start = b.data_start + table as usize;
@@ -1234,6 +1244,28 @@ mod tests {
         let mut candidate = Vec::new();
         assert!(optimize(short, &mut candidate, &opts).is_err());
         assert!(candidate.is_empty());
+    }
+
+    #[test]
+    fn a_header_lookup_finds_the_first_card_of_its_keyword() {
+        // `get` is what every decision in this file asks, and what decides
+        // whether an `EXTNAME` survives or a `PCOUNT` gains a `ZPCOUNT`: the
+        // first card wins, a keyword that is absent is absent, and a repeated
+        // keyword is counted rather than hidden.
+        let extra = [("EXTNAME", "'SCI'"), ("PCOUNT", "0"), ("GCOUNT", "1")];
+        let original = image_hdu(16, &[4, 2], &sample(16, 2, 4), &extra);
+        let header = parse_header(&original, 0).expect("the header parses");
+        let name = header.get("EXTNAME").expect("EXTNAME is in the header");
+        assert_eq!(name.keyword(), "EXTNAME");
+        assert_eq!(name.text(), Some("SCI"));
+        assert_eq!(header.text("EXTNAME"), Some("SCI"));
+        assert!(header.has("PCOUNT"));
+        assert_eq!(header.int("PCOUNT"), Some(0));
+        assert!(!header.has("ZTILE1"));
+        assert!(header.get("ZTILE1").is_none());
+        assert_eq!(header.int("ZTILE1"), None);
+        assert_eq!(header.count("NAXIS"), 1);
+        assert_eq!(header.count("ZTILE1"), 0);
     }
 
     #[test]

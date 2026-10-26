@@ -72,8 +72,10 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   the corpus, against a bar of 8 % and 15 %, with every array compared bit for bit after the round trip;
   recompressing tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %**, because the ones in the corpus are
   already at roughly level 6. The first tier is admissible as an opt-in `--fits-tile`; the second does not ship.
-  No handler exists — [guarantees §4.12](docs/guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in)
-  now says "admitted, not implemented" rather than "not yet justified".
+  No handler existed when the audit landed — [guarantees
+  §4.12](docs/guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) said "admitted, not implemented"
+  rather than "not yet justified" — and the handler that admission allowed is in this release, behind
+  `--fits-tile`, out of `default` because it measures +36 KiB.
 - **A correction the FITS audit earned:** the tile payload of `GZIP_1`/`GZIP_2` is a **gzip** member (RFC 1952,
   CRC-32 and `ISIZE`), not an RFC 1950 zlib stream as [fits-audit §0](docs/fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source)
   had assumed, and the `GZIP_2` permutation is the decreasing order of significance the convention states. Both

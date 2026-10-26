@@ -116,7 +116,7 @@ recommendation, not a decision — it is item one in §9.
 | --- | --- | --- |
 | uncompressed `BITPIX = −32`/−64 image data (floats) | common in raw pipeline output and archives that never compressed | **20–50 %** — floats are noisy, so this is not PNG territory; `fpack` typically halves a float image |
 | uncompressed `BITPIX = 16`/32 integer data | common for integer-valued observations | **10–35 %** |
-| `GZIP_1`/`GZIP_2` tiles | the archival norm when `fpack` was used | **1–4 %**, if `fpack` wrote zlib at its default level rather than 9 |
+| `GZIP_1`/`GZIP_2` tiles | the archival norm when `fpack` was used | **1–4 %**, if `fpack` asked DEFLATE for its default level rather than 9 |
 | `RICE_1` tiles | the norm for integer data through `fpack -r` | **0 %** — a different codec, refused |
 | `HCOMPRESS_1` tiles | used for floats when a lossy tolerance is acceptable | **0 %** — and possibly lossy already, refused |
 | ASCII tables, `TABLE`, non-`ZIMAGE` `BINTABLE` | metadata and catalogues | 0 %, copied verbatim |
@@ -166,7 +166,7 @@ re-emitting a differently-coded tile is exactly the "best-effort rewrite" the in
 | Construct | Why refuse |
 | --- | --- |
 | `ZCMPTYPE` other than `GZIP_1`/`GZIP_2` | no encoder for `RICE_1`, `PLIO_1`, `HCOMPRESS_1`; `HCOMPRESS_1` may already be lossy |
-| a tile payload that is not a well-formed zlib stream | refuse, never repair — the §4.10 rule |
+| a tile payload that is not a well-formed **gzip member** (RFC 1952: the `1F 8B 08` header, a trailer whose CRC-32 and `ISIZE` agree with the inflated bytes) | refuse, never repair — the §4.10 rule, in the framing §0 corrected |
 | `GZIP_2` on a file whose shuffle we have not confirmed against the convention | a wrong permutation produces a file that decompresses to garbage; confirmation is a precondition, not a nice-to-have |
 | `SIMPLE = F` | legal in the standard, and a primary HDU that is not simple is outside what the contract describes |
 | `GROUPS = T` (random groups) | deprecated, and its data layout (`PCOUNT`/`GCOUNT`) is a special case with no users worth the risk |

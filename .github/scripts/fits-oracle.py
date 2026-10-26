@@ -325,6 +325,11 @@ def check_rewritten(path, original, case):
     problems = []
     before = walk(original)
     after = walk(open(path, "rb").read())
+    expected_shapes = {}
+    for source, target in case.get("arrays", []):
+        array = case["expected"][source]
+        if array is not None:
+            expected_shapes[target] = np.shape(array)
     if len(after) < len(before):
         problems.append("the candidate has fewer HDUs than the original")
 
@@ -341,6 +346,16 @@ def check_rewritten(path, original, case):
                 got = np.asarray(hdul[target].data)
             except IndexError:
                 problems.append("candidate HDU %d is missing" % target)
+                continue
+            except Exception as error:  # noqa: BLE001 - a reader's own complaint
+                # A candidate whose cards disagree with its tiles is a failure
+                # of the candidate, not a crash of this script: a mutation that
+                # writes `ZTILE1 = 1` makes astropy raise instead of decoding,
+                # and a traceback here would lose the other fixtures' verdicts.
+                problems.append(
+                    "HDU %d could not be read: %s: %s"
+                    % (target, type(error).__name__, error)
+                )
                 continue
             if got.shape != expected.shape:
                 problems.append("shape %s -> %s" % (expected.shape, got.shape))
@@ -377,6 +392,58 @@ def check_rewritten(path, original, case):
                 problems.append("HDU %d has no COMPRESSED_DATA column" % target)
             if table.int("NAXIS1") != 8:
                 problems.append("HDU %d row width is %s" % (target, table.int("NAXIS1")))
+
+            #     The tiling rule this handler promises: `ZTILE1` is the whole
+            #     first axis and every other `ZTILEn` is 1, so tile *i* is row
+            #     *i*. Nothing else in this file looks at the `Z` cards beyond
+            #     their presence, and a mutation of the tiling was the one
+            #     mutation that used to pass: a file whose tiles are one row
+            #     each but whose cards claim a square tiling decodes to the
+            #     right array only if the reader ignores the cards, and a
+            #     candidate that says `ZTILE1 = 1` with row-sized tiles is not
+            #     caught by comparing arrays at all — astropy raises, which
+            #     used to abort this script rather than fail the fixture.
+            znaxis = table.int("ZNAXIS")
+            #     The shape comes from the original array, not from the
+            #     candidate: with the cards and the original in hand there is
+            #     nothing left for the file to disagree with, and a candidate
+            #     whose `ZTILEn` lies is reported as a tiling problem rather
+            #     than as an opaque failure to read it.
+            shape = expected_shapes.get(target)
+            if shape is None:
+                continue
+            if znaxis is None or len(shape) != znaxis:
+                problems.append(
+                    "HDU %d: ZNAXIS %s against an array of rank %d"
+                    % (target, znaxis, len(shape))
+                )
+                continue
+            # FITS counts axes fastest-varying last, so `ZNAXIS1` is the last
+            # entry of numpy's shape.
+            axes = [table.int("ZNAXIS%d" % (n + 1)) for n in range(znaxis)]
+            if axes != list(shape[::-1]):
+                problems.append(
+                    "HDU %d: ZNAXISn %s against the shape %s" % (target, axes, shape)
+                )
+                continue
+            if axes and table.int("ZTILE1") != axes[0]:
+                problems.append(
+                    "HDU %d: ZTILE1 %s is not the whole first axis %s"
+                    % (target, table.int("ZTILE1"), axes[0])
+                )
+            for n in range(2, znaxis + 1):
+                if table.int("ZTILE%d" % n) != 1:
+                    problems.append(
+                        "HDU %d: ZTILE%d %s is not 1, so the tiling is not the one "
+                        "the contract names" % (target, n, table.int("ZTILE%d" % n))
+                    )
+            rows = table.int("NAXIS2")
+            want_rows = int(np.prod(axes[1:])) if len(axes) > 1 else 1
+            if rows != want_rows:
+                problems.append(
+                    "HDU %d: NAXIS2 %s for an array that needs %s tiles"
+                    % (target, rows, want_rows)
+                )
 
     # (d) every HDU that was not a rewrite target is byte-identical
     for source, target in case.get("verbatim", []):
