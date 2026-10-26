@@ -67,6 +67,19 @@ tiff = ["dep:flate2"]
 # zlib streams (RFC 1950) are DEFLATE plus a two-byte header and an Adler-32
 # trailer, and both of those are a few lines here, so this costs no crate.
 zlib = ["dep:flate2"]
+# FITS tile compression: the payload of a `GZIP_1`/`GZIP_2` tile is a gzip
+# member, so the DEFLATE codec and the CRC-32 that are already in the tree cover
+# it and no new crate is needed (docs/dependencies.md §2.11). `crc32fast` is used
+# by the verifier only — the writer's gzip framing comes from `flate2` — so the
+# candidate's CRC-32 is checked by an implementation the writer never calls.
+#
+# **Not in `default`.** The size gate in `ci.yml` is this release's own measurement
+# to the byte, and this handler's cost is measured by the feature matrix above it,
+# not estimated (docs/size-budget.md §3); `--all-features` builds it on every CI
+# run, and `cargo build --release --features fits` is how to ship it. The
+# transformation is opt-in per run as well (`--fits-tile`), because it turns an
+# `IMAGE` HDU into a `BINTABLE` and a pipeline that indexes `NAXIS1` notices.
+fits = ["dep:flate2", "dep:crc32fast"]
 zopfli = ["dep:zopfli"]
 # Exposes the parsers to the fuzz targets in fuzz/. Never enabled for a release.
 fuzz-api = []

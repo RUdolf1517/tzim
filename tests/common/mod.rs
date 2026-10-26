@@ -1529,3 +1529,434 @@ pub fn zlib_with_window(data: &[u8], cinfo: u8) -> Vec<u8> {
     out[1] = flg;
     out
 }
+
+// ---------------------------------------------------------------------------
+// FITS
+// ---------------------------------------------------------------------------
+//
+// The writer here is hand-rolled rather than borrowed from the handler: a
+// fixture built by the code under test proves nothing about it. Every HDU is a
+// sequence of 2880-byte records, the header ends at an `END` card and the data
+// is padded with zeros, which are the three properties the handler relies on.
+// The reader is hand-rolled for the same reason: it inflates the tiles with
+// `flate2` directly, so a test that compares the array does not go through the
+// handler's own decompressor.
+
+/// The record size every FITS file is built from.
+pub const FITS_RECORD: usize = 2880;
+
+/// One 80-character card, padded with spaces.
+pub fn fits_card_raw(text: &str) -> Vec<u8> {
+    let mut card = vec![b' '; 80];
+    let bytes = text.as_bytes();
+    let take = bytes.len().min(80);
+    card[..take].copy_from_slice(&bytes[..take]);
+    card
+}
+
+/// A value card: `KEYWORD = value`, the value right-justified in its 20 columns.
+pub fn fits_card(keyword: &str, value: &str) -> String {
+    format!("{keyword:<8}= {value:>20}")
+}
+
+/// A character-string card: `KEYWORD = 'value'`.
+pub fn fits_string_card(keyword: &str, value: &str) -> String {
+    format!("{keyword:<8}= '{value}'")
+}
+
+/// A logical card: `KEYWORD = T` or `F`.
+pub fn fits_bool_card(keyword: &str, value: bool) -> String {
+    fits_card(keyword, if value { "T" } else { "F" })
+}
+
+/// Pads `out` with zeros to a whole number of records.
+pub fn fits_pad(out: &mut Vec<u8>) {
+    let rem = out.len() % FITS_RECORD;
+    if rem != 0 {
+        out.resize(out.len() + (FITS_RECORD - rem), 0);
+    }
+}
+
+/// One HDU: the cards, an `END` card, spaces to a record boundary, the data,
+/// zeros to a record boundary.
+pub fn fits_hdu(cards: &[String], data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for card in cards {
+        out.extend_from_slice(&fits_card_raw(card));
+    }
+    out.extend_from_slice(&fits_card_raw("END"));
+    let rem = out.len() % FITS_RECORD;
+    if rem != 0 {
+        out.resize(out.len() + (FITS_RECORD - rem), b' ');
+    }
+    out.extend_from_slice(data);
+    fits_pad(&mut out);
+    out
+}
+
+/// Bytes per sample for a `BITPIX` value.
+pub fn fits_bytes_per_sample(bitpix: i64) -> usize {
+    (bitpix.unsigned_abs() / 8) as usize
+}
+
+/// The data an image of the given shape holds, filled with a repeating pattern
+/// so that a fixture is genuinely compressible.
+///
+/// The pattern repeats every four bytes rather than every byte: a FITS fixture
+/// is padded to 2880-byte records, so an image whose tiles compress to less than
+/// a record's worth of saving would not shrink at all and a test asserting a
+/// gain would be measuring the padding instead of the handler.
+pub fn fits_samples(bitpix: i64, axis: &[usize]) -> Vec<u8> {
+    let count = axis.iter().product::<usize>() * fits_bytes_per_sample(bitpix);
+    (0..count).map(|i| ((i / 4) % 251) as u8).collect()
+}
+
+/// A primary image HDU. `axis` is `(NAXIS1, NAXIS2, …)`.
+pub fn fits_primary_image(bitpix: i64, axis: &[usize], data: &[u8]) -> Vec<u8> {
+    let mut cards = vec![
+        fits_bool_card("SIMPLE", true),
+        fits_card("BITPIX", &bitpix.to_string()),
+        fits_card("NAXIS", &axis.len().to_string()),
+    ];
+    for (index, length) in axis.iter().enumerate() {
+        cards.push(fits_card(
+            &format!("NAXIS{}", index + 1),
+            &length.to_string(),
+        ));
+    }
+    cards.push(fits_bool_card("EXTEND", true));
+    fits_hdu(&cards, data)
+}
+
+/// An `IMAGE` extension HDU. It carries the `PCOUNT`/`GCOUNT` pair the standard
+/// requires of an extension and an image does not.
+pub fn fits_image_ext(bitpix: i64, axis: &[usize], data: &[u8], extra: &[String]) -> Vec<u8> {
+    let mut cards = vec![
+        fits_string_card("XTENSION", "IMAGE"),
+        fits_card("BITPIX", &bitpix.to_string()),
+        fits_card("NAXIS", &axis.len().to_string()),
+    ];
+    for (index, length) in axis.iter().enumerate() {
+        cards.push(fits_card(
+            &format!("NAXIS{}", index + 1),
+            &length.to_string(),
+        ));
+    }
+    cards.push(fits_card("PCOUNT", "0"));
+    cards.push(fits_card("GCOUNT", "1"));
+    cards.extend_from_slice(extra);
+    fits_hdu(&cards, data)
+}
+
+/// A `BINTABLE` that is not a compressed image: the shape a handler must copy
+/// and never touch.
+pub fn fits_bin_table(rows: usize, row_bytes: usize, heap: &[u8]) -> Vec<u8> {
+    let cards = vec![
+        fits_string_card("XTENSION", "BINTABLE"),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "2"),
+        fits_card("NAXIS1", &row_bytes.to_string()),
+        fits_card("NAXIS2", &rows.to_string()),
+        fits_card("PCOUNT", &heap.len().to_string()),
+        fits_card("GCOUNT", "1"),
+        fits_card("TFIELDS", "1"),
+        fits_string_card("TTYPE1", "VALUE"),
+        fits_string_card("TFORM1", "1PB"),
+    ];
+    let mut data = vec![0u8; rows * row_bytes];
+    data.extend_from_slice(heap);
+    fits_hdu(&cards, &data)
+}
+
+/// A non-standard extension, the shape the measurement lost five HST files to:
+/// an unknown `XTENSION` whose data is copied verbatim or the file is damaged.
+pub fn fits_nonstandard(name: &str, data: &[u8]) -> Vec<u8> {
+    let cards = vec![
+        fits_string_card("XTENSION", name),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "1"),
+        fits_card("NAXIS1", &data.len().to_string()),
+        fits_card("PCOUNT", "0"),
+        fits_card("GCOUNT", "1"),
+    ];
+    fits_hdu(&cards, data)
+}
+
+/// The cards of a `ZIMAGE` table, i.e. a file that is already compressed, as
+/// `fpack` writes it. `codec` is `GZIP_1`, `GZIP_2`, `RICE_1`, …
+pub fn fits_compressed_image(
+    bitpix: i64,
+    axis: &[usize],
+    codec: &str,
+    tiles: &[Vec<u8>],
+) -> Vec<u8> {
+    let mut heap = Vec::new();
+    let mut descriptors = Vec::new();
+    for tile in tiles {
+        descriptors.extend_from_slice(&(tile.len() as u32).to_be_bytes());
+        descriptors.extend_from_slice(&(heap.len() as u32).to_be_bytes());
+        heap.extend_from_slice(tile);
+    }
+    let longest = tiles.iter().map(Vec::len).max().unwrap_or(0);
+    let mut cards = vec![
+        fits_string_card("XTENSION", "BINTABLE"),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "2"),
+        fits_card("NAXIS1", "8"),
+        fits_card("NAXIS2", &tiles.len().to_string()),
+        fits_card("PCOUNT", &heap.len().to_string()),
+        fits_card("GCOUNT", "1"),
+        fits_card("TFIELDS", "1"),
+        fits_string_card("TTYPE1", "COMPRESSED_DATA"),
+        fits_string_card("TFORM1", &format!("1PB({longest})")),
+        fits_bool_card("ZIMAGE", true),
+        fits_string_card("ZTENSION", "IMAGE"),
+        fits_card("ZBITPIX", &bitpix.to_string()),
+        fits_card("ZNAXIS", &axis.len().to_string()),
+    ];
+    for (index, length) in axis.iter().enumerate() {
+        cards.push(fits_card(
+            &format!("ZNAXIS{}", index + 1),
+            &length.to_string(),
+        ));
+    }
+    cards.push(fits_card("ZTILE1", &axis[0].to_string()));
+    for index in 2..=axis.len() {
+        cards.push(fits_card(&format!("ZTILE{index}"), "1"));
+    }
+    cards.push(fits_string_card("ZCMPTYPE", codec));
+    let mut data = descriptors;
+    data.extend_from_slice(&heap);
+    fits_hdu(&cards, &data)
+}
+
+/// One gzip member holding `payload`, which is what a `GZIP_1`/`GZIP_2` tile is.
+pub fn fits_gzip(payload: &[u8]) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(9));
+    encoder.write_all(payload).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// The inverse of the convention's shuffle: the most significant byte of every
+/// sample first, in sample order, then the next byte of every sample.
+pub fn fits_shuffle(samples: &[u8], per_sample: usize) -> Vec<u8> {
+    let count = samples.len() / per_sample;
+    let mut out = vec![0u8; samples.len()];
+    for byte in 0..per_sample {
+        for sample in 0..count {
+            out[byte * count + sample] = samples[sample * per_sample + byte];
+        }
+    }
+    out
+}
+
+/// One HDU as this reader sees it.
+pub struct FitsHdu {
+    /// The raw 80-byte cards, up to and including `END`.
+    pub cards: Vec<String>,
+    /// The data, without its padding.
+    pub data: Vec<u8>,
+    /// The header and data as they appeared in the file, padding included.
+    pub raw: Vec<u8>,
+}
+
+fn fits_field(card: &str) -> &str {
+    card.get(10..30).unwrap_or("").trim()
+}
+
+/// The value field of `keyword`, as text.
+pub fn fits_value(hdu: &FitsHdu, keyword: &str) -> Option<String> {
+    hdu.cards.iter().find_map(|card| {
+        let name = card.get(..8).unwrap_or("").trim();
+        if name == keyword {
+            Some(fits_field(card).to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// An integer card.
+pub fn fits_int(hdu: &FitsHdu, keyword: &str) -> Option<i64> {
+    fits_value(hdu, keyword)?.trim().parse().ok()
+}
+
+/// A logical card.
+pub fn fits_bool(hdu: &FitsHdu, keyword: &str) -> Option<bool> {
+    match fits_value(hdu, keyword)?.trim() {
+        "T" => Some(true),
+        "F" => Some(false),
+        _ => None,
+    }
+}
+
+/// A character-string card, without its quotes.
+pub fn fits_text(hdu: &FitsHdu, keyword: &str) -> Option<String> {
+    let value = fits_value(hdu, keyword)?;
+    let inner = value.trim().strip_prefix('\'')?;
+    let end = inner.rfind('\'')?;
+    Some(inner[..end].trim().to_string())
+}
+
+/// Walks a file and returns every HDU.
+pub fn fits_parse(bytes: &[u8]) -> Vec<FitsHdu> {
+    let mut out: Vec<FitsHdu> = Vec::new();
+    let mut offset = 0usize;
+    while offset + FITS_RECORD <= bytes.len() {
+        let start = offset;
+        let mut cards = Vec::new();
+        let mut end_of_header = None;
+        while end_of_header.is_none() {
+            assert!(
+                offset + FITS_RECORD <= bytes.len(),
+                "header runs past the file"
+            );
+            for within in (0..FITS_RECORD).step_by(80) {
+                let card = &bytes[offset + within..offset + within + 80];
+                let text = String::from_utf8_lossy(card).into_owned();
+                let name = text.get(..8).unwrap_or("").trim().to_string();
+                cards.push(text);
+                if name == "END" {
+                    end_of_header = Some(offset + FITS_RECORD);
+                    break;
+                }
+            }
+            offset += FITS_RECORD;
+        }
+        let data_start = end_of_header.expect("an END card");
+        let hdu = FitsHdu {
+            cards,
+            data: Vec::new(),
+            raw: Vec::new(),
+        };
+        let bitpix = fits_int(&hdu, "BITPIX").expect("BITPIX");
+        let naxis = fits_int(&hdu, "NAXIS").expect("NAXIS");
+        let mut length = 1usize;
+        for axis in 1..=naxis {
+            let keyword = format!("NAXIS{axis}");
+            length *= fits_int(&hdu, &keyword).expect("NAXISn") as usize;
+        }
+        let pcount = fits_int(&hdu, "PCOUNT").unwrap_or(0) as usize;
+        let gcount = fits_int(&hdu, "GCOUNT").unwrap_or(1) as usize;
+        let data_len = if naxis == 0 {
+            0
+        } else {
+            fits_bytes_per_sample(bitpix) * (length + pcount) * gcount
+        };
+        let padded = data_len.div_ceil(FITS_RECORD) * FITS_RECORD;
+        let data_end = data_start + data_len;
+        assert!(data_end <= bytes.len(), "data runs past the file");
+        offset = data_start + padded;
+        out.push(FitsHdu {
+            data: bytes[data_start..data_end].to_vec(),
+            raw: bytes[start..offset].to_vec(),
+            cards: hdu.cards,
+        });
+    }
+    out
+}
+
+/// The tiles of a compressed HDU, inflated, in the order the row descriptors
+/// name them. Independent of the handler: `flate2` inflates the member and
+/// checks its CRC-32 and `ISIZE`.
+pub fn fits_tiles(hdu: &FitsHdu) -> Vec<Vec<u8>> {
+    let rows = fits_int(hdu, "NAXIS2").expect("NAXIS2") as usize;
+    let heap_len = fits_int(hdu, "PCOUNT").expect("PCOUNT") as usize;
+    let heap = &hdu.data[8 * rows..8 * rows + heap_len];
+    let mut out = Vec::new();
+    for row in 0..rows {
+        let at = row * 8;
+        let length = u32::from_be_bytes([
+            hdu.data[at],
+            hdu.data[at + 1],
+            hdu.data[at + 2],
+            hdu.data[at + 3],
+        ]) as usize;
+        let offset = u32::from_be_bytes([
+            hdu.data[at + 4],
+            hdu.data[at + 5],
+            hdu.data[at + 6],
+            hdu.data[at + 7],
+        ]) as usize;
+        let mut out_tile = Vec::new();
+        flate2::read::GzDecoder::new(&heap[offset..offset + length])
+            .read_to_end(&mut out_tile)
+            .expect("inflate a tile");
+        out.push(out_tile);
+    }
+    out
+}
+
+/// The array a compressed HDU carries, concatenated and unshuffled for
+/// `GZIP_2`.
+pub fn fits_compressed_array(hdu: &FitsHdu) -> Vec<u8> {
+    let bitpix = fits_int(hdu, "ZBITPIX").expect("ZBITPIX");
+    let per_sample = fits_bytes_per_sample(bitpix);
+    let mut out = Vec::new();
+    for tile in fits_tiles(hdu) {
+        if bitpix < 0 {
+            let count = tile.len() / per_sample;
+            let mut samples = vec![0u8; tile.len()];
+            for byte in 0..per_sample {
+                for sample in 0..count {
+                    samples[sample * per_sample + byte] = tile[byte * count + sample];
+                }
+            }
+            out.extend_from_slice(&samples);
+        } else {
+            out.extend_from_slice(&tile);
+        }
+    }
+    out
+}
+
+/// The empty primary HDU a file needs when its first real HDU is a table.
+pub fn fits_empty_primary() -> Vec<u8> {
+    let cards = vec![
+        fits_bool_card("SIMPLE", true),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "0"),
+        fits_bool_card("EXTEND", true),
+    ];
+    fits_hdu(&cards, &[])
+}
+
+/// A `BINTABLE` whose single column is zero-width (`TFORM1 = '0A'`), the shape
+/// `zerowidth.fits` has.
+///
+/// It is not a rewrite target and never will be — but it is the file the
+/// measurement's reference writer lost the array on, so the suite carries the
+/// shape and asserts that this handler copies it byte for byte instead.
+pub fn fits_zero_width_table(rows: usize) -> Vec<u8> {
+    let cards = vec![
+        fits_string_card("XTENSION", "BINTABLE"),
+        fits_card("BITPIX", "8"),
+        fits_card("NAXIS", "2"),
+        fits_card("NAXIS1", "0"),
+        fits_card("NAXIS2", &rows.to_string()),
+        fits_card("PCOUNT", "0"),
+        fits_card("GCOUNT", "1"),
+        fits_card("TFIELDS", "1"),
+        fits_string_card("TTYPE1", "NOTHING"),
+        fits_string_card("TFORM1", "0A"),
+    ];
+    fits_hdu(&cards, &[])
+}
+
+/// An `IMAGE` extension carrying a keyword the compressed form has no `Z` card
+/// for — the shape of `double_ext.fits`, where the reference writer dropped
+/// `EXTNAMX` and the round trip failed.
+///
+/// This handler copies every non-structural card verbatim, so the equivalent
+/// here is accepted rather than refused, and the test is that the card survives.
+pub fn fits_image_ext_with_odd_card(bitpix: i64, axis: &[usize], data: &[u8]) -> Vec<u8> {
+    fits_image_ext(
+        bitpix,
+        axis,
+        data,
+        &[
+            fits_string_card("EXTNAME", "SCI"),
+            fits_string_card("EXTNAMX", "SCI"),
+        ],
+    )
+}

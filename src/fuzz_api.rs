@@ -18,6 +18,7 @@ fn options() -> Options {
         nested: true,
         max_depth: 3,
         depth: 0,
+        fits_tile: true,
         allow: Allow {
             png: true,
             gzip: true,
@@ -26,6 +27,7 @@ fn options() -> Options {
             jpeg: true,
             tiff: true,
             zlib: true,
+            fits: true,
         },
     }
 }

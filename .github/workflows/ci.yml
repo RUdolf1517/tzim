@@ -13,13 +13,21 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
+  # Two configurations, on every platform (#68). Until v0.13 the only `cargo
+  # test` in this repository was `--all-features`, which is the configuration
+  # nobody ships: `default` turns `jpeg-v1` off, so `--info` prints a different
+  # sentence and `verify` takes a different path for a JPEG candidate. A branch
+  # that only a release executes is a branch nothing executes.
   test:
-    name: test (${{ matrix.os }})
+    name: test (${{ matrix.os }}, ${{ matrix.features }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        # `all-features` is the widest build; `default` is what a published
+        # binary is compiled with (Cargo.toml `default = [...]`).
+        features: [all-features, default]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -48,17 +56,127 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo test --all-features --locked 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}.log"
+          # An empty `flags` disappears in the word split below, which is what
+          # `default` wants: the plain `cargo test` a user runs.
+          case "${{ matrix.features }}" in
+            all-features) flags=--all-features ;;
+            default) flags= ;;
+            *) echo "::error::unknown feature set '${{ matrix.features }}'"; exit 2 ;;
+          esac
+          cargo test $flags --locked 2>&1 | tee "/tmp/tzim-test-${{ matrix.os }}-${{ matrix.features }}.log"
 
       - name: Publish failure log
         if: steps.test.outcome == 'failure'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash .github/scripts/ci-report.sh "/tmp/tzim-test-${{ matrix.os }}.log" "test-${{ matrix.os }}"
+        run: bash .github/scripts/ci-report.sh "/tmp/tzim-test-${{ matrix.os }}-${{ matrix.features }}.log" "test-${{ matrix.os }}-${{ matrix.features }}"
 
       - name: Fail the job
         if: steps.test.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  # The smallest build that still has a handler (#68): `png` alone, with every
+  # feature that is not PNG switched off. Nothing in this repository had ever
+  # compiled it, let alone run it, and it is the configuration a user gets from
+  # `cargo build --no-default-features --features png`.
+  #
+  # One platform, because this is a configuration check and not a portability
+  # check: the three operating systems are covered by the `test` matrix above.
+  #
+  # Integration tests are compiled here and not run. Of the 120 tests in
+  # `tests/integration.rs`, 65 assert what gzip, ZIP, ICO, JPEG, TIFF, zlib or
+  # `--zopfli` do, and in this build those handlers are not compiled in — the
+  # tests would fail on "unsupported", not on a defect. Gating 65 of them one by
+  # one would not add coverage to this leg, it would take the leg's meaning away,
+  # so the targets that can run are named explicitly instead. Nothing is filtered
+  # by name: a filter would silently run fewer tests as the suite grows, which is
+  # the failure mode this job exists to avoid.
+  minimal:
+    name: minimal (png only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test the minimal configuration
+        id: minimal
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            # The markers are for the failure report: ci-report.sh publishes the
+            # tail of this log, and the tail has to say which of the two
+            # commands it came from.
+            echo "=== 1/2 compile every test target (--no-run) ==="
+            # Every test target has to compile in this configuration, including
+            # the ones that cannot run in it. A test file that stops building
+            # for `--features png` is a test file that has quietly become
+            # all-features-only, and `--no-run` is what notices. This also
+            # builds the binary itself, which the integration target links.
+            cargo test --no-default-features --features png --no-run --locked
+            echo "=== 2/2 run the targets whose assertions hold here ==="
+            # The library's unit tests (each handler module is gated, so the PNG
+            # ones run), the verifier tests, and the shipped-document checks.
+            cargo test --no-default-features --features png --locked \
+              --lib --test verification --test packaging
+          } 2>&1 | tee /tmp/tzim-minimal.log
+
+      - name: Publish failure log
+        if: steps.minimal.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-minimal.log minimal
+
+      - name: Fail the job
+        if: steps.minimal.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  # FITS is the first format whose verification cannot live in the binary: the
+  # array round trip is checked by `astropy`, which is CFITSIO underneath — the
+  # same tile decoder `fpack` and `funpack` call (fits-audit §8.1). `fitsverify`
+  # has not run anywhere, and fits-audit §8.3 says the handler may not ship before
+  # it does; this job is the stand-in that makes "not yet" a measured statement
+  # rather than an assumption (#70).
+  fits-oracle:
+    name: fits oracle (astropy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install astropy
+        shell: bash
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet --disable-pip-version-check numpy astropy
+          /tmp/venv/bin/python -c "import astropy; print('astropy', astropy.__version__)"
+
+      - name: Build with the fits feature and check the output (#70)
+        id: oracle
+        continue-on-error: true
+        shell: bash
+        run: |
+          # One log for both halves: a build failure and a verification failure
+          # are the same answer to "does the second implementation accept it".
+          {
+            cargo build --release --locked --features fits
+            /tmp/venv/bin/python .github/scripts/fits-oracle.py --binary target/release/tzim
+          } 2>&1 | tee /tmp/tzim-fits.log
+
+      - name: Publish failure log
+        if: steps.oracle.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh /tmp/tzim-fits.log fits
+
+      - name: Fail the job
+        if: steps.oracle.outcome == 'failure'
         shell: bash
         run: exit 1
 
@@ -148,6 +266,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # `ci-report.sh` publishes the failing log as a pull-request comment, and
+      # a job-level `permissions` block *replaces* the workflow's: with
+      # `contents` alone the comment is a 403 and the failure is silent, which
+      # is what happened to this job's own log until it was noticed.
+      pull-requests: write
     # The same group as the `lockfile` job: the two writers must not race.
     concurrency:
       group: branch-write-${{ github.ref }}
@@ -452,8 +575,10 @@ jobs:
           out=/tmp/tzim-features.txt
           printf '%-38s %10s %8s\n' "features" "bytes" "KiB" > "$out"
           printf '%-38s %10s %8s\n' "--------------------------------------" "----------" "--------" >> "$out"
-          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the last
-          # two carry the independent decoder, which is off by default.
+          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the rows
+          # after it carry the decoders and formats that are off by default —
+          # `jpeg-v1`, `fits` — which is how their cost is measured rather than
+          # guessed.
           for features in \
             "png" \
             "png,gzip" \
@@ -461,8 +586,10 @@ jobs:
             "png,gzip,zip,ico" \
             "png,gzip,zip,ico,jpeg" \
             "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli" \
+            "png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits" \
             "png,gzip,zip,ico,jpeg,jpeg-v1" \
-            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli"
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli" \
+            "png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli,fits"
           do
             cargo build --release --locked --target x86_64-unknown-linux-musl \
               --no-default-features --features "$features" 2>&1 | tail -2

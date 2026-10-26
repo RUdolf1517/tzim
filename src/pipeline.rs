@@ -24,6 +24,7 @@ pub struct Config {
     pub nested: bool,
     pub max_depth: u32,
     pub allow: Allow,
+    pub fits_tile: bool,
     pub min_size: u64,
     pub max_size: u64,
     /// The most any one job may be expected to need, in bytes (issue #51).
@@ -45,6 +46,7 @@ impl Config {
             nested: args.nested,
             max_depth: args.max_depth,
             allow: args.allow,
+            fits_tile: args.fits_tile,
             min_size: args.min_size,
             max_size: args.max_size,
             memory_budget: budget_or_derived(args),
@@ -92,6 +94,7 @@ fn budget_or_derived(args: &Args) -> u64 {
 /// | a decoded PNG | `8 × pixels` | two RGBA buffers, one per side |
 /// | a decoded JPEG | `7 × pixels` | the coefficient planes plus one decoded frame — the independent decoder hashes one side at a time (§2.6) |
 /// | a decoded TIFF strip | `4 × len` | the strip is bounded by the file, and `--max-size` bounds that |
+/// | two FITS tile buffers | `2 × len` | the file and its candidate (`2 × len`) plus the row a tile holds and the gzip member written from it; a tile is a row of the array, so the file bounds each |
 /// | a decompressed ZIP entry | `--max-uncompressed` | the one term that is not bounded by the file at all, and the reason a budget cannot default to something small |
 ///
 /// `pixels` is the real count when the header carried it (a PNG does) and
@@ -114,6 +117,10 @@ pub fn worst_case_bytes(
         Some(detect::Format::Png) => pixels.saturating_mul(8),
         Some(detect::Format::Jpeg) => pixels.saturating_mul(7),
         Some(detect::Format::Tiff) => len.saturating_mul(4),
+        // The file, its candidate, and two tile-sized buffers — the row a tile
+        // holds and the gzip member written from it. A tile is a row of the
+        // array, so the file bounds each of them.
+        Some(detect::Format::Fits) => len.saturating_mul(2),
         _ => 0,
     };
     let container = match format {
@@ -279,6 +286,7 @@ fn run(path: &Path, cfg: &Config, outcome: &mut Outcome) -> Result<()> {
         max_depth: cfg.max_depth,
         depth: 0,
         allow: cfg.allow,
+        fits_tile: cfg.fits_tile,
     };
 
     // The input is read once: handlers work on bytes, which is also what nested
@@ -343,6 +351,7 @@ mod tests {
             nested: false,
             max_depth: 3,
             allow: Allow::default(),
+            fits_tile: false,
             min_size: 0,
             max_size: 2 * 1024 * 1024 * 1024,
             memory_budget: derived_memory_budget(
@@ -430,6 +439,13 @@ mod tests {
             1000
         );
 
+        // FITS holds the file, its candidate and two tile-sized buffers; a tile
+        // is a row of the array, so the file bounds both of them.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Fits), None, max_pixels, 4096),
+            2000
+        );
+
         // No term overflows: a huge file length stays a number.
         assert_eq!(
             worst_case_bytes(
@@ -456,6 +472,7 @@ mod tests {
             detect::Format::Jpeg,
             detect::Format::Tiff,
             detect::Format::Zip,
+            detect::Format::Fits,
         ] {
             let cost = worst_case_bytes(max_size, Some(format), None, max_pixels, max_uncompressed);
             assert!(

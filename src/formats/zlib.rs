@@ -303,6 +303,7 @@ mod tests {
             max_depth: 0,
             depth: 0,
             allow: super::super::Allow::default(),
+            fits_tile: false,
         }
     }
 

@@ -1,6 +1,6 @@
 # FITS: the audit the contract has to pass
 
-Related: [guarantees §4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) · [formats](formats.md) ·
+Related: [guarantees §4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [pdf-audit](pdf-audit.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FITS, in the order the FLAC and PDF work established: the audit first, the contract second,
@@ -8,7 +8,7 @@ the code only if the numbers justify it. FITS was not refused anywhere — it wa
 [formats](formats.md) §5, which is a gap this document closes one way or the other.
 
 **Status: not implemented, not measured.** No FITS code exists and `--list-formats` does not name the format.
-The contract in [§4.12](guarantees.md#412-fits--admitted-by-measurement-not-implemented) says what an implementation
+The contract in [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) says what an implementation
 would have to preserve; §8 below fixes the decision rule **before** the numbers exist.
 
 Unlike the PDF audit, this one has a confidence problem that has to be stated up front rather than buried.
@@ -116,7 +116,7 @@ recommendation, not a decision — it is item one in §9.
 | --- | --- | --- |
 | uncompressed `BITPIX = −32`/−64 image data (floats) | common in raw pipeline output and archives that never compressed | **20–50 %** — floats are noisy, so this is not PNG territory; `fpack` typically halves a float image |
 | uncompressed `BITPIX = 16`/32 integer data | common for integer-valued observations | **10–35 %** |
-| `GZIP_1`/`GZIP_2` tiles | the archival norm when `fpack` was used | **1–4 %**, if `fpack` wrote zlib at its default level rather than 9 |
+| `GZIP_1`/`GZIP_2` tiles | the archival norm when `fpack` was used | **1–4 %**, if `fpack` asked DEFLATE for its default level rather than 9 |
 | `RICE_1` tiles | the norm for integer data through `fpack -r` | **0 %** — a different codec, refused |
 | `HCOMPRESS_1` tiles | used for floats when a lossy tolerance is acceptable | **0 %** — and possibly lossy already, refused |
 | ASCII tables, `TABLE`, non-`ZIMAGE` `BINTABLE` | metadata and catalogues | 0 %, copied verbatim |
@@ -166,7 +166,7 @@ re-emitting a differently-coded tile is exactly the "best-effort rewrite" the in
 | Construct | Why refuse |
 | --- | --- |
 | `ZCMPTYPE` other than `GZIP_1`/`GZIP_2` | no encoder for `RICE_1`, `PLIO_1`, `HCOMPRESS_1`; `HCOMPRESS_1` may already be lossy |
-| a tile payload that is not a well-formed zlib stream | refuse, never repair — the §4.10 rule |
+| a tile payload that is not a well-formed **gzip member** (RFC 1952: the `1F 8B 08` header, a trailer whose CRC-32 and `ISIZE` agree with the inflated bytes) | refuse, never repair — the §4.10 rule, in the framing §0 corrected |
 | `GZIP_2` on a file whose shuffle we have not confirmed against the convention | a wrong permutation produces a file that decompresses to garbage; confirmation is a precondition, not a nice-to-have |
 | `SIMPLE = F` | legal in the standard, and a primary HDU that is not simple is outside what the contract describes |
 | `GROUPS = T` (random groups) | deprecated, and its data layout (`PCOUNT`/`GCOUNT`) is a special case with no users worth the risk |
@@ -221,7 +221,11 @@ distribution (median, quartiles, share above zero) **separately for the two tier
 ### 8.1 What was actually run, and with what
 
 The measurement was made where `fpack`, `fitsverify` and `funpack` were not installable and no archive was
-reachable. The substitutes are named, because a substitute is only honest when it is named:
+reachable. The instrument is committed: [`.github/scripts/fits-measure.py`](../.github/scripts/fits-measure.py)
+reproduces the numbers in §8.2 from the checkouts listed below — it is not part of the build and not a
+dependency of the crate, and its header carries the exact `git clone` commands and the pinned commits. A number
+nobody can re-run is a claim; the script is what makes this one a measurement. The substitutes are named,
+because a substitute is only honest when it is named:
 
 | Needed | Used instead | Why it is equivalent enough |
 | --- | --- | --- |

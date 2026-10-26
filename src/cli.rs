@@ -38,6 +38,7 @@ pub struct Args {
     pub nested: bool,
     pub max_depth: u32,
     pub allow: Allow,
+    pub fits_tile: bool,
     pub zopfli: bool,
     pub follow_symlinks: bool,
     pub allow_hardlinks: bool,
@@ -78,6 +79,7 @@ impl Default for Args {
             nested: false,
             max_depth: 3,
             allow: Allow::default(),
+            fits_tile: false,
             zopfli: false,
             follow_symlinks: false,
             allow_hardlinks: false,
@@ -131,7 +133,11 @@ OPTIONS:
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
         --formats <LIST>       only process these formats: png, gzip, zip, ico,
-                               jpeg, tiff, zlib; JPEG is off unless named here
+                               jpeg, tiff, zlib, fits; JPEG is off unless named
+                               here, and FITS does nothing without --fits-tile
+        --fits-tile            FITS: rewrite an uncompressed image HDU as a
+                               tile-compressed binary table. Off by default: a
+                               reader that indexes NAXIS1 sees a different file
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link
@@ -240,6 +246,7 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "-q" | "--quiet" => out.quiet = true,
             "--json" => out.json = true,
             "--fail-fast" => out.fail_fast = true,
+            "--fits-tile" => out.fits_tile = true,
             "--zopfli" => out.zopfli = true,
             "--follow-symlinks" => out.follow_symlinks = true,
             "--allow-hardlinks" => out.allow_hardlinks = true,
@@ -450,6 +457,11 @@ mod tests {
         assert_eq!(args.paths, vec![PathBuf::from("--weird-name.png")]);
     }
 
+    /// `--formats` refuses a name this build has no handler for, which is what
+    /// `Allow::named` is for, so this test needs the handler it names: in the
+    /// `png`-only configuration (#68) `jpeg` is not compiled in and the same
+    /// command line is a usage error by design.
+    #[cfg(feature = "jpeg")]
     #[test]
     fn formats_flag_narrows_and_enables_jpeg() {
         let args = parse_ok(&["--formats", "jpeg,png", "x.jpg"]);

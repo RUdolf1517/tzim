@@ -59,18 +59,10 @@ Skip images with more pixels than this (default: 100000000).
 .TP
 .B \-\-formats \fILIST\fR
 Only process these formats: png, gzip, zip, ico, jpeg, tiff, zlib, fits. Naming
-jpeg here is what enables the JPEG handler, which is off by default because it
-is the riskiest handler and typically saves only 1\-3 %. fits is named here
-like any other format, but the handler is compiled in only with the \fBfits\fR
-cargo feature, and it does nothing without \fB\-\-fits\-tile\fR.
-.TP
-.B \-\-fits\-tile
-Rewrite an uncompressed image HDU in a FITS file as a tile\-compressed binary
-table: one tile per row, \fBGZIP_1\fR for integer data and \fBGZIP_2\fR for
-floating point, quantisation off, and every other HDU copied verbatim. Off by
-default, because it turns an \fIIMAGE\fR extension into a \fIBINTABLE\fR and a
-reader that indexes \fBNAXIS1\fR sees a different file; without the flag the
-handler refuses and says so. Needs a build with the \fBfits\fR feature.
+jpeg here is what enables the JPEG handler, which is off by default because it is
+the riskiest handler and typically saves only 1\-3 %. The FITS handler is compiled
+in only with the \fBfits\fR cargo feature, and it does nothing at all without
+\fB\-\-fits\-tile\fR.
 .SS Output
 .TP
 .B \-q, \-\-quiet
@@ -105,6 +97,14 @@ run without this flag.
 .B \-\-zopfli
 Use the slower and stronger DEFLATE encoder for PNG, gzip, ZIP, TIFF and zlib.
 Typically 1\-5 % better than the default and 10\-100 times slower.
+.TP
+.B \-\-fits\-tile
+FITS: rewrite an uncompressed image HDU as a tile\-compressed binary table, the
+shape \fIfpack\fR writes. Off by default, because the file a reader sees is a
+different file: an \fIIMAGE\fR HDU becomes a \fIBINTABLE\fR, and a program that
+reads \fINAXIS1\fR of the first HDU reads a table width instead of an image row.
+Quantisation is disabled, so the array is bit\-identical after the round trip,
+and a rewrite that is not strictly smaller is discarded rather than written.
 .TP
 .B \-\-nested
 Also optimize supported files inside archives.

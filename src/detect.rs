@@ -13,6 +13,7 @@ pub enum Format {
     Jpeg,
     Tiff,
     Zlib,
+    Fits,
 }
 
 impl Format {
@@ -25,6 +26,7 @@ impl Format {
             Format::Jpeg => "jpeg",
             Format::Tiff => "tiff",
             Format::Zlib => "zlib",
+            Format::Fits => "fits",
         }
     }
 
@@ -37,6 +39,7 @@ impl Format {
             Format::Jpeg => "JPEG",
             Format::Tiff => "TIFF",
             Format::Zlib => "ZLIB",
+            Format::Fits => "FITS",
         }
     }
 }
@@ -85,6 +88,16 @@ pub fn detect(head: &[u8]) -> Option<Format> {
         if tiff {
             return Some(Format::Tiff);
         }
+    }
+
+    // FITS: the first card of the primary header is `SIMPLE  = ... T`, and a
+    // file is a sequence of 2880-byte records. The keyword and the `=` are
+    // checked here — ten bytes, which is what the probe reads — and the handler
+    // then requires the value to be `T` and every record to be whole. That is
+    // the same split as the one zlib gets below: a weak test here, a full
+    // structural check before anything is written.
+    if head.len() >= 9 && head[..9] == *b"SIMPLE  =" {
+        return Some(Format::Fits);
     }
 
     // zlib: CM = 8 (DEFLATE), CINFO <= 7, FDICT clear, and a header that passes
@@ -333,6 +346,21 @@ mod tests {
         // Truncated signatures are not a match.
         assert_eq!(detect(&PNG_SIGNATURE[..7]), None);
         assert_eq!(detect(&[0x1f, 0x8b]), None);
+    }
+
+    #[test]
+    fn detects_fits_and_rejects_near_misses() {
+        assert_eq!(
+            detect(b"SIMPLE  =                    T / conforms to FITS standard"),
+            Some(Format::Fits)
+        );
+        assert_eq!(detect(b"SIMPLE  = T"), Some(Format::Fits));
+        // The keyword is eight columns wide; a shorter spelling is not a FITS
+        // card, and neither is the keyword without its `=`.
+        assert_eq!(detect(b"SIMPLE = T"), None);
+        assert_eq!(detect(b"SIMPLE  T"), None);
+        assert_eq!(detect(b"SIMPLE"), None);
+        assert_eq!(detect(b"simPle  = T"), None);
     }
 
     #[test]

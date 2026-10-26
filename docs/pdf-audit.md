@@ -208,6 +208,11 @@ is not pre-committed to a threshold is a search for an excuse.
 
 ### 9.1 What was run
 
+The instrument is committed: [`.github/scripts/pdf-measure.py`](../.github/scripts/pdf-measure.py) reproduces
+the numbers in §9.2 from the checkouts listed below, with the pinned commits and the two `pikepdf`/`PyMuPDF`
+settings in its header. It is not part of the build and not a dependency of the crate. A number nobody can
+re-run is a claim; this is the script that makes it a measurement.
+
 `qpdf` 11 was not installable here; **libqpdf 12.4.2** came through `pikepdf` and `mutool draw`'s engine was
 **MuPDF 1.28.5** through `PyMuPDF` — the same libraries, a major version later, driven in-process instead of
 from a shell. The two jobs of the table above are exactly the two jobs below: `--recompress-flate
