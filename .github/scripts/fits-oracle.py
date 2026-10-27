@@ -37,6 +37,87 @@ RECORD = 2880
 CARD = 80
 
 
+CONVENTION_CODECS = {"GZIP_1", "GZIP_2"}
+STANDARD_BITPIX = {8, 16, 32, 64, -32, -64}
+
+
+def fits_float_storage_bytes(array, bitpix):
+    """Return IEEE samples in FITS big-endian storage order, without arithmetic."""
+    dtype = {-32: np.dtype(">f4"), -64: np.dtype(">f8")}.get(bitpix)
+    if dtype is None:
+        raise ValueError("BITPIX %r is not a FITS floating-point width" % bitpix)
+    values = np.asarray(array)
+    if values.dtype.kind != "f" or values.dtype.itemsize != dtype.itemsize:
+        raise ValueError(
+            "expected %s-bit float samples for BITPIX %d, got %s"
+            % (dtype.itemsize * 8, bitpix, values.dtype)
+        )
+    # A byte-order conversion is a representation operation: same-width IEEE
+    # floats are byte-swapped, not compared numerically or normalised. In
+    # particular, NaN payloads and the sign bit of zero remain observable.
+    return values.astype(dtype, copy=True).tobytes(order="C")
+
+
+def convention_codec_problem(codec, bitpix):
+    """Only report convention violations here, independently of tzim policy."""
+    if bitpix is None:
+        return "ZBITPIX is missing or not an integer"
+    if bitpix not in STANDARD_BITPIX:
+        return "unsupported FITS ZBITPIX %r" % bitpix
+    if codec not in CONVENTION_CODECS:
+        return "unsupported ZCMPTYPE %r" % codec
+    if codec == "GZIP_2" and bitpix >= 0:
+        return "GZIP_2 is only defined for floating-point image data"
+    # GZIP_1 is legal for floating-point arrays too. The writer's current
+    # preference for GZIP_2 is a tzim policy, not a universal convention rule.
+    return None
+
+
+def tzim_codec_policy_problem(codec, bitpix):
+    """The writer's current codec choice; deliberately not a convention test."""
+    if bitpix is None:
+        return "tzim writer policy cannot be checked without ZBITPIX"
+    if bitpix not in STANDARD_BITPIX:
+        return "tzim writer policy cannot be checked for unsupported ZBITPIX %r" % bitpix
+    expected = "GZIP_2" if bitpix < 0 else "GZIP_1"
+    if codec != expected:
+        return "tzim writer policy requires %s for BITPIX %d" % (expected, bitpix)
+    return None
+
+
+def oracle_self_check():
+    """Negative controls for bitwise floats and separate convention/policy rules."""
+    failures = []
+    for bitpix, positive_zero, negative_zero, nan_one, nan_two in (
+        (-32, "00000000", "80000000", "7fc00001", "7fc00002"),
+        (-64, "0000000000000000", "8000000000000000",
+         "7ff8000000000001", "7ff8000000000002"),
+    ):
+        dtype = {-32: np.dtype(">f4"), -64: np.dtype(">f8")}[bitpix]
+        cases = (
+            ("signed zero", positive_zero, negative_zero),
+            ("NaN payload", nan_one, nan_two),
+        )
+        for label, left_hex, right_hex in cases:
+            left = np.frombuffer(bytes.fromhex(left_hex), dtype=dtype)
+            right = np.frombuffer(bytes.fromhex(right_hex), dtype=dtype)
+            if not np.array_equal(left, right, equal_nan=True):
+                failures.append("%s %d-bit control is not numerically equal" % (label, dtype.itemsize * 8))
+            if fits_float_storage_bytes(left, bitpix) == fits_float_storage_bytes(right, bitpix):
+                failures.append("oracle missed a %s change at BITPIX %d" % (label, bitpix))
+        if convention_codec_problem("GZIP_1", bitpix) is not None:
+            failures.append("the convention check rejected legal GZIP_1 for BITPIX %d" % bitpix)
+        if tzim_codec_policy_problem("GZIP_1", bitpix) is None:
+            failures.append("the tzim policy check did not identify GZIP_1 for BITPIX %d" % bitpix)
+    if convention_codec_problem("GZIP_1", 0) is None:
+        failures.append("the convention check accepted unsupported BITPIX 0")
+    if failures:
+        return failures
+    print("oracle self-check: signed-zero and distinct-NaN-payload controls detected at 32/64 bits")
+    print("oracle self-check: legal GZIP_1 float is convention-compliant but not tzim's current policy")
+    return []
+
+
 # ---------------------------------------------------------------------------
 # A FITS walker, so that "copied verbatim" can be checked on the bytes
 # ---------------------------------------------------------------------------
@@ -209,6 +290,22 @@ def build_fixtures(root):
         }
     )
 
+    # A float array with bit patterns that numeric equality hides: both signs
+    # of zero and distinct quiet-NaN payloads, surrounded by compressible zeros.
+    words = np.zeros((64, 64), dtype=np.dtype(">u4"))
+    words.flat[:6] = [0x00000000, 0x80000000, 0x7FC00001, 0x7FC00002, 0xFFC00001, 0xFFC00002]
+    float_specials = words.view(np.dtype(">f4"))
+    with open(os.path.join(root, "float-specials.fits"), "wb") as handle:
+        handle.write(hdu_bytes(fits.PrimaryHDU(float_specials)))
+    cases.append(
+        {
+            "name": "float-specials.fits",
+            "expect": "rewritten",
+            "arrays": [(0, 1)],
+            "tables": [1],
+        }
+    )
+
     # 3. A multi-HDU file: an unknown extension between two images, plus a table.
     #    Everything that is not an image must come through byte for byte — the
     #    mistake that lost five HST files in the measurement.
@@ -360,8 +457,22 @@ def check_rewritten(path, original, case):
             if got.shape != expected.shape:
                 problems.append("shape %s -> %s" % (expected.shape, got.shape))
             elif expected.dtype.kind == "f":
-                if not np.array_equal(got, expected, equal_nan=True):
-                    problems.append("the float array changed")
+                bitpix = before[source].int("BITPIX")
+                try:
+                    expected_bytes = fits_float_storage_bytes(expected, bitpix)
+                    got_bytes = fits_float_storage_bytes(got, bitpix)
+                except (TypeError, ValueError) as error:
+                    problems.append("float storage-byte comparison failed: %s" % error)
+                    continue
+                if got_bytes != expected_bytes:
+                    first = next(
+                        (i for i, (a, b) in enumerate(zip(expected_bytes, got_bytes)) if a != b),
+                        min(len(expected_bytes), len(got_bytes)),
+                    )
+                    problems.append(
+                        "float FITS-storage bytes differ (%d -> %d bytes, first difference at %d)"
+                        % (len(expected_bytes), len(got_bytes), first)
+                    )
             elif got.astype(expected.dtype).tobytes() != expected.tobytes():
                 problems.append("the integer array changed")
 
@@ -385,9 +496,12 @@ def check_rewritten(path, original, case):
                 continue
             codec = table.text("ZCMPTYPE")
             bitpix = table.int("ZBITPIX")
-            want = "GZIP_2" if bitpix < 0 else "GZIP_1"
-            if codec != want:
-                problems.append("%s for ZBITPIX %d" % (codec, bitpix))
+            convention_problem = convention_codec_problem(codec, bitpix)
+            if convention_problem:
+                problems.append("FITS convention: %s" % convention_problem)
+            policy_problem = tzim_codec_policy_problem(codec, bitpix)
+            if policy_problem:
+                problems.append("tzim writer policy: %s" % policy_problem)
             if table.text("TTYPE1") != "COMPRESSED_DATA":
                 problems.append("HDU %d has no COMPRESSED_DATA column" % target)
             if table.int("NAXIS1") != 8:
@@ -460,6 +574,12 @@ def main():
     parser.add_argument("--binary", required=True, help="the tzim to test")
     parser.add_argument("--keep", action="store_true", help="keep the fixtures")
     args = parser.parse_args()
+
+    self_check_failures = oracle_self_check()
+    for failure in self_check_failures:
+        print("oracle self-check failure: %s" % failure)
+    if self_check_failures:
+        return 1
 
     binary = os.path.abspath(args.binary)
     root = tempfile.mkdtemp(prefix="tzim-fits-")

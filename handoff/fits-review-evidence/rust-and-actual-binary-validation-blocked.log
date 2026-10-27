@@ -1,0 +1,18 @@
+Validation attempt: full Rust suite
+BLOCKED: cargo is not installed
+
+Validation attempt: FITS-enabled release binary build
+BLOCKED: cargo is not installed
+
+Validation attempt: actual binary availability
+BLOCKED: target/release/tzim is absent
+
+Required HEASARC tools
+BLOCKED: fitsverify is not installed
+BLOCKED: fpack is not installed
+BLOCKED: funpack is not installed
+
+Rust syntax-only check
+- tree-sitter-rust parsed src/formats/fits.rs with root_node.has_error = false.
+- This is syntax-only, not a Rust compiler, type/lifetime check, cargo test, or
+  rustfmt check; cargo, rustc and rustfmt remain unavailable.

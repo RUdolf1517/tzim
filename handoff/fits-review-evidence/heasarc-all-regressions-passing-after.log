@@ -1,0 +1,12 @@
+test_o1_negative_pcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_negative_pcount_is_a_recorded_refusal) ... ok
+test_o1_unsupported_bitpix_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_unsupported_bitpix_is_a_recorded_refusal) ... ok
+test_o1_zero_gcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_zero_gcount_is_a_recorded_refusal) ... ok
+test_short_descriptor_is_a_recorded_tile_inflation_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_short_descriptor_is_a_recorded_tile_inflation_refusal) ... ok
+test_unparseable_funpack_reconstruction_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_funpack_reconstruction_is_a_recorded_refusal) ... ok
+test_unparseable_tzim_candidate_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_tzim_candidate_is_a_recorded_refusal) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.010s
+
+OK
+full-suite exit: 0

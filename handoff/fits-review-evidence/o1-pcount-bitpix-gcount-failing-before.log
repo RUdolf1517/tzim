@@ -1,0 +1,69 @@
+test_o1_negative_pcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_negative_pcount_is_a_recorded_refusal) ... /tmp/tzim-fits-heasarc-before-o1.py:1183: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-7mbi8i7z/original.fits'>
+  original_bytes = open(original_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before-o1.py:1184: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-7mbi8i7z/candidate-pcount.fits'>
+  candidate_bytes = open(candidate_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before-o1.py:1342: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-7mbi8i7z/funpack-o1-pcount-negative.fits'>
+  rebuilt = parse(open(unpacked, "rb").read())
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+FAIL
+test_o1_unsupported_bitpix_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_unsupported_bitpix_is_a_recorded_refusal) ... /tmp/tzim-fits-heasarc-before-o1.py:1183: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-n1xrdjyn/original.fits'>
+  original_bytes = open(original_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before-o1.py:1184: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-n1xrdjyn/candidate-bitpix.fits'>
+  candidate_bytes = open(candidate_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+test_o1_zero_gcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_zero_gcount_is_a_recorded_refusal) ... /tmp/tzim-fits-heasarc-before-o1.py:1183: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-pn4t9x4a/original.fits'>
+  original_bytes = open(original_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before-o1.py:1184: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-pn4t9x4a/candidate-gcount.fits'>
+  candidate_bytes = open(candidate_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before-o1.py:1342: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-pn4t9x4a/funpack-o1-gcount-zero.fits'>
+  rebuilt = parse(open(unpacked, "rb").read())
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+FAIL
+
+======================================================================
+ERROR: test_o1_unsupported_bitpix_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_unsupported_bitpix_is_a_recorded_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 92, in test_o1_unsupported_bitpix_is_a_recorded_refusal
+    self.assert_o1_invalid_card_is_a_controlled_refusal("BITPIX", 0, "o1-bitpix-zero")
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 74, in assert_o1_invalid_card_is_a_controlled_refusal
+    result = GATE.check_candidate(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before-o1.py", line 1186, in check_candidate
+    candidate = parse(candidate_bytes)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before-o1.py", line 285, in parse
+    raise ValueError("a header record runs past the end of the file")
+ValueError: a header record runs past the end of the file
+
+======================================================================
+FAIL: test_o1_negative_pcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_negative_pcount_is_a_recorded_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 89, in test_o1_negative_pcount_is_a_recorded_refusal
+    self.assert_o1_invalid_card_is_a_controlled_refusal("PCOUNT", -1, "o1-pcount-negative")
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 79, in assert_o1_invalid_card_is_a_controlled_refusal
+    self.assertIs(result["accepted"], False)
+AssertionError: True is not False
+
+======================================================================
+FAIL: test_o1_zero_gcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_zero_gcount_is_a_recorded_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 95, in test_o1_zero_gcount_is_a_recorded_refusal
+    self.assert_o1_invalid_card_is_a_controlled_refusal("GCOUNT", 0, "o1-gcount-zero")
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 79, in assert_o1_invalid_card_is_a_controlled_refusal
+    self.assertIs(result["accepted"], False)
+AssertionError: True is not False
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.007s
+
+FAILED (failures=2, errors=1)
+baseline exit: 1

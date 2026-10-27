@@ -52,6 +52,7 @@ import shutil
 from collections import Counter
 import struct
 import subprocess
+import traceback
 import zlib
 import sys
 
@@ -300,12 +301,28 @@ def parse(raw: bytes):
         bitpix = probe.int("BITPIX")
         if naxis is None or bitpix is None:
             raise ValueError("HDU at %d has no BITPIX or NAXIS" % start)
+        if bitpix not in SAMPLE_BYTES:
+            raise ValueError("HDU at %d has unsupported BITPIX %d" % (start, bitpix))
         count = 1
         for axis in probe.axes():
             count *= axis
-        pcount = probe.int("PCOUNT") or 0
-        gcount = probe.int("GCOUNT") or 1
-        length = 0 if naxis == 0 else SAMPLE_BYTES.get(bitpix, 0) * (count + pcount) * gcount
+        pcount_text = probe.value("PCOUNT")
+        pcount = probe.int("PCOUNT")
+        if pcount_text is not None and pcount is None:
+            raise ValueError("HDU at %d has a non-integer PCOUNT" % start)
+        if pcount is None:
+            pcount = 0
+        if pcount < 0:
+            raise ValueError("HDU at %d has a negative PCOUNT" % start)
+        gcount_text = probe.value("GCOUNT")
+        gcount = probe.int("GCOUNT")
+        if gcount_text is not None and gcount is None:
+            raise ValueError("HDU at %d has a non-integer GCOUNT" % start)
+        if gcount is None:
+            gcount = 1
+        if gcount <= 0:
+            raise ValueError("HDU at %d has a non-positive GCOUNT" % start)
+        length = 0 if naxis == 0 else SAMPLE_BYTES[bitpix] * (count + pcount) * gcount
         data_start = end_at
         data_end = data_start + length
         padded = data_end + (-length % RECORD)
@@ -1085,7 +1102,9 @@ def inflate_tiles(path):
     `ISIZE` on the way out. It is what the corruption control asks.
     """
     out = bytearray()
-    for hdu in parse(open(path, "rb").read()):
+    with open(path, "rb") as handle:
+        hdus = parse(handle.read())
+    for hdu in hdus:
         if not hdu.value("ZIMAGE"):
             continue
         rows = hdu.int("NAXIS2") or 0
@@ -1172,18 +1191,123 @@ def tzim_run(binary, path):
     return code, record, output
 
 
-def check_candidate(original_path, candidate_path, case, scratch, evidence, evidence_tag):
-    """Apply the gate's acceptance checks to an existing candidate.
+def controlled_candidate_refusal(
+    original_path,
+    candidate_path,
+    evidence,
+    evidence_tag,
+    stage,
+    error,
+    traceback_text="",
+    reconstructed_path=None,
+):
+    """Turn an unexpected reader/checker exception into a failed result + evidence.
 
-    Both the normal tzim output and the corrupt-tile negative control enter this
-    same function. It is the actual acceptance path: independent structural
-    verification, HDU preservation, `funpack -C`, byte-exact arrays, and literal
-    cards. A control that merely notices that one bit changed is not sufficient.
+    Candidate bytes and the precise exception are retained; the traceback is
+    stored as evidence rather than escaping as an unhandled job-level traceback.
     """
-    original_bytes = open(original_path, "rb").read()
-    candidate_bytes = open(candidate_path, "rb").read()
-    before = parse(original_bytes)
-    candidate = parse(candidate_bytes)
+    tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(evidence_tag)).strip("._")[:100] or "candidate"
+    detail = dict(
+        accepted=False,
+        stage=stage,
+        reason="%s: %s" % (type(error).__name__, error),
+        exception_type=type(error).__name__,
+        exception=str(error),
+        traceback=traceback_text,
+        original_path=os.path.abspath(original_path) if original_path else None,
+        candidate_path=os.path.abspath(candidate_path) if candidate_path else None,
+        evidence_files=[],
+    )
+    for label, path, suffix in (
+        ("original", original_path, ".original.fits"),
+        ("candidate", candidate_path, ".candidate.fits"),
+        ("funpack reconstruction", reconstructed_path, ".funpack.fits"),
+    ):
+        if not path or not os.path.isfile(path):
+            continue
+        try:
+            with open(path, "rb") as handle:
+                content = handle.read()
+            detail[label.replace(" ", "_") + "_bytes"] = len(content)
+            detail[label.replace(" ", "_") + "_sha256"] = hashlib.sha256(content).hexdigest()
+            name = "controlled-refusal-%s%s" % (tag, suffix)
+            evidence.write_bytes(name, content)
+            detail["evidence_files"].append(name)
+        except Exception as evidence_error:  # keep the gate controlled if storage itself fails
+            detail.setdefault("evidence_write_errors", []).append(
+                "%s: %s: %s" % (label, type(evidence_error).__name__, evidence_error)
+            )
+    text_name = "controlled-refusal-%s.txt" % tag
+    json_name = "controlled-refusal-%s.json" % tag
+    detail["evidence_files"].extend([text_name, json_name])
+    try:
+        evidence.write_json(json_name, detail)
+        evidence.write_text(
+            text_name,
+            "Controlled gate refusal\n"
+            "stage: %s\nreason: %s\ntraceback retained below:\n%s"
+            % (stage, detail["reason"], traceback_text),
+        )
+    except Exception as evidence_error:
+        detail.setdefault("evidence_write_errors", []).append(
+            "refusal record: %s: %s" % (type(evidence_error).__name__, evidence_error)
+        )
+        print("::error::could not write controlled-refusal evidence: %s" % evidence_error)
+    return dict(
+        accepted=False,
+        candidate_sha256=detail.get("candidate_sha256"),
+        problems=["controlled refusal at %s: %s" % (stage, detail["reason"])],
+        controlled_failure=detail,
+    )
+
+
+def safe_inflate_tiles(path, evidence, evidence_tag):
+    """Inflate untrusted candidate tiles without allowing parser exceptions to escape."""
+    try:
+        return inflate_tiles(path), None
+    except Exception as error:
+        refusal = controlled_candidate_refusal(
+            None,
+            path,
+            evidence,
+            evidence_tag,
+            "candidate tile inflation",
+            error,
+            traceback.format_exc(),
+        )
+        return None, refusal
+
+
+def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence, evidence_tag):
+    """Implementation for the guarded candidate acceptance entry point."""
+    with open(original_path, "rb") as handle:
+        original_bytes = handle.read()
+    with open(candidate_path, "rb") as handle:
+        candidate_bytes = handle.read()
+    try:
+        before = parse(original_bytes)
+    except Exception as error:
+        return controlled_candidate_refusal(
+            original_path,
+            candidate_path,
+            evidence,
+            evidence_tag,
+            "parse original FITS input",
+            error,
+            traceback.format_exc(),
+        )
+    try:
+        candidate = parse(candidate_bytes)
+    except Exception as error:
+        return controlled_candidate_refusal(
+            original_path,
+            candidate_path,
+            evidence,
+            evidence_tag,
+            "parse tzim candidate",
+            error,
+            traceback.format_exc(),
+        )
     diagnostic_mode = case.get("diagnostics")
     result = dict(
         candidate_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
@@ -1339,7 +1463,29 @@ def check_candidate(original_path, candidate_path, case, scratch, evidence, evid
         )
         result["accepted"] = False
         return result
-    rebuilt = parse(open(unpacked, "rb").read())
+    try:
+        with open(unpacked, "rb") as handle:
+            rebuilt_bytes = handle.read()
+        rebuilt = parse(rebuilt_bytes)
+    except Exception as error:
+        refusal = controlled_candidate_refusal(
+            original_path,
+            candidate_path,
+            evidence,
+            evidence_tag,
+            "parse funpack -C reconstruction",
+            error,
+            traceback.format_exc(),
+            reconstructed_path=unpacked,
+        )
+        refusal["controlled_failure"]["funpack_exit"] = unpack_code
+        refusal["controlled_failure"]["funpack_output"] = unpack_output
+        tag = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(evidence_tag)).strip("._")[:100] or "candidate"
+        evidence.write_json(
+            "controlled-refusal-%s.json" % tag,
+            refusal["controlled_failure"],
+        )
+        return refusal
     if rebuilt and rebuilt[0].kind() == "PRIMARY" and not rebuilt[0].axes() and before[0].axes():
         rebuilt = rebuilt[1:]
     if len(rebuilt) != len(before):
@@ -1393,6 +1539,24 @@ def check_candidate(original_path, candidate_path, case, scratch, evidence, evid
         )
     result["accepted"] = not result["problems"]
     return result
+
+
+def check_candidate(original_path, candidate_path, case, scratch, evidence, evidence_tag):
+    """Controlled, fail-closed entry point for every candidate acceptance check."""
+    try:
+        return _check_candidate_impl(
+            original_path, candidate_path, case, scratch, evidence, evidence_tag
+        )
+    except Exception as error:
+        return controlled_candidate_refusal(
+            original_path,
+            candidate_path,
+            evidence,
+            evidence_tag,
+            "candidate acceptance check",
+            error,
+            traceback.format_exc(),
+        )
 
 
 def check_fixture(binary, case, root, scratch, evidence):
@@ -1798,7 +1962,25 @@ def main():
 
     failures = 0
     for case in cases:
-        result = check_fixture(args.binary, case, root, scratch, evidence)
+        fixture_path = os.path.join(root, case["name"])
+        try:
+            result = check_fixture(args.binary, case, root, scratch, evidence)
+        except Exception as error:
+            result = controlled_candidate_refusal(
+                None,
+                fixture_path,
+                evidence,
+                "fixture-" + case["name"],
+                "fixture/candidate processing",
+                error,
+                traceback.format_exc(),
+            )
+            result.update(
+                name=case["name"],
+                why=case.get("why"),
+                expect=case.get("expect"),
+                input_case=case.get("input_case"),
+            )
         summary["fixtures"].append(result)
         mark = "ok" if not result["problems"] else "FAIL"
         print("%-24s %-10s %s" % (case["name"], case["expect"], mark))
@@ -1836,13 +2018,21 @@ def main():
         detail = corrupt_tile(path, corrupt)
         source = parse(open(good["original"], "rb").read())
         image = next(h for h in source if h.kind() in ("PRIMARY", "IMAGE") and h.axes())
-        intact = inflate_tiles(path) == image.data
-        try:
-            damaged = inflate_tiles(corrupt) == image.data
-            note = "the corrupted tile inflated and differed"
-        except (OSError, EOFError, zlib.error) as error:
+        intact_tiles, intact_failure = safe_inflate_tiles(
+            path, evidence, "control-intact-" + good["name"]
+        )
+        intact = intact_tiles == image.data if intact_failure is None else False
+        damaged_tiles, damaged_failure = safe_inflate_tiles(
+            corrupt, evidence, "control-corrupt-" + good["name"]
+        )
+        if damaged_failure is not None:
             damaged = False
-            note = "the corrupted tile no longer inflates: %s" % error
+            note = "the corrupted tile was refused during controlled inflation: %s" % (
+                damaged_failure["problems"][0]
+            )
+        else:
+            damaged = damaged_tiles == image.data
+            note = "the corrupted tile inflated and differed"
 
         case_by_name = {case["name"]: case for case in cases}
         corrupt_acceptance = check_candidate(
@@ -1853,6 +2043,7 @@ def main():
         payload_rejected = (
             corrupt_acceptance.get("funpack_exit") not in (None, 0)
             or any(not check.get("matches") for check in corrupt_acceptance.get("array_checks", []))
+            or corrupt_acceptance.get("controlled_failure") is not None
         )
         detected = intact and not damaged and acceptance_rejected and payload_rejected
         evidence.write_json(
@@ -1866,7 +2057,9 @@ def main():
                 **detail,
                 intact_candidate_accepted=good.get("candidate_acceptance"),
                 tiles_equal_original=intact,
+                intact_tile_inflation_failure=intact_failure,
                 corrupted_tiles_equal_original=damaged,
+                corrupted_tile_inflation_failure=damaged_failure,
                 candidate_acceptance_rejected=acceptance_rejected,
                 content_rejection_via_funpack_or_array_check=payload_rejected,
                 candidate_fitsverify_exit=corrupt_acceptance.get("fitsverify_exit"),
@@ -1883,6 +2076,9 @@ def main():
                 intact_candidate_accepted=good.get("candidate_acceptance"),
                 candidate_acceptance_rejected=acceptance_rejected,
                 content_rejected=payload_rejected,
+                intact_tile_inflation_failure=intact_failure,
+                corrupted_tile_inflation_failure=damaged_failure,
+                controlled_candidate_failure=corrupt_acceptance.get("controlled_failure"),
                 detected=detected,
                 fitsverify_exit=corrupt_acceptance.get("fitsverify_exit"),
                 funpack_exit=corrupt_acceptance.get("funpack_exit"),

@@ -71,6 +71,18 @@ jobs:
             echo "  produces all three tools from the commit the corpus already pins."
           } | tee "${RUNNER_TEMP}/evidence/provenance.txt"
 
+      - name: Run the gate's controlled-refusal regression tests
+        shell: bash
+        run: |
+          set +e
+          python3 -m unittest discover -s .github/scripts -p 'test_fits_heasarc.py' -v 2>&1 \
+            | tee "${RUNNER_TEMP}/fits-gate-regressions.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          cp "${RUNNER_TEMP}/fits-gate-regressions.log" "${RUNNER_TEMP}/evidence/"
+          echo "test exit: ${status}" | tee -a "${RUNNER_TEMP}/evidence/fits-gate-regressions.log"
+          exit "$status"
+
       - name: Fetch the pinned archive and verify its SHA-256
         shell: bash
         run: |

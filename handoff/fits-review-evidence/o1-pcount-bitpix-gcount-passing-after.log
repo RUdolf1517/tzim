@@ -1,0 +1,9 @@
+test_o1_negative_pcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_negative_pcount_is_a_recorded_refusal) ... ok
+test_o1_unsupported_bitpix_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_unsupported_bitpix_is_a_recorded_refusal) ... ok
+test_o1_zero_gcount_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_o1_zero_gcount_is_a_recorded_refusal) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.006s
+
+OK
+current exit: 0

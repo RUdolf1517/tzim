@@ -1,0 +1,8 @@
+test_short_descriptor_is_a_recorded_tile_inflation_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_short_descriptor_is_a_recorded_tile_inflation_refusal) ... ok
+test_unparseable_funpack_reconstruction_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_funpack_reconstruction_is_a_recorded_refusal) ... ok
+test_unparseable_tzim_candidate_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_tzim_candidate_is_a_recorded_refusal) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.006s
+
+OK

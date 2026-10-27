@@ -1,0 +1,8 @@
+Baseline 9de2b70 check_rewritten problems: []
+Current check_rewritten problems: ['float FITS-storage bytes differ (16 -> 16 bytes, first difference at 0)']
+GZIP_1 / BITPIX -32 convention result: None
+GZIP_1 / BITPIX -32 tzim policy result: tzim writer policy requires GZIP_2 for BITPIX -32
+GZIP_1 / unsupported BITPIX 0 convention result: unsupported FITS ZBITPIX 0
+oracle self-check: signed-zero and distinct-NaN-payload controls detected at 32/64 bits
+oracle self-check: legal GZIP_1 float is convention-compliant but not tzim's current policy
+Current oracle self-check failures: []
