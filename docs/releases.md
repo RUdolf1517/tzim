@@ -42,7 +42,8 @@ the binary. JPEG still has to be enabled at run time with `--formats jpeg`.
 
 Asset names are the Rust target triples and carry no version. That is deliberate: it makes
 `https://github.com/RUdolf1517/tzim/releases/latest/download/<asset>` a stable URL, which is what
-`install.sh` and the Homebrew formula download from. The `.deb` and `.rpm` are built by
+`install.sh` downloads from. The Homebrew formula deliberately uses versioned URLs with pinned SHA-256
+values; its version, URLs and hashes are updated by the follow-up described below. The `.deb` and `.rpm` are built by
 `packaging/linux-packages.sh` from the Linux tarball with [nfpm](https://nfpm.goreleaser.com/), so the two
 cannot describe the same binary differently.
 
