@@ -1,0 +1,5 @@
+a6eefa72cc435c013cb0ddd649b06cf9034242ad1755731a3bd4d90bda3946a6  01-fixtures/derived/mutant-15.fits.fz
+8c886c16bcbcd3aac31ba47d4199fab2e8dc754fb4adb8993a5daf859c5ae700  01-fixtures/derived/mutant-17.fits.fz
+57ceb097b6cf894930a9e26bd074e330240f1317ddc01fcf9d5ec155f1398745  01-fixtures/derived/mutant-19.fits.fz
+3f161ced4afaa5ecbabde21523cd46264771dc3a2e9ac7c1a86d4d658d0ea42d  01-fixtures/orig_int16.fits
+60ba261d620d688b2bcf0ceca47e6dc1ad3d0290ce37f593d5c11ef482367a50  05-extracted-at-sha/fits-heasarc.py

@@ -1,0 +1,51 @@
+{
+  "gate": "/home/user/fits-verify-9de2b70/05-extracted-at-sha/fits-heasarc.py",
+  "gate_sha256": "60ba261d620d688b2bcf0ceca47e6dc1ad3d0290ce37f593d5c11ef482367a50",
+  "cases": [
+    {
+      "label": "mutant-15-PCOUNT",
+      "candidate": "/home/user/fits-verify-9de2b70/01-fixtures/derived/mutant-15.fits.fz",
+      "candidate_sha256": "a6eefa72cc435c013cb0ddd649b06cf9034242ad1755731a3bd4d90bda3946a6",
+      "outcome": "traceback",
+      "exception": "ValueError: a header record runs past the end of the file",
+      "traceback": [
+        "                ^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/user/fits-verify-9de2b70/05-extracted-at-sha/fits-heasarc.py\", line 285, in parse",
+        "    raise ValueError(\"a header record runs past the end of the file\")",
+        "ValueError: a header record runs past the end of the file"
+      ],
+      "rejected": null
+    },
+    {
+      "label": "mutant-17-BITPIX",
+      "candidate": "/home/user/fits-verify-9de2b70/01-fixtures/derived/mutant-17.fits.fz",
+      "candidate_sha256": "8c886c16bcbcd3aac31ba47d4199fab2e8dc754fb4adb8993a5daf859c5ae700",
+      "outcome": "traceback",
+      "exception": "ValueError: HDU at 2880 runs past the end of the file",
+      "traceback": [
+        "                ^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/user/fits-verify-9de2b70/05-extracted-at-sha/fits-heasarc.py\", line 313, in parse",
+        "    raise ValueError(\"HDU at %d runs past the end of the file\" % start)",
+        "ValueError: HDU at 2880 runs past the end of the file"
+      ],
+      "rejected": null
+    },
+    {
+      "label": "mutant-19-GCOUNT",
+      "candidate": "/home/user/fits-verify-9de2b70/01-fixtures/derived/mutant-19.fits.fz",
+      "candidate_sha256": "57ceb097b6cf894930a9e26bd074e330240f1317ddc01fcf9d5ec155f1398745",
+      "outcome": "traceback",
+      "exception": "ValueError: HDU at 2880 runs past the end of the file",
+      "traceback": [
+        "                ^^^^^^^^^^^^^^^^^^^^^^",
+        "  File \"/home/user/fits-verify-9de2b70/05-extracted-at-sha/fits-heasarc.py\", line 313, in parse",
+        "    raise ValueError(\"HDU at %d runs past the end of the file\" % start)",
+        "ValueError: HDU at 2880 runs past the end of the file"
+      ],
+      "rejected": null
+    }
+  ],
+  "tracebacks": 3,
+  "managed_rejections": 0,
+  "accepted": 0
+}
