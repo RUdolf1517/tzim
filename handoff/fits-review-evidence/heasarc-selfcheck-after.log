@@ -1,0 +1,10 @@
+reader: 12 fixtures re-emit their own bytes
+fixture: multi_hdu BINTABLE NAXIS1 agrees with its one 1PB descriptor
+reader: quoted string values end before comments
+fixtures: both zeros and four NaN payloads are present
+header diff: complete 80-column content, comments and card order are compared
+control: corrupting a tile changes the file (offset 5778)
+tile reader: GZIP_1 and GZIP_2 rows come back unchanged
+control: NAXIS1 rewritten to 16 while TFORM1 still says 8
+
+0 self-check problem(s)

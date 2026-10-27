@@ -3476,6 +3476,38 @@ mod fits_tests {
         (fits_primary_image(bitpix, axis, &data), data)
     }
 
+    fn primary_with_cards(bitpix: i64, axis: &[usize], data: &[u8], extra: &[String]) -> Vec<u8> {
+        let mut cards = vec![
+            fits_bool_card("SIMPLE", true),
+            fits_card("BITPIX", &bitpix.to_string()),
+            fits_card("NAXIS", &axis.len().to_string()),
+        ];
+        for (index, length) in axis.iter().enumerate() {
+            cards.push(fits_card(
+                &format!("NAXIS{}", index + 1),
+                &length.to_string(),
+            ));
+        }
+        cards.push(fits_bool_card("EXTEND", true));
+        cards.extend_from_slice(extra);
+        fits_hdu(&cards, data)
+    }
+
+    fn renamed_card(card: &str, keyword: &str) -> String {
+        let mut bytes = card.as_bytes().to_vec();
+        bytes[..8].fill(b' ');
+        bytes[..keyword.len()].copy_from_slice(keyword.as_bytes());
+        String::from_utf8(bytes).unwrap()
+    }
+
+    fn find_card<'a>(hdu: &'a FitsHdu, keyword: &str) -> &'a str {
+        hdu.cards
+            .iter()
+            .find(|card| card.get(..8).unwrap_or("").trim() == keyword)
+            .map(String::as_str)
+            .unwrap_or_else(|| panic!("missing {keyword} card"))
+    }
+
     #[test]
     fn fits_an_image_hdu_becomes_a_compressed_table_that_round_trips() {
         let ws = Workspace::new("fits-int");
@@ -3590,6 +3622,217 @@ mod fits_tests {
             "the note has to name the flag that would do it: {stdout}"
         );
         assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn fits_random_groups_use_the_legal_data_length_and_are_skipped() {
+        let ws = Workspace::new("fits-random-groups-bounds");
+        let axis2 = 4096usize;
+        let pcount = 17usize;
+        let gcount = 3usize;
+        let data_len = 2 * gcount * (pcount + axis2);
+        let mut group_data = vec![0x5a; data_len];
+        // At the boundary a generic NAXIS1 product would incorrectly choose,
+        // place a valid-looking primary header inside the group payload. A
+        // correct walker must consume the complete random-groups data block and
+        // never interpret these bytes as the next HDU header.
+        let misleading = fits_empty_primary();
+        assert!(data_len >= FITS_RECORD * 2);
+        group_data[FITS_RECORD..FITS_RECORD * 2].copy_from_slice(&misleading);
+        let group = fits_hdu(
+            &[
+                fits_bool_card("SIMPLE", true),
+                fits_card("BITPIX", "16"),
+                fits_card("NAXIS", "2"),
+                fits_card("NAXIS1", "0"),
+                fits_card("NAXIS2", &axis2.to_string()),
+                fits_bool_card("GROUPS", true),
+                fits_card("PCOUNT", &pcount.to_string()),
+                fits_card("GCOUNT", &gcount.to_string()),
+            ],
+            &group_data,
+        );
+        let trailer = fits_bin_table(1, 8, &[0x31; 8]);
+        let mut original = group.clone();
+        original.extend_from_slice(&trailer);
+
+        let parsed = fits_parse(&original);
+        assert_eq!(parsed.len(), 2, "random-groups data boundary must be exact");
+        assert_eq!(parsed[0].data.len(), data_len);
+        assert_eq!(
+            parsed[0].raw.len(),
+            FITS_RECORD + data_len.div_ceil(FITS_RECORD) * FITS_RECORD
+        );
+        assert_eq!(parsed[1].raw, trailer);
+
+        let path = ws.write("groups.fits", &original);
+        let (code, stdout, stderr) = run(&["--fits-tile", "groups.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("skipped"), "{stdout}");
+        assert!(
+            stdout.contains("GROUPS"),
+            "the refusal reason must be explicit: {stdout}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            original,
+            "a legal random-groups file must be refused without replacement"
+        );
+    }
+
+    #[test]
+    fn fits_simple_false_is_refused_without_rewriting() {
+        let ws = Workspace::new("fits-simple-false");
+        let (mut original, _) = image_file(16, &[256, 120]);
+        original[..80].copy_from_slice(&fits_card_raw(&fits_bool_card("SIMPLE", false)));
+        let path = ws.write("not-simple.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "not-simple.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("skipped"), "{stdout}");
+        assert!(
+            stdout.contains("SIMPLE"),
+            "the documented refusal must be named: {stdout}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn fits_structural_cards_and_comments_are_encoded_verbatim_in_z_forms() {
+        let ws = Workspace::new("fits-z-forms-literal");
+        let primary_data = fits_samples(16, &[256, 120]);
+        let primary_cards = vec![
+            "SIMPLE  =                    T / original primary logical comment".to_string(),
+            "BITPIX  =                   16 / original primary bitpix comment".to_string(),
+            "NAXIS   =                    2 / original primary axis-count comment".to_string(),
+            "NAXIS1  =                  256 / original primary width comment".to_string(),
+            "NAXIS2  =                  120 / original primary height comment".to_string(),
+            "EXTEND  =                    T / original EXTEND comment".to_string(),
+            "HISTORY original primary history comment".to_string(),
+        ];
+        let primary = fits_hdu(&primary_cards, &primary_data);
+
+        let extension_data = fits_samples(-32, &[256, 120]);
+        let extension_cards = vec![
+            "XTENSION= 'IMAGE   '           / original XTENSION comment".to_string(),
+            "BITPIX  =                  -32 / original extension bitpix comment".to_string(),
+            "NAXIS   =                    2 / original extension axis-count comment".to_string(),
+            "NAXIS1  =                  256 / original extension width comment".to_string(),
+            "NAXIS2  =                  120 / original extension height comment".to_string(),
+            "PCOUNT  =                    0 / original PCOUNT comment".to_string(),
+            "GCOUNT  =                    1 / original GCOUNT comment".to_string(),
+            "EXTNAME = 'SCI     '           / original extension name comment".to_string(),
+        ];
+        let extension = fits_hdu(&extension_cards, &extension_data);
+        let mut original = primary;
+        original.extend_from_slice(&extension);
+        let path = ws.write("z-forms.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "z-forms.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+        let candidate = std::fs::read(&path).unwrap();
+        let before = fits_parse(&original);
+        let after = fits_parse(&candidate);
+        assert_eq!(after.len(), 3, "empty primary plus both compressed images");
+
+        for (source, target, mappings) in [
+            (
+                &before[0],
+                &after[1],
+                vec![
+                    ("SIMPLE", "ZSIMPLE"),
+                    ("BITPIX", "ZBITPIX"),
+                    ("NAXIS", "ZNAXIS"),
+                    ("NAXIS1", "ZNAXIS1"),
+                    ("NAXIS2", "ZNAXIS2"),
+                    ("EXTEND", "ZEXTEND"),
+                ],
+            ),
+            (
+                &before[1],
+                &after[2],
+                vec![
+                    ("XTENSION", "ZTENSION"),
+                    ("BITPIX", "ZBITPIX"),
+                    ("NAXIS", "ZNAXIS"),
+                    ("NAXIS1", "ZNAXIS1"),
+                    ("NAXIS2", "ZNAXIS2"),
+                    ("PCOUNT", "ZPCOUNT"),
+                    ("GCOUNT", "ZGCOUNT"),
+                ],
+            ),
+        ] {
+            for (old_key, new_key) in mappings {
+                let expected = renamed_card(find_card(source, old_key), new_key);
+                assert_eq!(
+                    find_card(target, new_key),
+                    expected,
+                    "{old_key} must survive as the complete {new_key} card"
+                );
+            }
+        }
+        assert_eq!(fits_compressed_array(&after[1]), primary_data);
+        assert_eq!(fits_compressed_array(&after[2]), extension_data);
+    }
+
+    #[test]
+    fn fits_decimal_and_exponent_identity_scaling_is_accepted_exactly() {
+        let ws = Workspace::new("fits-scaling-decimal-identity");
+        let data = fits_samples(16, &[256, 120]);
+        let original = primary_with_cards(
+            16,
+            &[256, 120],
+            &data,
+            &[
+                fits_card("BSCALE", "1.000000000000E+00"),
+                fits_card("BZERO", "-0.000D+00"),
+            ],
+        );
+        let path = ws.write("identity-spelling.fits", &original);
+
+        let (code, stdout, stderr) = run(&["--fits-tile", "identity-spelling.fits"], &ws.path);
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("optimized"), "{stdout}");
+        let candidate = fits_parse(&std::fs::read(&path).unwrap());
+        assert_eq!(fits_compressed_array(&candidate[1]), data);
+    }
+
+    #[test]
+    fn fits_range_sensitive_non_identity_scaling_is_refused_exactly() {
+        let mut problems = Vec::new();
+        for (name, bscale, bzero, expected) in [
+            ("rounded-one", "1.00000000000000001", "0", "BSCALE"),
+            ("underflow-zero", "1", "1D-400", "BZERO"),
+            ("large-scale", "1E+100", "0", "BSCALE"),
+        ] {
+            let ws = Workspace::new(&format!("fits-scaling-{name}"));
+            let data = fits_samples(16, &[256, 120]);
+            let original = primary_with_cards(
+                16,
+                &[256, 120],
+                &data,
+                &[fits_card("BSCALE", bscale), fits_card("BZERO", bzero)],
+            );
+            let path = ws.write("scaled.fits", &original);
+            let (code, stdout, stderr) = run(&["--fits-tile", "scaled.fits"], &ws.path);
+            let output = format!("{name}: exit={code}, stdout={stdout}, stderr={stderr}");
+            if code != 0 {
+                problems.push(output.clone());
+            }
+            if !stdout.contains("skipped") {
+                problems.push(format!("{name}: expected a skip, got {output}"));
+            }
+            if !stdout.contains(expected) {
+                problems.push(format!(
+                    "{name}: expected the {expected} refusal, got {output}"
+                ));
+            }
+            if std::fs::read(&path).unwrap() != original {
+                problems.push(format!("{name}: the source was rewritten"));
+            }
+        }
+        assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
     /// A file whose image is already compressed with a codec this build does not

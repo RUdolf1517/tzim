@@ -6,9 +6,10 @@
 # updated in place (matched by a hidden marker) to keep the thread readable.
 set -uo pipefail
 
-log_file="${1:?usage: ci-report.sh <log-file> <label> [kind]}"
-label="${2:?usage: ci-report.sh <log-file> <label> [kind]}"
+log_file="${1:?usage: ci-report.sh <log-file> <label> [kind] [mode]}"
+label="${2:?usage: ci-report.sh <log-file> <label> [kind] [mode]}"
 kind="${3:-failure}"
+mode="${4:-tail}"
 
 sha="${GITHUB_SHA:-local}"
 marker="<!-- tzim-ci:${label}:${sha:0:7} -->"
@@ -27,10 +28,16 @@ body_file="$(mktemp)"
         echo "### CI failure: \`${label}\`"
     fi
     echo
-    echo '```'
-    # Bounded: the last 150 lines, each capped, so the comment stays readable.
-    tail -n 150 "$log_file" | cut -c1-2000
-    echo '```'
+    # Most jobs relay a bounded log tail inside a code fence. A curated Markdown
+    # report can request full mode; it is generated specifically for the comment
+    # and keeps literal FITS diffs and the tool diagnosis together.
+    if [ "$mode" = "full" ]; then
+        cat "$log_file" | cut -c1-2000
+    else
+        echo '```'
+        tail -n 150 "$log_file" | cut -c1-2000
+        echo '```'
+    fi
 } > "$body_file"
 
 branch="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"

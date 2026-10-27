@@ -10,19 +10,23 @@ than from a paragraph.
     python3 -m venv /tmp/v && /tmp/v/bin/pip install pikepdf PyMuPDF
     /tmp/v/bin/python .github/scripts/pdf-measure.py --root /tmp/corpus --out /tmp/pdf.jsonl
 
-`--root` is a directory holding the checkouts below; the corpus is fetched, never
-committed, exactly as `.github/scripts/corpus.sh` does it for the other formats:
+The corpus is **not** fetched here. `--root` holds a tree that
+`.github/scripts/measure-fetch.py` produced from pinned codeload archives, together
+with a per-file manifest; `--manifest` makes this script read exactly the files that
+manifest names, at the byte length it records, instead of globbing whatever is on
+disk:
 
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/mozilla/pdf.js.git
-    git -C pdf.js sparse-checkout set test/pdfs
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/qpdf/qpdf.git
-    git -C qpdf sparse-checkout set qpdf/qtest
-    git clone --depth 1 --filter=blob:none --sparse https://github.com/veraPDF/veraPDF-corpus.git
-    git -C veraPDF-corpus sparse-checkout set PDF_A-1b
+    python3 .github/scripts/measure-fetch.py --root /tmp/corpus --manifest /tmp/corpus/manifest.json
+    /tmp/v/bin/python .github/scripts/pdf-measure.py --root /tmp/corpus \
+        --manifest /tmp/corpus/manifest.json --out /tmp/pdf.jsonl
 
-Pinned at the commits the audit quotes: pdf.js `606bd6a4e138`, qpdf `4eba95899886`,
-veraPDF-corpus `bb75f4f0073d`. A commit pins the exact bytes; an archive hash does
-not survive a re-tarball.
+Pinned at the full commits the audit quotes: pdf.js
+`606bd6a4e138bbbc22fad10872d2ffa93365b6b1`, qpdf
+`4eba95899886e851cc41d76886483b347612f2a8`, veraPDF-corpus
+`bb75f4f0073d9350dfd058c0162a367e6fadf25e`. A commit pins the exact source revision; a codeload tarball at
+that commit does **not** have to (GitHub regenerates it on demand), which is why the
+manifest's per-file hashes — not the archive hash — are what a re-run is checked
+against.
 
 `pikepdf` ships libqpdf and `PyMuPDF` ships MuPDF, so `qpdf` and `mutool` do not
 have to be installed: the same libraries, driven in-process. The audit records the
@@ -232,30 +236,77 @@ def render_digests(path, pages=6, dpi=100):
     return out, n
 
 
+def from_manifest(path):
+    """(corpus, path, row) for each PDF, in original per-corpus path order.
+
+    The original instrument walked ``sorted(glob.glob(...))``. Manifests are
+    ordered by the fetcher, but sorting here makes the contract explicit and
+    prevents a valid-yet-reordered manifest from changing accepted-row order or
+    the seeded render sample.
+    """
+    with open(path) as f:
+        manifest = json.load(f)
+    out = []
+    for corpus in manifest["corpora"]:
+        if corpus["format"] != "pdf":
+            continue
+        for row in sorted(corpus["entries"], key=lambda item: item["path"]):
+            out.append((corpus["name"], row["path"], row))
+    return manifest, out
+
+
+def select_render_sample(accepted_rows, sample_size=140, seed=57):
+    """The audit's seeded sample, isolated so order/selection is regression-tested."""
+    random.seed(seed)
+    return random.sample(accepted_rows, min(sample_size, len(accepted_rows)))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default="/tmp/corpus", help="directory holding the checkouts")
+    ap.add_argument("--manifest", default="", help="per-file manifest from measure-fetch.py")
     ap.add_argument("--out", default="/tmp/pdf.jsonl")
+    ap.add_argument("--render-out", default="", help="JSONL records for the exact render sample")
     ap.add_argument("--render-sample", type=int, default=140,
                     help="files rendered and compared; 0 disables the check")
     args = ap.parse_args()
 
+    if args.manifest:
+        manifest, named = from_manifest(args.manifest)
+        print("manifest digest %s, %d PDF files" % (manifest["manifest_digest"], len(named)))
+        work = [(corpus, None, [(path, row)]) for corpus, path, row in named]
+    else:
+        work = []
+        for corpus, (repo, sub) in CORPORA.items():
+            root = os.path.join(args.root, repo)
+            if not os.path.isdir(root):
+                print("missing checkout: %s (see the docstring)" % root, file=sys.stderr)
+                continue
+            for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.pdf"), recursive=True)):
+                work.append((corpus, path, [(path, None)]))
+
     scratch = "/tmp/pdf-measure-check.out"
     outdir = "/tmp/pdf-measure-out"
+    render_path = args.render_out or (args.out + ".render-sample.jsonl")
     os.makedirs(outdir, exist_ok=True)
     rows, n = [], 0
-    for corpus, (repo, sub) in CORPORA.items():
-        root = os.path.join(args.root, repo)
-        if not os.path.isdir(root):
-            print("missing checkout: %s (see the docstring)" % root, file=sys.stderr)
-            continue
-        for path in sorted(glob.glob(os.path.join(root, sub, "**", "*.pdf"), recursive=True)):
+    for corpus, _single, batch in work:
+        for path, recorded in batch:
+            path = path if os.path.isabs(path) else os.path.join(args.root, path)
+            if recorded is not None and os.path.getsize(path) != recorded["bytes"]:
+                raise SystemExit(
+                    "%s is %d bytes, the manifest says %d — run measure-fetch.py --verify"
+                    % (path, os.path.getsize(path), recorded["bytes"])
+                )
             n += 1
             size = os.path.getsize(path)
             tag = "%s_%05d" % (corpus, n)
             status, reason, info = classify(path, scratch)
             row = {"corpus": corpus, "path": path, "bytes": size,
                    "status": status, "reason": reason, **info}
+            if recorded is not None:
+                row["manifest_sha256"] = recorded["sha256"]
+                row["manifest_path"] = recorded["path"]
             if status == "accepted":
                 nstr, total, after = faithful(path)
                 cand, repack = qpdf_jobs(path, outdir, tag)
@@ -288,25 +339,62 @@ def main():
                      100 * sum(1 for x in p if x > 0) / len(p)))
         print("qpdf --check passed: %d/%d" % (sum(1 for r in acc if r["check_ok"]), len(acc)))
 
+    render_rows = []
     if args.render_sample and acc:
-        random.seed(57)
-        sample = random.sample(acc, min(args.render_sample, len(acc)))
-        compared = pages = bad = 0
-        for r in sample:
+        render_seed = 57
+        sample = select_render_sample(acc, args.render_sample, render_seed)
+        compared = pages = bad = errors = 0
+        for order, r in enumerate(sample, start=1):
             cand = os.path.join(outdir, "render.pdf")
-            pikepdf.Job(["--recompress-flate", "--compression-level=9",
-                         "--object-streams=preserve", r["path"], cand]).run()
+            record = dict(
+                sample_order=order,
+                sample_seed=render_seed,
+                sample_size=len(sample),
+                corpus=r["corpus"],
+                path=r["path"],
+                relative_path=r.get("manifest_path") or os.path.relpath(r["path"], args.root),
+                bytes=r["bytes"],
+                manifest_sha256=r.get("manifest_sha256"),
+                status=r["status"],
+                dpi=100,
+                page_cap=6,
+                rendered=False,
+                render_error=None,
+            )
             try:
+                pikepdf.Job(["--recompress-flate", "--compression-level=9",
+                             "--object-streams=preserve", r["path"], cand]).run()
                 a, na = render_digests(r["path"])
                 b, nb = render_digests(cand)
-            except Exception:                       # noqa: BLE001
+            except Exception as error:               # noqa: BLE001
+                record["render_error"] = "%s: %s" % (type(error).__name__, error)
+                render_rows.append(record)
+                errors += 1
+                print("render error:", r["path"], record["render_error"])
                 continue
+            record.update(
+                rendered=True,
+                original_pages=na,
+                candidate_pages=nb,
+                original_page_digests=a,
+                candidate_page_digests=b,
+                compared_pages=len(a),
+                identical=(a == b and na == nb),
+            )
             compared += 1
             pages += len(a)
-            if a != b or na != nb:
+            if not record["identical"]:
                 bad += 1
                 print("render difference:", r["path"])
+            render_rows.append(record)
         print("rendered %d files, %d pages, %d differences" % (compared, pages, bad))
+        if errors:
+            print("render errors %d/%d sampled files" % (errors, len(sample)))
+
+    os.makedirs(os.path.dirname(os.path.abspath(render_path)), exist_ok=True)
+    with open(render_path, "w", encoding="utf-8") as handle:
+        for record in render_rows:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":

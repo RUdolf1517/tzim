@@ -81,6 +81,26 @@ const MAX_HEADER_RECORDS: usize = 4096;
 const GZIP_1: &str = "GZIP_1";
 const GZIP_2: &str = "GZIP_2";
 
+/// A standard, interoperable `P` descriptor stores both values as signed
+/// 32-bit integers, so its exact largest non-negative count or heap offset is
+/// `2^31 - 1 = 2,147,483,647` (FITS Standard v4.0). The pinned CFITSIO gate
+/// source also warns when either field exceeds that value
+/// (`utilities/fvrf_data.c` at CFITSIO commit
+/// `113781d8aa442cf8d3c27295d9084674b8b039f2`). CFITSIO's optional unsigned
+/// extension is intentionally not adopted. This handler writes `1P`, not `1Q`;
+/// values beyond the interoperable limit are refused rather than widened.
+const MAX_P_DESCRIPTOR_VALUE: u64 = i32::MAX as u64;
+
+fn p_descriptor_value(value: u64, field: &str) -> Result<i32> {
+    // This explicit conversion is shared by the tile length and heap offset so
+    // neither can silently become a negative signed descriptor.
+    i32::try_from(value).map_err(|_| {
+        Error::limit(format!(
+            "fits: 1P descriptor {field} exceeds {MAX_P_DESCRIPTOR_VALUE}"
+        ))
+    })
+}
+
 /// `BITPIX` values the standard defines, and the only ones this handler writes.
 const BITPIX_VALUES: [i64; 6] = [8, 16, 32, 64, -32, -64];
 
@@ -146,6 +166,105 @@ impl Card {
         let end = rest.rfind('\'')?;
         Some(&rest[..end])
     }
+}
+
+/// Parses a FITS decimal or exponent value without converting it to `f64`.
+/// The coefficient digits and decimal-point position are kept exact; a very
+/// large exponent is saturated because it cannot make a nonzero coefficient
+/// equal to either identity value, while a zero coefficient remains exactly 0.
+fn decimal_parts(text: &str) -> Option<(bool, Vec<u8>, usize, i64)> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let (negative, text) = match text.as_bytes()[0] {
+        b'+' => (false, &text[1..]),
+        b'-' => (true, &text[1..]),
+        _ => (false, text),
+    };
+    if text.is_empty() {
+        return None;
+    }
+    let exponent_at = text
+        .bytes()
+        .position(|byte| matches!(byte, b'E' | b'e' | b'D' | b'd'));
+    let (mantissa, exponent) = if let Some(at) = exponent_at {
+        let exponent = &text[at + 1..];
+        if exponent.is_empty() {
+            return None;
+        }
+        let (exponent_negative, digits) = match exponent.as_bytes()[0] {
+            b'+' => (false, &exponent[1..]),
+            b'-' => (true, &exponent[1..]),
+            _ => (false, exponent),
+        };
+        if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let magnitude = digits.bytes().fold(0u64, |value, byte| {
+            value
+                .saturating_mul(10)
+                .saturating_add(u64::from(byte - b'0'))
+        });
+        let exponent = if exponent_negative {
+            if magnitude > i64::MAX as u64 {
+                i64::MIN
+            } else {
+                -(magnitude as i64)
+            }
+        } else {
+            magnitude.min(i64::MAX as u64) as i64
+        };
+        (&text[..at], exponent)
+    } else {
+        (text, 0)
+    };
+
+    let mut digits = Vec::new();
+    let mut fractional_digits = 0usize;
+    let mut after_point = false;
+    for byte in mantissa.bytes() {
+        match byte {
+            b'.' if !after_point => after_point = true,
+            b'0'..=b'9' => {
+                digits.push(byte);
+                if after_point {
+                    fractional_digits += 1;
+                }
+            }
+            _ => return None,
+        }
+    }
+    if digits.is_empty() {
+        return None;
+    }
+    Some((negative, digits, fractional_digits, exponent))
+}
+
+/// Whether a syntactically valid FITS number is exactly zero.
+fn decimal_is_zero(text: &str) -> Option<bool> {
+    let (_, digits, _, _) = decimal_parts(text)?;
+    Some(digits.iter().all(|digit| *digit == b'0'))
+}
+
+/// Whether a syntactically valid FITS number is exactly one, with no rounding.
+fn decimal_is_one(text: &str) -> Option<bool> {
+    let (negative, digits, fractional_digits, exponent) = decimal_parts(text)?;
+    if negative {
+        return Some(false);
+    }
+    let Some(first) = digits.iter().position(|digit| *digit != b'0') else {
+        return Some(false);
+    };
+    if digits[first] != b'1' || digits[first + 1..].iter().any(|digit| *digit != b'0') {
+        return Some(false);
+    }
+    let fractional_digits = i64::try_from(fractional_digits).ok()?;
+    let trailing_zeros = i64::try_from(digits.len() - first - 1).ok()?;
+    let scale = exponent
+        .checked_sub(fractional_digits)
+        .and_then(|scale| scale.checked_add(trailing_zeros));
+    Some(scale == Some(0))
 }
 
 /// An 80-byte card, split out so that a malformed record is a parse failure
@@ -296,11 +415,12 @@ fn parse_header(data: &[u8], start: usize) -> Result<Header> {
 
 /// The number of bytes of data an HDU holds, from its own cards.
 ///
-/// One formula covers every HDU type, which is what the standard says and what
-/// the reference reader does: `|BITPIX|/8 × GCOUNT × (PCOUNT + Π NAXISn)`. For an
-/// image `PCOUNT` is 0, for a `BINTABLE` the product is the table and `PCOUNT`
-/// is the heap, and for an extension this handler does not know it is still the
-/// only length the file itself declares.
+/// The declared data length is `|BITPIX|/8 × GCOUNT × (PCOUNT + Π axes)`.
+/// Random groups are the one special case: `NAXIS1` is the required zero
+/// placeholder and the product starts at `NAXIS2`, with `PCOUNT` added for each
+/// group. For a `BINTABLE`, the product is the table and `PCOUNT` is the heap;
+/// for any extension this handler does not know, the cards are still the only
+/// length the file itself declares.
 fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
     let bitpix = header
         .int("BITPIX")
@@ -321,6 +441,22 @@ fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
             "fits: NAXIS = {naxis} is beyond the standard's limit of {MAX_NAXIS}"
         )));
     }
+    let random_groups = header.truth("GROUPS") == Some(true);
+    if random_groups {
+        if !header.has("SIMPLE") {
+            return Err(Error::parse(
+                "fits: GROUPS = T is only valid in a primary HDU",
+            ));
+        }
+        if naxis < 2 {
+            return Err(Error::parse("fits: random groups require NAXIS >= 2"));
+        }
+        if !header.has("PCOUNT") || !header.has("GCOUNT") {
+            return Err(Error::parse(
+                "fits: random groups require PCOUNT and GCOUNT",
+            ));
+        }
+    }
     let mut axes = Vec::with_capacity(naxis as usize);
     let mut product: u64 = 1;
     for axis in 1..=naxis {
@@ -332,10 +468,15 @@ fn declared_data_len(header: &Header) -> Result<(i64, Vec<u64>, u64)> {
             return Err(Error::parse(format!("fits: {keyword} is negative")));
         }
         let length = length as u64;
+        if random_groups && axis == 1 && length != 0 {
+            return Err(Error::parse("fits: random groups require NAXIS1 = 0"));
+        }
         axes.push(length);
-        product = product
-            .checked_mul(length)
-            .ok_or_else(|| Error::limit("fits: the array size overflows"))?;
+        if !random_groups || axis > 1 {
+            product = product
+                .checked_mul(length)
+                .ok_or_else(|| Error::limit("fits: the array size overflows"))?;
+        }
     }
     if naxis == 0 {
         product = 0;
@@ -363,6 +504,11 @@ fn classify(header: &Header, index: usize) -> Result<Kind> {
     if header.has("SIMPLE") {
         if index != 0 {
             return Err(Error::parse("fits: a second primary HDU"));
+        }
+        if header.truth("SIMPLE") != Some(true) {
+            return Err(Error::refused(
+                "fits: SIMPLE must be T; SIMPLE = F is not accepted",
+            ));
         }
         return Ok(Kind::Primary);
     }
@@ -452,10 +598,10 @@ impl Decision {
 /// True for a keyword the generated table header owns, so that it is not copied
 /// from the original header a second time.
 fn structural(keyword: &str) -> bool {
-    const EXACT: [&str; 20] = [
+    const EXACT: [&str; 21] = [
         "SIMPLE", "XTENSION", "BITPIX", "NAXIS", "PCOUNT", "GCOUNT", "EXTEND", "TFIELDS", "THEAP",
         "EXTNAME", "ZIMAGE", "ZSIMPLE", "ZTENSION", "ZBITPIX", "ZNAXIS", "ZPCOUNT", "ZGCOUNT",
-        "ZCMPTYPE", "ZNAME1", "ZVAL1",
+        "ZEXTEND", "ZCMPTYPE", "ZNAME1", "ZVAL1",
     ];
     if EXACT.contains(&keyword) {
         return true;
@@ -468,6 +614,42 @@ fn structural(keyword: &str) -> bool {
         }
     }
     false
+}
+
+/// The Z-form keyword corresponding to an image's structural card.
+fn z_form_keyword(keyword: &str) -> Option<String> {
+    let fixed = match keyword {
+        "SIMPLE" => Some("ZSIMPLE"),
+        "XTENSION" => Some("ZTENSION"),
+        "BITPIX" => Some("ZBITPIX"),
+        "NAXIS" => Some("ZNAXIS"),
+        "PCOUNT" => Some("ZPCOUNT"),
+        "GCOUNT" => Some("ZGCOUNT"),
+        "EXTEND" => Some("ZEXTEND"),
+        _ => None,
+    };
+    if let Some(mapped) = fixed {
+        return Some(mapped.to_string());
+    }
+    let suffix = keyword.strip_prefix("NAXIS")?;
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("ZNAXIS{suffix}"))
+}
+
+/// Replaces only columns 1–8 of a card; the value, comment, spacing and all
+/// other bytes remain exactly as they appeared in the source.
+fn renamed_card(card: &Card, keyword: &str) -> Result<[u8; CARD]> {
+    if keyword.len() > 8 {
+        return Err(Error::refused(format!(
+            "fits: Z-form keyword {keyword} does not fit in eight columns"
+        )));
+    }
+    let mut raw = card.raw;
+    raw[..8].fill(b' ');
+    raw[..keyword.len()].copy_from_slice(keyword.as_bytes());
+    Ok(raw)
 }
 
 /// The decision for one image HDU, which is where every refusal lives.
@@ -484,18 +666,26 @@ fn decide_image(hdu: &Hdu) -> Decision {
     if header.int("PCOUNT").unwrap_or(0) != 0 || header.int("GCOUNT").unwrap_or(1) != 1 {
         return Decision::Decline("fits: an image HDU with PCOUNT or GCOUNT set".to_string());
     }
-    // Scaling: `BSCALE = 0` makes the numbers meaningless, and any other
-    // non-identity pair means a reader has to re-derive the scaling from a
-    // compressed HDU. The stored bytes would survive either way, but what a
-    // reader *sees* goes through the scaling, and this build cannot check that
-    // with a second implementation yet — so a scaled image is refused rather
-    // than argued about (issue #70, refusal list).
-    let scale = header.int("BSCALE").unwrap_or(1);
-    let zero = header.int("BZERO").unwrap_or(0);
-    if scale != 1 || zero != 0 {
-        return Decision::Decline(format!(
-            "fits: the image is scaled (BSCALE = {scale}, BZERO = {zero})"
-        ));
+    // Scaling cards are FITS decimals, not necessarily integers. Compare their
+    // exact decimal values against identity without rounding through `f64`:
+    // 1.00000000000000001 is not 1, and 1D-400 is not 0 even if a binary-float
+    // conversion underflows. A malformed value is refused as well; treating an
+    // unparsed card as the default would silently open a lossy rewrite.
+    if let Some(card) = header.get("BSCALE") {
+        if decimal_is_one(card.field()) != Some(true) {
+            return Decision::Decline(format!(
+                "fits: BSCALE is not exactly 1 (value {})",
+                card.field().trim()
+            ));
+        }
+    }
+    if let Some(card) = header.get("BZERO") {
+        if decimal_is_zero(card.field()) != Some(true) {
+            return Decision::Decline(format!(
+                "fits: BZERO is not exactly 0 (value {})",
+                card.field().trim()
+            ));
+        }
     }
     if header.has("CHECKSUM") || header.has("DATASUM") {
         return Decision::Decline(
@@ -671,7 +861,7 @@ fn write_tiled(hdu: &Hdu, data: &[u8], out: &mut Vec<u8>) -> Result<()> {
     let source = &data[hdu.data_start..hdu.data_start + hdu.data_len as usize];
 
     let mut heap: Vec<u8> = Vec::with_capacity(source.len() / 2);
-    let mut rows: Vec<(u32, u32)> = Vec::with_capacity(tiles as usize);
+    let mut rows: Vec<(i32, i32)> = Vec::with_capacity(tiles as usize);
     let tile_bytes = tile_bytes as usize;
     for index in 0..tiles as usize {
         let tile = &source[index * tile_bytes..(index + 1) * tile_bytes];
@@ -680,10 +870,8 @@ fn write_tiled(hdu: &Hdu, data: &[u8], out: &mut Vec<u8>) -> Result<()> {
         } else {
             gzip_member(tile)?
         };
-        let length = u32::try_from(member.len())
-            .map_err(|_| Error::limit("fits: a compressed tile exceeds 4 GiB"))?;
-        let offset = u32::try_from(heap.len())
-            .map_err(|_| Error::limit("fits: the table heap exceeds 4 GiB"))?;
+        let length = p_descriptor_value(member.len() as u64, "count")?;
+        let offset = p_descriptor_value(heap.len() as u64, "heap offset")?;
         rows.push((length, offset));
         heap.extend_from_slice(&member);
     }
@@ -717,29 +905,39 @@ fn write_tiled(hdu: &Hdu, data: &[u8], out: &mut Vec<u8>) -> Result<()> {
         true,
         "extension contains compressed image",
     ));
-    if hdu.kind == Kind::Primary {
-        cards.push(boolean_card("ZSIMPLE", true, ""));
+    let (source_kind, z_kind) = if hdu.kind == Kind::Primary {
+        ("SIMPLE", "ZSIMPLE")
     } else {
-        cards.push(string_card("ZTENSION", "IMAGE", "Image extension"));
+        ("XTENSION", "ZTENSION")
+    };
+    let kind_card = hdu.header.get(source_kind).ok_or_else(|| {
+        Error::internal(format!("fits: missing {source_kind} card while writing"))
+    })?;
+    cards.push(renamed_card(kind_card, z_kind)?);
+
+    for (source_keyword, z_keyword) in [("BITPIX", "ZBITPIX"), ("NAXIS", "ZNAXIS")] {
+        let source_card = hdu.header.get(source_keyword).ok_or_else(|| {
+            Error::internal(format!("fits: missing {source_keyword} card while writing"))
+        })?;
+        cards.push(renamed_card(source_card, z_keyword)?);
     }
-    cards.push(numeric_card("ZBITPIX", hdu.bitpix, "array data type"));
-    cards.push(numeric_card(
-        "ZNAXIS",
-        hdu.axes.len() as i64,
-        "number of array dimensions",
-    ));
-    for (index, axis) in hdu.axes.iter().enumerate() {
-        cards.push(numeric_card(
-            &format!("ZNAXIS{}", index + 1),
-            *axis as i64,
-            "",
-        ));
+    for index in 0..hdu.axes.len() {
+        let axis = index + 1;
+        let source_keyword = format!("NAXIS{axis}");
+        let z_keyword = format!("ZNAXIS{axis}");
+        let source_card = hdu.header.get(&source_keyword).ok_or_else(|| {
+            Error::internal(format!("fits: missing {source_keyword} card while writing"))
+        })?;
+        cards.push(renamed_card(source_card, &z_keyword)?);
     }
-    if hdu.header.has("PCOUNT") {
-        cards.push(numeric_card("ZPCOUNT", 0, "number of parameters"));
-    }
-    if hdu.header.has("GCOUNT") {
-        cards.push(numeric_card("ZGCOUNT", 1, "number of groups"));
+    for (source_keyword, z_keyword) in [
+        ("PCOUNT", "ZPCOUNT"),
+        ("GCOUNT", "ZGCOUNT"),
+        ("EXTEND", "ZEXTEND"),
+    ] {
+        if let Some(source_card) = hdu.header.get(source_keyword) {
+            cards.push(renamed_card(source_card, z_keyword)?);
+        }
     }
     // The tiling rule: one tile per row along the first axis.
     cards.push(numeric_card(
@@ -863,6 +1061,25 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
             "fits: an image HDU was not replaced by a ZIMAGE binary table",
         ));
     }
+    let (required_kind, forbidden_kind) = match a.kind {
+        Kind::Primary => ("ZSIMPLE", "ZTENSION"),
+        Kind::ImageExt => ("ZTENSION", "ZSIMPLE"),
+        _ => {
+            return Err(Error::verify(
+                "fits: a non-image HDU was sent to the image-table verifier",
+            ));
+        }
+    };
+    if !b.header.has(required_kind) || b.header.has(forbidden_kind) {
+        return Err(Error::verify(format!(
+            "fits: the compressed header must use {required_kind} and must not use {forbidden_kind}"
+        )));
+    }
+    if b.header.has("ZSCALE") || b.header.has("ZZERO") {
+        return Err(Error::verify(
+            "fits: the generated table must not contain ZSCALE or ZZERO",
+        ));
+    }
     let codec = b.header.text("ZCMPTYPE").unwrap_or("").trim();
     let expected = if a.bitpix < 0 { GZIP_2 } else { GZIP_1 };
     if codec != expected {
@@ -870,6 +1087,21 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
             "fits: tiles are {codec}, expected {expected} for BITPIX {}",
             a.bitpix
         )));
+    }
+    if a.bitpix < 0 {
+        if b.header.count("ZNAME1") != 1
+            || b.header.text("ZNAME1") != Some("NOISEBIT")
+            || b.header.count("ZVAL1") != 1
+            || b.header.int("ZVAL1") != Some(0)
+        {
+            return Err(Error::verify(
+                "fits: floating-point tables require ZNAME1 = 'NOISEBIT' and ZVAL1 = 0",
+            ));
+        }
+    } else if b.header.has("ZNAME1") || b.header.has("ZVAL1") {
+        return Err(Error::verify(
+            "fits: integer tables must not contain ZNAME1 or ZVAL1",
+        ));
     }
     if b.header.int("ZBITPIX") != Some(a.bitpix) {
         return Err(Error::verify(format!(
@@ -903,9 +1135,51 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
             )));
         }
     }
-    // No card of the original header may be dropped, and none invented. The
-    // cards this header generates are exactly the structural keywords, so the
-    // two sequences of everything else have to be identical.
+    // Every source structural card is carried as its Z-form with only the
+    // keyword changed. This checks the complete value and comment bytes, not
+    // merely the parsed number; in particular EXTEND must survive as ZEXTEND.
+    for source in &a.header.cards {
+        let Some(z_keyword) = z_form_keyword(source.keyword()) else {
+            continue;
+        };
+        let expected = renamed_card(source, &z_keyword)
+            .map_err(|_| Error::verify("fits: a structural Z-form keyword is too long"))?;
+        let target = b.header.get(&z_keyword).ok_or_else(|| {
+            Error::verify(format!(
+                "fits: {z_keyword} is missing from the compressed header"
+            ))
+        })?;
+        if target.raw != expected {
+            return Err(Error::verify(format!(
+                "fits: {z_keyword} did not preserve the source card bytes"
+            )));
+        }
+    }
+    if !a.header.has("EXTEND") && b.header.has("ZEXTEND") {
+        return Err(Error::verify(
+            "fits: ZEXTEND was invented without a source EXTEND card",
+        ));
+    }
+    if b.header.count("EXTNAME") != 1 {
+        return Err(Error::verify(
+            "fits: the compressed header must contain exactly one EXTNAME",
+        ));
+    }
+    if let Some(source) = a.header.get("EXTNAME") {
+        let target = b
+            .header
+            .get("EXTNAME")
+            .ok_or_else(|| Error::verify("fits: EXTNAME was dropped from the compressed header"))?;
+        if target.raw != source.raw {
+            return Err(Error::verify("fits: EXTNAME was not copied verbatim"));
+        }
+    } else if b.header.text("EXTNAME") != Some("COMPRESSED_IMAGE") {
+        return Err(Error::verify(
+            "fits: a missing source EXTNAME must become 'COMPRESSED_IMAGE'",
+        ));
+    }
+    // No non-structural card of the original header may be dropped, and none
+    // invented; the two complete sequences must remain identical.
     let want: Vec<[u8; CARD]> = a
         .header
         .cards
@@ -930,6 +1204,21 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
     if b.header.int("NAXIS1") != Some(8) || b.header.int("TFIELDS") != Some(1) {
         return Err(Error::verify(
             "fits: the compressed table is not one column of `1PB`",
+        ));
+    }
+    if b.header.int("GCOUNT") != Some(1) {
+        return Err(Error::verify(
+            "fits: the compressed table must have GCOUNT = 1",
+        ));
+    }
+    if b.header.has("THEAP") {
+        return Err(Error::verify(
+            "fits: the generated table must not contain THEAP",
+        ));
+    }
+    if b.header.count("TFORM1") != 1 {
+        return Err(Error::verify(
+            "fits: the compressed table must contain exactly one TFORM1",
         ));
     }
     if b.header.text("TTYPE1").map(str::trim) != Some("COMPRESSED_DATA") {
@@ -977,20 +1266,31 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
     let per_sample = (a.bitpix.unsigned_abs() / 8) as usize;
     let tile_bytes = a.axes[0] as usize * per_sample;
     let mut array: Vec<u8> = Vec::with_capacity(a.data_len as usize);
+    let mut longest_descriptor = 0i32;
     for row in 0..rows as usize {
         let at = b.data_start + row * 8;
-        let length = u32::from_be_bytes([
+        let length = i32::from_be_bytes([
             candidate[at],
             candidate[at + 1],
             candidate[at + 2],
             candidate[at + 3],
-        ]) as usize;
-        let offset = u32::from_be_bytes([
+        ]);
+        let offset = i32::from_be_bytes([
             candidate[at + 4],
             candidate[at + 5],
             candidate[at + 6],
             candidate[at + 7],
-        ]) as usize;
+        ]);
+        if length < 0 || offset < 0 {
+            return Err(Error::verify(
+                "fits: a 1P descriptor has a negative count or heap offset",
+            ));
+        }
+        longest_descriptor = longest_descriptor.max(length);
+        let length = usize::try_from(length)
+            .map_err(|_| Error::verify("fits: a 1P descriptor count is out of range"))?;
+        let offset = usize::try_from(offset)
+            .map_err(|_| Error::verify("fits: a 1P descriptor offset is out of range"))?;
         if offset >= heap.len() || length > heap.len() - offset {
             return Err(Error::verify(
                 "fits: a heap descriptor points outside the heap",
@@ -1009,6 +1309,13 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
         } else {
             array.extend_from_slice(&tile);
         }
+    }
+    let expected_tform = format!("1PB({longest_descriptor})");
+    if b.header.text("TFORM1") != Some(expected_tform.as_str()) {
+        return Err(Error::verify(format!(
+            "fits: TFORM1 is {:?}, expected {expected_tform}",
+            b.header.text("TFORM1")
+        )));
     }
     let before = &original[a.data_start..a.data_start + a.data_len as usize];
     if array != before {
@@ -1129,6 +1436,101 @@ mod tests {
         (0..len).map(|i| ((i / 4) % 251) as u8).collect()
     }
 
+    fn optimize_primary_fixture(
+        bitpix: i64,
+        axes: &[u64],
+        data: &[u8],
+        extra: &[(&str, &str)],
+    ) -> (Vec<u8>, Vec<u8>, Options) {
+        let original = image_hdu(bitpix, axes, data, extra);
+        let opts = options(true);
+        let mut candidate = Vec::new();
+        optimize(&original, &mut candidate, &opts).expect("the fixture should be rewritten");
+        (original, candidate, opts)
+    }
+
+    fn image_extension(bitpix: i64, axes: &[u64], data: &[u8], extra: &[(&str, &str)]) -> Vec<u8> {
+        let mut cards = vec![
+            string_card("XTENSION", "IMAGE", "image extension"),
+            numeric_card("BITPIX", bitpix, "array data type"),
+            numeric_card("NAXIS", axes.len() as i64, "number of array dimensions"),
+        ];
+        for (index, axis) in axes.iter().enumerate() {
+            cards.push(numeric_card(
+                &format!("NAXIS{}", index + 1),
+                *axis as i64,
+                "",
+            ));
+        }
+        cards.push(numeric_card("PCOUNT", 0, "number of group parameters"));
+        cards.push(numeric_card("GCOUNT", 1, "number of groups"));
+        for (keyword, value) in extra {
+            cards.push(assemble(&format!("{keyword:<8}= {value}"), ""));
+        }
+        let mut out = Vec::new();
+        write_header(&mut out, &cards);
+        let start = out.len();
+        out.extend_from_slice(data);
+        pad_to_record(&mut out, start);
+        out
+    }
+
+    fn optimize_extension_fixture(
+        bitpix: i64,
+        axes: &[u64],
+        data: &[u8],
+        extra: &[(&str, &str)],
+    ) -> (Vec<u8>, Vec<u8>, Options) {
+        let mut original = Vec::new();
+        empty_primary(&mut original);
+        original.extend_from_slice(&image_extension(bitpix, axes, data, extra));
+        let opts = options(true);
+        let mut candidate = Vec::new();
+        optimize(&original, &mut candidate, &opts).expect("the fixture should be rewritten");
+        (original, candidate, opts)
+    }
+
+    fn replace_candidate_card(
+        candidate: &mut [u8],
+        hdu_index: usize,
+        keyword: &str,
+        replacement: [u8; CARD],
+    ) {
+        let hdus = scan(candidate).expect("the unmodified candidate parses");
+        let header = &hdus[hdu_index].header;
+        let card_index = header
+            .cards
+            .iter()
+            .position(|card| card.keyword() == keyword)
+            .unwrap_or_else(|| panic!("missing candidate card {keyword}"));
+        let offset = header.start + card_index * CARD;
+        candidate[offset..offset + CARD].copy_from_slice(&replacement);
+    }
+
+    fn insert_candidate_card(candidate: &mut [u8], hdu_index: usize, card: [u8; CARD]) {
+        let hdus = scan(candidate).expect("the unmodified candidate parses");
+        let header = &hdus[hdu_index].header;
+        let end = (header.start..header.start + header.bytes)
+            .step_by(CARD)
+            .find(|offset| candidate[*offset..*offset + 8] == *b"END     ")
+            .expect("the candidate header has END");
+        assert!(
+            end + 2 * CARD <= header.start + header.bytes,
+            "fixture header has room for one inserted card"
+        );
+        candidate[end..end + CARD].copy_from_slice(&card);
+        candidate[end + CARD..end + 2 * CARD].copy_from_slice(&assemble("END", ""));
+    }
+
+    fn assert_verify_rejects(original: &[u8], candidate: &[u8], opts: &Options, reason: &str) {
+        let error =
+            verify(original, candidate, opts).expect_err("the corrupted candidate must fail");
+        assert!(
+            error.to_string().contains(reason),
+            "expected refusal mentioning {reason:?}, got {error}"
+        );
+    }
+
     #[test]
     fn an_image_hdu_becomes_a_compressed_table_that_round_trips() {
         // 100 rows of 200 int16 samples: large enough that the tiles outweigh the
@@ -1211,12 +1613,23 @@ mod tests {
     }
 
     #[test]
-    fn a_random_groups_primary_is_refused() {
-        let original = image_hdu(16, &[8, 4], &sample(16, 4, 8), &[("GROUPS", "T")]);
+    fn a_legal_random_groups_primary_is_refused() {
+        let axis2 = 4096u64;
+        let pcount = 17u64;
+        let gcount = 3u64;
+        let data_len = 2 * gcount * (pcount + axis2);
+        let data = vec![0x5a; data_len as usize];
+        let original = image_hdu(
+            16,
+            &[0, axis2],
+            &data,
+            &[("GROUPS", "T"), ("PCOUNT", "17"), ("GCOUNT", "3")],
+        );
         let opts = options(true);
         let mut candidate = Vec::new();
         let err = optimize(&original, &mut candidate, &opts).expect_err("random groups");
         assert!(err.to_string().contains("GROUPS"), "{err}");
+        assert!(candidate.is_empty());
     }
 
     #[test]
@@ -1225,7 +1638,7 @@ mod tests {
         let opts = options(true);
         let mut candidate = Vec::new();
         let err = optimize(&original, &mut candidate, &opts).expect_err("a scaled image");
-        assert!(err.to_string().contains("BSCALE"), "{err}");
+        assert!(err.to_string().contains("BZERO"), "{err}");
     }
 
     #[test]
@@ -1267,6 +1680,219 @@ mod tests {
         assert_eq!(header.int("ZTILE1"), None);
         assert_eq!(header.count("NAXIS"), 1);
         assert_eq!(header.count("ZTILE1"), 0);
+    }
+
+    #[test]
+    fn one_p_descriptor_limit_is_the_exact_signed_32_bit_maximum() {
+        let maximum = i32::MAX as u64;
+        assert_eq!(MAX_P_DESCRIPTOR_VALUE, maximum);
+        assert_eq!(p_descriptor_value(0, "count").unwrap(), 0);
+        assert_eq!(p_descriptor_value(maximum, "count").unwrap(), i32::MAX);
+        assert_eq!(
+            p_descriptor_value(maximum, "heap offset").unwrap(),
+            i32::MAX
+        );
+        let first_unrepresentable = maximum.checked_add(1).unwrap();
+        for field in ["count", "heap offset"] {
+            let error = p_descriptor_value(first_unrepresentable, field)
+                .expect_err("2^31 cannot be represented by a signed P descriptor");
+            assert!(error.to_string().contains("1P descriptor"), "{error}");
+            assert!(error.to_string().contains("2147483647"), "{error}");
+        }
+    }
+
+    #[test]
+    fn generated_table_cards_match_the_primary_and_float_extension_contracts() {
+        let int_data = sample(16, 120, 256);
+        let (int_original, int_candidate, opts) =
+            optimize_primary_fixture(16, &[256, 120], &int_data, &[]);
+        let int_hdus = scan(&int_candidate).expect("integer candidate parses");
+        let int_table = &int_hdus[1];
+        assert_eq!(int_table.header.truth("ZSIMPLE"), Some(true));
+        assert!(!int_table.header.has("ZTENSION"));
+        assert_eq!(int_table.header.truth("ZEXTEND"), Some(true));
+        assert_eq!(int_table.header.text("EXTNAME"), Some("COMPRESSED_IMAGE"));
+        assert!(int_table
+            .header
+            .text("TFORM1")
+            .is_some_and(|form| { form.starts_with("1PB(") && form.ends_with(')') }));
+        assert_eq!(int_table.header.int("GCOUNT"), Some(1));
+        assert!(!int_table.header.has("THEAP"));
+        assert!(!int_table.header.has("ZSCALE"));
+        assert!(!int_table.header.has("ZZERO"));
+        verify(&int_original, &int_candidate, &opts).expect("integer generated cards verify");
+
+        let float_data = sample(-32, 64, 128);
+        let (float_original, float_candidate, opts) =
+            optimize_extension_fixture(-32, &[128, 64], &float_data, &[("EXTNAME", "'SCI'")]);
+        let float_hdus = scan(&float_candidate).expect("float candidate parses");
+        let float_table = &float_hdus[1];
+        assert_eq!(float_table.header.text("ZTENSION"), Some("IMAGE"));
+        assert!(!float_table.header.has("ZSIMPLE"));
+        assert_eq!(float_table.header.text("ZNAME1"), Some("NOISEBIT"));
+        assert_eq!(float_table.header.int("ZVAL1"), Some(0));
+        assert_eq!(float_table.header.text("EXTNAME"), Some("SCI"));
+        assert_eq!(float_table.header.int("GCOUNT"), Some(1));
+        assert!(!float_table.header.has("THEAP"));
+        assert!(!float_table.header.has("ZSCALE"));
+        assert!(!float_table.header.has("ZZERO"));
+        verify(&float_original, &float_candidate, &opts).expect("float generated cards verify");
+    }
+
+    #[test]
+    fn verify_rejects_a_wrong_tform1() {
+        let data = sample(16, 120, 256);
+        let (original, mut candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        replace_candidate_card(
+            &mut candidate,
+            1,
+            "TFORM1",
+            string_card("TFORM1", "1QB(999)", ""),
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "TFORM1");
+    }
+
+    #[test]
+    fn verify_rejects_a_primary_table_with_the_wrong_z_kind_role() {
+        let data = sample(16, 120, 256);
+        let (original, mut candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        insert_candidate_card(
+            &mut candidate,
+            1,
+            string_card("ZTENSION", "IMAGE", "wrong role for a primary image"),
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "ZTENSION");
+    }
+
+    #[test]
+    fn verify_rejects_an_image_extension_table_with_the_wrong_z_kind_role() {
+        let data = sample(-32, 64, 128);
+        let (original, mut candidate, opts) =
+            optimize_extension_fixture(-32, &[128, 64], &data, &[("EXTNAME", "'SCI'")]);
+        insert_candidate_card(
+            &mut candidate,
+            1,
+            boolean_card("ZSIMPLE", true, "wrong role"),
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "ZSIMPLE");
+    }
+
+    #[test]
+    fn verify_rejects_a_changed_zextend_card() {
+        let data = sample(16, 120, 256);
+        let (original, mut candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        replace_candidate_card(
+            &mut candidate,
+            1,
+            "ZEXTEND",
+            boolean_card("ZEXTEND", false, "changed"),
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "ZEXTEND");
+    }
+
+    #[test]
+    fn verify_rejects_changed_float_quantization_cards() {
+        let data = sample(-32, 64, 128);
+        let (original, candidate, opts) = optimize_primary_fixture(-32, &[128, 64], &data, &[]);
+        for (keyword, replacement) in [
+            ("ZNAME1", string_card("ZNAME1", "BLOCKED", "changed")),
+            ("ZVAL1", numeric_card("ZVAL1", 1, "changed")),
+        ] {
+            let mut corrupted = candidate.clone();
+            replace_candidate_card(&mut corrupted, 1, keyword, replacement);
+            assert_verify_rejects(
+                &original,
+                &corrupted,
+                &opts,
+                "floating-point tables require ZNAME1",
+            );
+        }
+    }
+
+    #[test]
+    fn verify_rejects_an_invented_or_changed_extname() {
+        let data = sample(16, 120, 256);
+        let (original, mut candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        replace_candidate_card(
+            &mut candidate,
+            1,
+            "EXTNAME",
+            string_card("EXTNAME", "OTHER", "changed default"),
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "EXTNAME");
+    }
+
+    #[test]
+    fn verify_rejects_zscale_and_zzero_cards() {
+        let data = sample(-32, 64, 128);
+        let (original, candidate, opts) = optimize_primary_fixture(-32, &[128, 64], &data, &[]);
+        for (keyword, card) in [
+            ("ZSCALE", numeric_card("ZSCALE", 1, "must not be generated")),
+            ("ZZERO", numeric_card("ZZERO", 0, "must not be generated")),
+        ] {
+            let mut corrupted = candidate.clone();
+            insert_candidate_card(&mut corrupted, 1, card);
+            assert_verify_rejects(&original, &corrupted, &opts, keyword);
+        }
+    }
+
+    #[test]
+    fn verify_rejects_an_explicit_theap_card() {
+        let data = sample(16, 120, 256);
+        let (original, candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        let rows = scan(&candidate).unwrap()[1].header.int("NAXIS2").unwrap();
+        let mut corrupted = candidate;
+        insert_candidate_card(
+            &mut corrupted,
+            1,
+            numeric_card("THEAP", rows * 8, "explicit default heap offset"),
+        );
+        assert_verify_rejects(&original, &corrupted, &opts, "THEAP");
+    }
+
+    #[test]
+    fn verify_rejects_a_nonidentity_gcount_without_a_large_fixture() {
+        let axes = [1024u64, 10];
+        let data = vec![0u8; (axes[0] * axes[1] * 2) as usize];
+        let (original, mut candidate, opts) = optimize_primary_fixture(16, &axes, &data, &[]);
+        let hdus = scan(&candidate).expect("candidate parses before GCOUNT corruption");
+        let table = &hdus[1];
+        let single_group_bytes =
+            8 * table.header.int("NAXIS2").unwrap() + table.header.int("PCOUNT").unwrap();
+        assert!(
+            single_group_bytes * 2 <= RECORD as i64,
+            "corruption should remain parseable"
+        );
+        replace_candidate_card(
+            &mut candidate,
+            1,
+            "GCOUNT",
+            numeric_card("GCOUNT", 2, "corrupted for verifier regression"),
+        );
+        assert!(
+            scan(&candidate).is_ok(),
+            "the mutated file is still structurally walkable"
+        );
+        assert_verify_rejects(&original, &candidate, &opts, "GCOUNT");
+    }
+
+    #[test]
+    fn verify_rejects_negative_signed_p_descriptor_fields() {
+        let data = sample(16, 120, 256);
+        let (original, candidate, opts) = optimize_primary_fixture(16, &[256, 120], &data, &[]);
+        let hdus = scan(&candidate).expect("candidate parses before descriptor corruption");
+        let descriptor = hdus[1].data_start;
+        for offset in [0usize, 4usize] {
+            let mut corrupted = candidate.clone();
+            corrupted[descriptor + offset..descriptor + offset + 4]
+                .copy_from_slice(&i32::MIN.to_be_bytes());
+            assert_verify_rejects(
+                &original,
+                &corrupted,
+                &opts,
+                "negative count or heap offset",
+            );
+        }
     }
 
     #[test]

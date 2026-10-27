@@ -37,6 +37,130 @@ RECORD = 2880
 CARD = 80
 
 
+# Registered compression types are convention-recognized independently of
+# whether a particular oracle build can decode them. Astropy/CFITSIO currently
+# decodes these five types; any future registered type absent from this set is
+# reported as "not evaluated", never as a convention failure.
+REGISTERED_CODECS = {"GZIP_1", "GZIP_2", "RICE_1", "PLIO_1", "HCOMPRESS_1"}
+ORACLE_DECODED_CODECS = set(REGISTERED_CODECS)
+STANDARD_BITPIX = {8, 16, 32, 64, -32, -64}
+
+
+def fits_float_storage_bytes(array, bitpix):
+    """Return IEEE samples in FITS big-endian storage order, without arithmetic."""
+    dtype = {-32: np.dtype(">f4"), -64: np.dtype(">f8")}.get(bitpix)
+    if dtype is None:
+        raise ValueError("BITPIX %r is not a FITS floating-point width" % bitpix)
+    values = np.asarray(array)
+    if values.dtype.kind != "f" or values.dtype.itemsize != dtype.itemsize:
+        raise ValueError(
+            "expected %s-bit float samples for BITPIX %d, got %s"
+            % (dtype.itemsize * 8, bitpix, values.dtype)
+        )
+    # A byte-order conversion is a representation operation: same-width IEEE
+    # floats are byte-swapped, not compared numerically or normalised. In
+    # particular, NaN payloads and the sign bit of zero remain observable.
+    return values.astype(dtype, copy=True).tobytes(order="C")
+
+
+def convention_codec_problem(codec, bitpix):
+    """Return only FITS convention violations, independently of writer policy."""
+    if bitpix is None:
+        return "ZBITPIX is missing or not an integer"
+    if bitpix not in STANDARD_BITPIX:
+        return "unsupported FITS ZBITPIX %r" % bitpix
+    if codec not in REGISTERED_CODECS:
+        return "unregistered FITS ZCMPTYPE %r" % codec
+    # The convention check recognizes GZIP_1, GZIP_2, RICE_1, PLIO_1 and
+    # HCOMPRESS_1. It does not impose tzim's codec choice or decoder coverage.
+    return None
+
+
+def convention_codec_evaluation(codec, bitpix, decoded_codecs=None):
+    """Return ``evaluated`` or ``not evaluated`` separately from convention errors."""
+    problem = convention_codec_problem(codec, bitpix)
+    if problem:
+        return "convention failure", problem
+    if decoded_codecs is None:
+        decoded_codecs = ORACLE_DECODED_CODECS
+    if codec not in decoded_codecs:
+        return "not evaluated", "oracle does not evaluate the %s payload" % codec
+    return "evaluated", None
+
+
+def tzim_codec_policy_problem(codec, bitpix):
+    """The writer's current codec choice; deliberately not a convention test."""
+    if bitpix is None:
+        return "tzim writer policy cannot be checked without ZBITPIX"
+    if bitpix not in STANDARD_BITPIX:
+        return "tzim writer policy cannot be checked for unsupported ZBITPIX %r" % bitpix
+    expected = "GZIP_2" if bitpix < 0 else "GZIP_1"
+    if codec != expected:
+        return "tzim writer policy requires %s for BITPIX %d" % (expected, bitpix)
+    return None
+
+
+def oracle_self_check():
+    """Negative controls for bitwise floats and separate convention/policy rules."""
+    failures = []
+    for bitpix, positive_zero, negative_zero, nan_one, nan_two in (
+        (-32, "00000000", "80000000", "7fc00001", "7fc00002"),
+        (-64, "0000000000000000", "8000000000000000",
+         "7ff8000000000001", "7ff8000000000002"),
+    ):
+        dtype = {-32: np.dtype(">f4"), -64: np.dtype(">f8")}[bitpix]
+        cases = (
+            ("signed zero", positive_zero, negative_zero),
+            ("NaN payload", nan_one, nan_two),
+        )
+        for label, left_hex, right_hex in cases:
+            left = np.frombuffer(bytes.fromhex(left_hex), dtype=dtype)
+            right = np.frombuffer(bytes.fromhex(right_hex), dtype=dtype)
+            if not np.array_equal(left, right, equal_nan=True):
+                failures.append("%s %d-bit control is not numerically equal" % (label, dtype.itemsize * 8))
+            if fits_float_storage_bytes(left, bitpix) == fits_float_storage_bytes(right, bitpix):
+                failures.append("oracle missed a %s change at BITPIX %d" % (label, bitpix))
+        if convention_codec_problem("GZIP_1", bitpix) is not None:
+            failures.append("the convention check rejected legal GZIP_1 for BITPIX %d" % bitpix)
+        if tzim_codec_policy_problem("GZIP_1", bitpix) is None:
+            failures.append("the tzim policy check did not identify GZIP_1 for BITPIX %d" % bitpix)
+    if convention_codec_problem("GZIP_1", 0) is None:
+        failures.append("the convention check accepted unsupported BITPIX 0")
+
+    for codec in ("RICE_1", "PLIO_1", "HCOMPRESS_1"):
+        if convention_codec_problem(codec, 16) is not None:
+            failures.append("the convention check rejected registered codec %s" % codec)
+        status, detail = convention_codec_evaluation(codec, 16)
+        if status != "evaluated" or detail is not None:
+            failures.append("registered codec %s was not evaluated without convention failure" % codec)
+        simulated_status, simulated_detail = convention_codec_evaluation(
+            codec, 16, decoded_codecs=ORACLE_DECODED_CODECS - {codec}
+        )
+        if simulated_status != "not evaluated" or not simulated_detail:
+            failures.append("undecoded registered codec %s was not reported as not evaluated" % codec)
+        if tzim_codec_policy_problem(codec, 16) is None:
+            failures.append("the tzim policy check accepted non-tzim codec %s" % codec)
+
+    if convention_codec_problem("GZIP_2", 16) is not None:
+        failures.append("the convention check rejected integer GZIP_2")
+    status, detail = convention_codec_evaluation("GZIP_2", 16)
+    if status != "evaluated" or detail is not None:
+        failures.append("integer GZIP_2 was not evaluated as convention-compliant")
+    if tzim_codec_policy_problem("GZIP_2", 16) is None:
+        failures.append("the tzim policy check accepted integer GZIP_2")
+    if convention_codec_problem("UNKNOWN_CODEC", 16) is None:
+        failures.append("the convention check accepted an unregistered codec")
+
+    if failures:
+        return failures
+    print("oracle self-check: signed-zero and distinct-NaN-payload controls detected at 32/64 bits")
+    print("oracle self-check: legal GZIP_1 float passes convention but fails tzim policy")
+    print("oracle self-check: RICE_1/PLIO_1/HCOMPRESS_1 are convention-recognized and rejected by tzim policy")
+    print("oracle self-check: a registered codec without decoder coverage is reported separately as not evaluated")
+    print("oracle self-check: integer GZIP_2 passes convention but fails tzim policy")
+    return []
+
+
 # ---------------------------------------------------------------------------
 # A FITS walker, so that "copied verbatim" can be checked on the bytes
 # ---------------------------------------------------------------------------
@@ -209,6 +333,22 @@ def build_fixtures(root):
         }
     )
 
+    # A float array with bit patterns that numeric equality hides: both signs
+    # of zero and distinct quiet-NaN payloads, surrounded by compressible zeros.
+    words = np.zeros((64, 64), dtype=np.dtype(">u4"))
+    words.flat[:6] = [0x00000000, 0x80000000, 0x7FC00001, 0x7FC00002, 0xFFC00001, 0xFFC00002]
+    float_specials = words.view(np.dtype(">f4"))
+    with open(os.path.join(root, "float-specials.fits"), "wb") as handle:
+        handle.write(hdu_bytes(fits.PrimaryHDU(float_specials)))
+    cases.append(
+        {
+            "name": "float-specials.fits",
+            "expect": "rewritten",
+            "arrays": [(0, 1)],
+            "tables": [1],
+        }
+    )
+
     # 3. A multi-HDU file: an unknown extension between two images, plus a table.
     #    Everything that is not an image must come through byte for byte — the
     #    mistake that lost five HST files in the measurement.
@@ -292,7 +432,7 @@ def build_fixtures(root):
     )
     with open(os.path.join(root, "scaled.fits"), "wb") as handle:
         handle.write(scaled)
-    cases.append({"name": "scaled.fits", "expect": "skipped", "reason": "BSCALE"})
+    cases.append({"name": "scaled.fits", "expect": "skipped", "reason": "BZERO"})
 
     return cases
 
@@ -321,10 +461,21 @@ def run(binary, path):
 
 
 def check_rewritten(path, original, case):
-    """Everything a rewritten file has to satisfy, checked by astropy."""
+    """Check rewritten files, returning failures separately from unevaluated codecs."""
     problems = []
+    not_evaluated = []
     before = walk(original)
     after = walk(open(path, "rb").read())
+    not_evaluated_targets = set()
+    for target in case.get("tables", []):
+        if target >= len(after) or after[target].card("ZIMAGE") is None:
+            continue
+        codec = after[target].text("ZCMPTYPE")
+        bitpix = after[target].int("ZBITPIX")
+        status, detail = convention_codec_evaluation(codec, bitpix)
+        if status == "not evaluated":
+            not_evaluated_targets.add(target)
+            not_evaluated.append("HDU %d: %s" % (target, detail))
     expected_shapes = {}
     for source, target in case.get("arrays", []):
         array = case["expected"][source]
@@ -338,6 +489,8 @@ def check_rewritten(path, original, case):
         #     compared with `equal_nan`, because NaN is not a difference of
         #     content — that mistake produced 136 false failures in the audit.
         for source, target in case.get("arrays", []):
+            if target in not_evaluated_targets:
+                continue
             expected = case["expected"][source]
             if expected is None:
                 problems.append("the fixture's HDU %d has no data" % source)
@@ -360,8 +513,22 @@ def check_rewritten(path, original, case):
             if got.shape != expected.shape:
                 problems.append("shape %s -> %s" % (expected.shape, got.shape))
             elif expected.dtype.kind == "f":
-                if not np.array_equal(got, expected, equal_nan=True):
-                    problems.append("the float array changed")
+                bitpix = before[source].int("BITPIX")
+                try:
+                    expected_bytes = fits_float_storage_bytes(expected, bitpix)
+                    got_bytes = fits_float_storage_bytes(got, bitpix)
+                except (TypeError, ValueError) as error:
+                    problems.append("float storage-byte comparison failed: %s" % error)
+                    continue
+                if got_bytes != expected_bytes:
+                    first = next(
+                        (i for i, (a, b) in enumerate(zip(expected_bytes, got_bytes)) if a != b),
+                        min(len(expected_bytes), len(got_bytes)),
+                    )
+                    problems.append(
+                        "float FITS-storage bytes differ (%d -> %d bytes, first difference at %d)"
+                        % (len(expected_bytes), len(got_bytes), first)
+                    )
             elif got.astype(expected.dtype).tobytes() != expected.tobytes():
                 problems.append("the integer array changed")
 
@@ -385,9 +552,12 @@ def check_rewritten(path, original, case):
                 continue
             codec = table.text("ZCMPTYPE")
             bitpix = table.int("ZBITPIX")
-            want = "GZIP_2" if bitpix < 0 else "GZIP_1"
-            if codec != want:
-                problems.append("%s for ZBITPIX %d" % (codec, bitpix))
+            convention_status, convention_detail = convention_codec_evaluation(codec, bitpix)
+            if convention_status == "convention failure":
+                problems.append("FITS convention: %s" % convention_detail)
+            policy_problem = tzim_codec_policy_problem(codec, bitpix)
+            if policy_problem:
+                problems.append("tzim writer policy: %s" % policy_problem)
             if table.text("TTYPE1") != "COMPRESSED_DATA":
                 problems.append("HDU %d has no COMPRESSED_DATA column" % target)
             if table.int("NAXIS1") != 8:
@@ -452,7 +622,7 @@ def check_rewritten(path, original, case):
         elif before[source].raw != after[target].raw:
             problems.append("HDU %d was not copied verbatim" % source)
 
-    return problems
+    return problems, not_evaluated
 
 
 def main():
@@ -461,10 +631,17 @@ def main():
     parser.add_argument("--keep", action="store_true", help="keep the fixtures")
     args = parser.parse_args()
 
+    self_check_failures = oracle_self_check()
+    for failure in self_check_failures:
+        print("oracle self-check failure: %s" % failure)
+    if self_check_failures:
+        return 1
+
     binary = os.path.abspath(args.binary)
     root = tempfile.mkdtemp(prefix="tzim-fits-")
     cases = build_fixtures(root)
     failures = 0
+    not_evaluated_count = 0
 
     for case in cases:
         path = os.path.join(root, case["name"])
@@ -481,6 +658,7 @@ def main():
 
         code, output = run(binary, path)
         problems = []
+        fixture_not_evaluated = []
         if code != 0:
             problems.append("exit code %d: %s" % (code, output.strip()))
 
@@ -492,7 +670,8 @@ def main():
                 problems.append(
                     "the file grew: %d -> %d bytes" % (len(original), len(after))
                 )
-            problems += check_rewritten(path, original, case)
+            rewritten_problems, fixture_not_evaluated = check_rewritten(path, original, case)
+            problems += rewritten_problems
         else:
             if case["expect"] not in output:
                 problems.append("the report never uses %r" % case["expect"])
@@ -504,7 +683,10 @@ def main():
         print("%-14s %-16s %s" % (case["name"], case["expect"], "ok" if not problems else "FAIL"))
         for problem in problems:
             print("    %s" % problem)
+        for item in fixture_not_evaluated:
+            print("    not evaluated: %s" % item)
         failures += bool(problems)
+        not_evaluated_count += len(fixture_not_evaluated)
 
     if args.keep:
         print("\nfixtures kept in", root)
@@ -514,7 +696,8 @@ def main():
         os.rmdir(root)
 
     print()
-    print("%d fixture(s), %d failure(s)" % (len(cases), failures))
+    print("%d fixture(s), %d failure(s), %d codec check(s) not evaluated" %
+          (len(cases), failures, not_evaluated_count))
     print("read back by astropy %s (CFITSIO underneath); fitsverify has not run"
           % astropy.__version__)
     return 1 if failures else 0

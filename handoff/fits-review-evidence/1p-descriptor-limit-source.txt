@@ -1,0 +1,56 @@
+FITS Standard v4.0, official NASA FITS Support Office PDF:
+  https://fits.gsfc.nasa.gov/standard40/fits_standard40aa-le.pdf
+  §7.3.5 (Variable-length arrays): a P descriptor consists of two 32-bit
+  signed integer values; negative values have no defined meaning in the Standard.
+  §5.2.3 (Thirty-two-bit integer): signed range is -2147483648 through
+  +2147483647. Therefore valid non-negative P count/heap-offset values are
+  exactly 0..=2147483647.
+
+Pinned gate source:
+  CFITSIO commit: 113781d8aa442cf8d3c27295d9084674b8b039f2
+  archive SHA-256: d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e
+  docs/cfitsio.tex distinguishes 32-bit P from 64-bit Q and calls unsigned P a
+  local extension. utilities/fvrf_data.c warns if either P length or offset is
+  greater than 2147483647. This confirms the gate's interoperable threshold.
+
+Exact source excerpt from the pinned archive (utilities/fvrf_data.c):
+   360
+   361	                sprintf(errtmp,"Row #%ld Col.#%d: ",jl,icol);
+   362		        wrtferr(out,errtmp,&status,2);
+   363	            }
+   364	            if (!isVarQFormat[i])
+   365	            {
+   366	               if (!largeVarLengthWarned && length > 2147483647)
+   367	               {
+   368	                  strcpy(errmes,"Var row length exceeds maximum 32-bit signed int.  ");
+   369	                  sprintf(errtmp,"First detected for Row #%ld Column #%d",jl,icol);
+   370	                  strcat(errmes,errtmp);
+   371	                  wrtwrn(out,errmes,0);
+   372	                  largeVarLengthWarned = 1;
+   373	               }
+   374	               if (!largeVarOffsetWarned && toffset > 2147483647)
+   375	               {
+   376	                  strcpy(errmes,"Heap offset for var length row exceeds maximum 32-bit signed int.  ");
+   377	                  sprintf(errtmp,"First detected for Row #%ld Column #%d",jl,icol);
+   378	                  strcat(errmes,errtmp);
+   379	                  wrtwrn(out,errmes,0);
+   380	                  largeVarOffsetWarned = 1;
+
+CFITSIO documentation excerpt (docs/cfitsio.tex):
+  1303
+  1304	CFITSIO provides easy-to-use support for reading and writing data in
+  1305	variable length fields of a binary table. The variable length columns
+  1306	have TFORMn keyword values of the form `1Pt(len)' or `1Qt(len)' where `t'
+  1307	is the data type code (e.g., I, J, E, D, etc.) and `len' is an integer
+  1308	specifying the maximum length of the vector in the table.  The 'P' type
+  1309	variable length columns use 32-bit array length and byte offset values, whereas
+  1310	the 'Q' type columns use 64-bit values, which may be required when dealing
+  1311	with large arrays.  CFITSIO supports a local convention that interprets
+  1312	the 'P' type descriptors as unsigned 32-bit integers, which provides
+  1313	a factor of 2 greater range for the array length or heap address than
+  1314	is possible with 32-bit 'signed' integers.  Note, however, that other software
+  1315	packages may not support this convention, and may be unable to read thees
+  1316	extended range variable length records.
+  1317
+  1318	If the value
+  1319	of `len' is not specified when the table is created (e.g., if the TFORM

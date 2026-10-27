@@ -1,0 +1,63 @@
+test_short_descriptor_is_a_recorded_tile_inflation_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_short_descriptor_is_a_recorded_tile_inflation_refusal) ... /tmp/tzim-fits-heasarc-before.py:1088: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-1jxc_9vz/short-descriptor.fits'>
+  for hdu in parse(open(path, "rb").read()):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+test_unparseable_funpack_reconstruction_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_funpack_reconstruction_is_a_recorded_refusal) ... /tmp/tzim-fits-heasarc-before.py:1183: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-zlurzta4/original.fits'>
+  original_bytes = open(original_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before.py:1184: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-zlurzta4/candidate.fits'>
+  candidate_bytes = open(candidate_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before.py:1342: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-zlurzta4/funpack-output.fits'>
+  rebuilt = parse(open(unpacked, "rb").read())
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+test_unparseable_tzim_candidate_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_tzim_candidate_is_a_recorded_refusal) ... /tmp/tzim-fits-heasarc-before.py:1183: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-8izc5mu6/original.fits'>
+  original_bytes = open(original_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/tmp/tzim-fits-heasarc-before.py:1184: ResourceWarning: unclosed file <_io.BufferedReader name='/tmp/tzim-fits-gate-tests-8izc5mu6/candidate.fits'>
+  candidate_bytes = open(candidate_path, "rb").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ERROR
+
+======================================================================
+ERROR: test_short_descriptor_is_a_recorded_tile_inflation_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_short_descriptor_is_a_recorded_tile_inflation_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 123, in test_short_descriptor_is_a_recorded_tile_inflation_refusal
+    tiles, refusal = GATE.safe_inflate_tiles(
+                     ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'fits_heasarc_under_test' has no attribute 'safe_inflate_tiles'
+
+======================================================================
+ERROR: test_unparseable_funpack_reconstruction_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_funpack_reconstruction_is_a_recorded_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 85, in test_unparseable_funpack_reconstruction_is_a_recorded_refusal
+    result = GATE.check_candidate(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before.py", line 1342, in check_candidate
+    rebuilt = parse(open(unpacked, "rb").read())
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before.py", line 275, in parse
+    raise ValueError("shorter than one 2880-byte record")
+ValueError: shorter than one 2880-byte record
+
+======================================================================
+ERROR: test_unparseable_tzim_candidate_is_a_recorded_refusal (test_fits_heasarc.ControlledCandidateRefusalTests.test_unparseable_tzim_candidate_is_a_recorded_refusal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/user/tzim/.github/scripts/test_fits_heasarc.py", line 53, in test_unparseable_tzim_candidate_is_a_recorded_refusal
+    result = GATE.check_candidate(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before.py", line 1186, in check_candidate
+    candidate = parse(candidate_bytes)
+                ^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/tzim-fits-heasarc-before.py", line 275, in parse
+    raise ValueError("shorter than one 2880-byte record")
+ValueError: shorter than one 2880-byte record
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.005s
+
+FAILED (errors=3)
