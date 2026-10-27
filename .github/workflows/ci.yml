@@ -136,12 +136,10 @@ jobs:
         shell: bash
         run: exit 1
 
-  # FITS is the first format whose verification cannot live in the binary: the
-  # array round trip is checked by `astropy`, which is CFITSIO underneath — the
-  # same tile decoder `fpack` and `funpack` call (fits-audit §8.1). `fitsverify`
-  # has not run anywhere, and fits-audit §8.3 says the handler may not ship before
-  # it does; this job is the stand-in that makes "not yet" a measured statement
-  # rather than an assumption (#70).
+  # FITS has a separate Astropy/CFITSIO check for the array round trip. This is
+  # not the HEASARC release gate: `fits-heasarc.yml` runs fitsverify and funpack
+  # on exact-SHA candidates. Keep their evidence and guarantees distinct; neither
+  # job alone is full-format admission or a runtime read-back in every binary.
   fits-oracle:
     name: fits oracle (astropy)
     runs-on: ubuntu-latest

@@ -1,14 +1,13 @@
 name: fits-heasarc
 
-# The gate `docs/fits-audit.md` §8.3 and `docs/guarantees.md` §4.12 both name and
-# neither has run: `fitsverify` and `funpack` are HEASARC's own tools, and no
-# candidate produced by this program has ever been read by them (#71).
+# Manual dispatch defaults to the exact-SHA end-to-end path: this HEASARC gate,
+# the measurement workflow, and one bundle. Other workflows can call just this
+# gate through `workflow_call`; pull requests run it directly.
 #
-# This job is deliberately **not** a merge requirement yet: it is a release
-# gate, and a required check that has never been green is the failure mode #68
-# exists to prevent. It is also not allowed to be *quiet*: there is no
-# `continue-on-error` anywhere in it, and a tool that cannot be built, a warning
-# from `fitsverify` or a header that does not diff clean fails the run.
+# This is a release gate, not a required merge check. It is not allowed to be
+# quiet: there is no `continue-on-error` anywhere in it, and a tool that cannot
+# be built, a warning from `fitsverify` or a header that does not diff clean
+# fails the run.
 #
 # The tools are built from one archive whose SHA-256 is pinned below, so the
 # provenance of the verifier is a hash and not a package manager's mood:
@@ -18,14 +17,47 @@ name: fits-heasarc
 # see the `HEASARC_NOTE` step.
 
 on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full 40-character commit SHA for both final-SHA gates and the evidence bundle.
+        required: true
+        type: string
+      bundle:
+        description: Also run the measurement gate and create the final-SHA evidence bundle.
+        required: false
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      sha:
+        description: Exact commit to check out for the final-SHA gate.
+        required: true
+        type: string
+      bundle:
+        description: Also run measurement and evidence bundling from a caller.
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      requested_sha:
+        description: SHA requested by the caller.
+        value: ${{ jobs.heasarc.outputs.requested_sha }}
+      checked_out_sha:
+        description: SHA actually checked out by the gate.
+        value: ${{ jobs.heasarc.outputs.checked_out_sha }}
+      result:
+        description: The original HEASARC gate job result.
+        value: ${{ jobs.heasarc.outputs.gate_result }}
   pull_request:
     paths:
       - "src/formats/fits.rs"
       - "tests/integration.rs"
       - "tests/common/mod.rs"
       - ".github/scripts/fits-heasarc.py"
+      - ".github/scripts/evidence-bundle.py"
+      - ".github/scripts/test_evidence_bundle.py"
       - ".github/workflows/fits-heasarc.yml"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -52,9 +84,69 @@ jobs:
     name: fitsverify gate
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    outputs:
+      requested_sha: ${{ steps.identity.outputs.requested_sha }}
+      checked_out_sha: ${{ steps.identity.outputs.checked_out_sha }}
+      gate_result: ${{ steps.gate_outcome.outputs.result }}
+    env:
+      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Record exact run identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED_SHA,,}"
+          checked_out="$(git rev-parse HEAD)"
+          echo "REQUESTED_SHA=$requested" >> "$GITHUB_ENV"
+          echo "CHECKED_OUT_SHA=$checked_out" >> "$GITHUB_ENV"
+          echo "requested_sha=$requested" >> "$GITHUB_OUTPUT"
+          echo "checked_out_sha=$checked_out" >> "$GITHUB_OUTPUT"
+          mkdir -p "${RUNNER_TEMP}/evidence"
+          {
+            echo "requested SHA: $requested"
+            echo "checked-out SHA: $checked_out"
+            echo "run ID: ${GITHUB_RUN_ID}"
+            echo "run attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          } | tee "${RUNNER_TEMP}/evidence/run-identity.txt"
+          python3 - "$requested" "$checked_out" > "${RUNNER_TEMP}/evidence/run-identity.json" <<'PY'
+          import json
+          import os
+          import sys
+
+          requested, checked_out = sys.argv[1:]
+          print(json.dumps({
+              "requested_sha": requested,
+              "checked_out_sha": checked_out,
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_url": "%s/%s/actions/runs/%s" % (
+                  os.environ["GITHUB_SERVER_URL"],
+                  os.environ["GITHUB_REPOSITORY"],
+                  os.environ["GITHUB_RUN_ID"],
+              ),
+          }, indent=2, sort_keys=True))
+          PY
+          if [ "$requested" != "$checked_out" ]; then
+            echo "::error::requested SHA does not match the checked-out commit"
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Record Rust compiler identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            rustc -Vv
+            cargo -V
+          } | tee "${RUNNER_TEMP}/evidence/rust-toolchain.txt"
 
       - name: Record the provenance of the tools
         shell: bash
@@ -82,6 +174,13 @@ jobs:
           cp "${RUNNER_TEMP}/fits-gate-regressions.log" "${RUNNER_TEMP}/evidence/"
           echo "test exit: ${status}" | tee -a "${RUNNER_TEMP}/evidence/fits-gate-regressions.log"
           exit "$status"
+
+      - name: Test the deterministic final-SHA bundle builder
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 -m unittest discover -s .github/scripts -p 'test_evidence_bundle.py' -v 2>&1 \
+            | tee "${RUNNER_TEMP}/evidence/evidence-bundle-tests.log"
 
       - name: Fetch the pinned archive and verify its SHA-256
         shell: bash
@@ -250,10 +349,15 @@ jobs:
             ( cd "$dir" && sha256sum * 2>/dev/null | grep -v ' checksums.txt$' > checksums.txt || true )
           fi
           {
-            echo "commit: ${GITHUB_SHA}"
-            echo "run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "requested SHA: ${REQUESTED_SHA:-unknown}"
+            echo "checked-out SHA: ${CHECKED_OUT_SHA:-unknown}"
+            echo "run ID: ${GITHUB_RUN_ID}"
+            echo "run attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } >> "$dir/run.txt"
-          sha256sum "$dir"/* | sed "s|$dir/||"
+          ( cd "$dir" && find . -type f ! -name workflow-SHA256SUMS -print0 | sort -z | \
+              xargs -0 sha256sum > workflow-SHA256SUMS )
+          cat "$dir/workflow-SHA256SUMS"
 
       - name: Step summary
         if: always()
@@ -292,6 +396,12 @@ jobs:
           bytes=$(wc -c < "$report")
           echo "relayed ${bytes} bytes to the pull request"
 
+      - name: Capture gate result for caller
+        if: always()
+        id: gate_outcome
+        shell: bash
+        run: echo "result=${{ job.status }}" >> "$GITHUB_OUTPUT"
+
       - name: Keep the evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -302,3 +412,140 @@ jobs:
           path: |
             ${{ runner.temp }}/evidence
             ${{ runner.temp }}/fits-heasarc.log
+
+  measurement:
+    name: measurement reproducibility gate
+    if: ${{ inputs.bundle }}
+    uses: ./.github/workflows/measure-repro.yml
+    with:
+      sha: ${{ inputs.sha || github.sha }}
+    secrets: inherit
+
+  bundle:
+    name: build and verify final-SHA evidence bundle
+    if: ${{ always() && inputs.bundle }}
+    needs: [heasarc, measurement]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Record bundle-run identity
+        id: identity
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED_SHA,,}"
+          checked_out="$(git rev-parse HEAD)"
+          mkdir -p evidence-inputs evidence-output
+          echo "requested_sha=$requested" >> "$GITHUB_OUTPUT"
+          echo "checked_out_sha=$checked_out" >> "$GITHUB_OUTPUT"
+          python3 - "$requested" "$checked_out" > evidence-output/bundle-run-identity.json <<'PY'
+          import json
+          import os
+          import sys
+
+          requested, checked_out = sys.argv[1:]
+          print(json.dumps({
+              "requested_sha": requested,
+              "checked_out_sha": checked_out,
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_url": "%s/%s/actions/runs/%s" % (
+                  os.environ["GITHUB_SERVER_URL"],
+                  os.environ["GITHUB_REPOSITORY"],
+                  os.environ["GITHUB_RUN_ID"],
+              ),
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Download both gate evidence artifacts
+        if: always()
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: "*-evidence"
+          path: evidence-inputs
+          merge-multiple: false
+
+      - name: Build and internally verify the evidence bundle
+        if: always()
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+          HEASARC_RESULT: ${{ needs.heasarc.result }}
+          MEASUREMENT_RESULT: ${{ needs.measurement.result }}
+          HEASARC_REQUESTED_SHA: ${{ needs.heasarc.outputs.requested_sha }}
+          HEASARC_CHECKED_OUT_SHA: ${{ needs.heasarc.outputs.checked_out_sha }}
+          MEASUREMENT_REQUESTED_SHA: ${{ needs.measurement.outputs.requested_sha }}
+          MEASUREMENT_CHECKED_OUT_SHA: ${{ needs.measurement.outputs.checked_out_sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/evidence-bundle.py \
+            --input-root evidence-inputs \
+            --source-root "$GITHUB_WORKSPACE" \
+            --output-dir evidence-output \
+            --repository "$GITHUB_REPOSITORY" \
+            --requested-sha "$REQUESTED_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --heasarc-result "$HEASARC_RESULT" \
+            --measurement-result "$MEASUREMENT_RESULT" \
+            --heasarc-requested-sha "$HEASARC_REQUESTED_SHA" \
+            --heasarc-checked-out-sha "$HEASARC_CHECKED_OUT_SHA" \
+            --measurement-requested-sha "$MEASUREMENT_REQUESTED_SHA" \
+            --measurement-checked-out-sha "$MEASUREMENT_CHECKED_OUT_SHA"
+
+      - name: Keep the overall run failed if either gate failed
+        if: always()
+        shell: bash
+        env:
+          HEASARC_RESULT: ${{ needs.heasarc.result }}
+          MEASUREMENT_RESULT: ${{ needs.measurement.result }}
+        run: |
+          set -euo pipefail
+          if [ "$HEASARC_RESULT" != "success" ] || [ "$MEASUREMENT_RESULT" != "success" ]; then
+            echo "::error::final-SHA gates are not both successful (HEASARC=$HEASARC_RESULT, measurement=$MEASUREMENT_RESULT)"
+            exit 1
+          fi
+
+      - name: Add bundle summary
+        if: always()
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+          BUNDLE_CHECKED_OUT_SHA: ${{ steps.identity.outputs.checked_out_sha }}
+          HEASARC_RESULT: ${{ needs.heasarc.result }}
+          MEASUREMENT_RESULT: ${{ needs.measurement.result }}
+        run: |
+          {
+            echo "### Final-SHA evidence bundle"
+            echo ""
+            echo "- Requested SHA: ${REQUESTED_SHA}"
+            echo "- Bundle checkout SHA: ${BUNDLE_CHECKED_OUT_SHA}"
+            echo "- HEASARC gate: **${HEASARC_RESULT}**"
+            echo "- Measurement gate: **${MEASUREMENT_RESULT}**"
+            echo "- Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            if [ -f evidence-output/bundle-self-check.txt ]; then
+              cat evidence-output/bundle-self-check.txt
+            else
+              echo "Bundle creation did not finish; inspect job logs and gate artifacts."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the final-SHA evidence bundle and sidecars
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-sha-evidence-bundle
+          path: evidence-output
+          retention-days: 90
+          if-no-files-found: error

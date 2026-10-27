@@ -31,6 +31,22 @@ name: measure-repro
 # numbers, reported — not a new pre-registration.
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        description: Exact commit to check out for the final-SHA measurement gate.
+        required: true
+        type: string
+    outputs:
+      requested_sha:
+        description: SHA requested by the caller.
+        value: ${{ jobs.measure.outputs.requested_sha }}
+      checked_out_sha:
+        description: SHA actually checked out by the gate.
+        value: ${{ jobs.measure.outputs.checked_out_sha }}
+      result:
+        description: The original measurement comparison result.
+        value: ${{ jobs.measure.outputs.gate_result }}
   pull_request:
     paths:
       - ".github/scripts/fits-measure.py"
@@ -40,7 +56,6 @@ on:
       - ".github/scripts/measure-requirements.txt"
       - ".github/scripts/test_measure.py"
       - ".github/workflows/measure-repro.yml"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -60,8 +75,51 @@ jobs:
     name: re-run the published measurements
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    outputs:
+      requested_sha: ${{ steps.identity.outputs.requested_sha }}
+      checked_out_sha: ${{ steps.identity.outputs.checked_out_sha }}
+      gate_result: ${{ steps.gate_outcome.outputs.result }}
+    env:
+      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+
+      - name: Record exact run identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED_SHA,,}"
+          checked_out="$(git rev-parse HEAD)"
+          echo "REQUESTED_SHA=$requested" >> "$GITHUB_ENV"
+          echo "CHECKED_OUT_SHA=$checked_out" >> "$GITHUB_ENV"
+          echo "requested_sha=$requested" >> "$GITHUB_OUTPUT"
+          echo "checked_out_sha=$checked_out" >> "$GITHUB_OUTPUT"
+          mkdir -p evidence
+          python - "$requested" "$checked_out" <<'PY' > evidence/run-identity.json
+          import json
+          import os
+          import sys
+
+          requested, checked_out = sys.argv[1:]
+          print(json.dumps({
+              "requested_sha": requested,
+              "checked_out_sha": checked_out,
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_url": "%s/%s/actions/runs/%s" % (
+                  os.environ["GITHUB_SERVER_URL"],
+                  os.environ["GITHUB_REPOSITORY"],
+                  os.environ["GITHUB_RUN_ID"],
+              ),
+          }, indent=2, sort_keys=True))
+          PY
+          if [ "$requested" != "$checked_out" ]; then
+            echo "::error::requested SHA does not match the checked-out commit"
+            exit 1
+          fi
 
       - name: Record what the runner is
         run: |
@@ -69,7 +127,11 @@ jobs:
           mkdir -p evidence
           {
             echo "runner: ubuntu-24.04, $(nproc) cpu, $(free -g | awk '/Mem:/ {print $2}') GiB"
-            echo "workflow: measure-repro, run ${{ github.run_id }}, commit ${{ github.sha }}"
+            echo "workflow: measure-repro"
+            echo "requested SHA: ${REQUESTED_SHA}"
+            echo "checked-out SHA: ${CHECKED_OUT_SHA}"
+            echo "run ID: ${GITHUB_RUN_ID}, attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             uname -a
             date -u
           } | tee evidence/runner.txt
@@ -159,6 +221,12 @@ jobs:
             tail -c 12000 "${RUNNER_TEMP}/measure-repro.log" > "${RUNNER_TEMP}/measure-repro-report.md" || true
           fi
           bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/measure-repro-report.md" measure-repro failure full
+
+      - name: Capture gate result for caller
+        if: always()
+        id: gate_outcome
+        shell: bash
+        run: echo "result=${{ job.status }}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         if: always()

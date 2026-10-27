@@ -94,6 +94,32 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
     def test_o1_zero_gcount_is_a_recorded_refusal(self):
         self.assert_o1_invalid_card_is_a_controlled_refusal("GCOUNT", 0, "o1-gcount-zero")
 
+    def test_corpus_manifest_binds_fixture_hash_and_exact_run_identity(self):
+        fixture = self.root / "manifest-fixture.fits"
+        fixture.write_bytes(b"pinned fixture bytes")
+        case = {"name": fixture.name, "expect": "untouched", "status": "skipped"}
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUESTED_SHA": "a" * 40,
+                "CHECKED_OUT_SHA": "a" * 40,
+                "GITHUB_RUN_ID": "1234",
+                "GITHUB_RUN_ATTEMPT": "2",
+            },
+        ):
+            manifest = GATE.corpus_manifest(str(self.root), [case])
+
+        self.assertEqual(manifest["requested_sha"], "a" * 40)
+        self.assertEqual(manifest["checked_out_sha"], "a" * 40)
+        self.assertEqual(manifest["run_id"], "1234")
+        self.assertEqual(manifest["run_attempt"], "2")
+        self.assertEqual(manifest["fixtures"][0]["bytes"], len(b"pinned fixture bytes"))
+        self.assertEqual(
+            manifest["fixtures"][0]["sha256"],
+            hashlib.sha256(b"pinned fixture bytes").hexdigest(),
+        )
+        self.assertFalse(manifest["external_astropy"]["included"])
+
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):
         original = self.write_basic_image()
         candidate = self.root / "candidate.fits"
