@@ -1449,19 +1449,18 @@ mod tests {
         (original, candidate, opts)
     }
 
-    fn image_extension(
-        bitpix: i64,
-        axes: &[u64],
-        data: &[u8],
-        extra: &[(&str, &str)],
-    ) -> Vec<u8> {
+    fn image_extension(bitpix: i64, axes: &[u64], data: &[u8], extra: &[(&str, &str)]) -> Vec<u8> {
         let mut cards = vec![
             string_card("XTENSION", "IMAGE", "image extension"),
             numeric_card("BITPIX", bitpix, "array data type"),
             numeric_card("NAXIS", axes.len() as i64, "number of array dimensions"),
         ];
         for (index, axis) in axes.iter().enumerate() {
-            cards.push(numeric_card(&format!("NAXIS{}", index + 1), *axis as i64, ""));
+            cards.push(numeric_card(
+                &format!("NAXIS{}", index + 1),
+                *axis as i64,
+                "",
+            ));
         }
         cards.push(numeric_card("PCOUNT", 0, "number of group parameters"));
         cards.push(numeric_card("GCOUNT", 1, "number of groups"));
@@ -1523,14 +1522,9 @@ mod tests {
         candidate[end + CARD..end + 2 * CARD].copy_from_slice(&end_card());
     }
 
-    fn assert_verify_rejects(
-        original: &[u8],
-        candidate: &[u8],
-        opts: &Options,
-        reason: &str,
-    ) {
-        let error = verify(original, candidate, opts)
-            .expect_err("the corrupted candidate must fail");
+    fn assert_verify_rejects(original: &[u8], candidate: &[u8], opts: &Options, reason: &str) {
+        let error =
+            verify(original, candidate, opts).expect_err("the corrupted candidate must fail");
         assert!(
             error.to_string().contains(reason),
             "expected refusal mentioning {reason:?}, got {error}"
@@ -1694,7 +1688,10 @@ mod tests {
         assert_eq!(MAX_P_DESCRIPTOR_VALUE, maximum);
         assert_eq!(p_descriptor_value(0, "count").unwrap(), 0);
         assert_eq!(p_descriptor_value(maximum, "count").unwrap(), i32::MAX);
-        assert_eq!(p_descriptor_value(maximum, "heap offset").unwrap(), i32::MAX);
+        assert_eq!(
+            p_descriptor_value(maximum, "heap offset").unwrap(),
+            i32::MAX
+        );
         let first_unrepresentable = maximum.checked_add(1).unwrap();
         for field in ["count", "heap offset"] {
             let error = p_descriptor_value(first_unrepresentable, field)
@@ -1715,9 +1712,10 @@ mod tests {
         assert!(!int_table.header.has("ZTENSION"));
         assert_eq!(int_table.header.truth("ZEXTEND"), Some(true));
         assert_eq!(int_table.header.text("EXTNAME"), Some("COMPRESSED_IMAGE"));
-        assert!(int_table.header.text("TFORM1").is_some_and(|form| {
-            form.starts_with("1PB(") && form.ends_with(')')
-        }));
+        assert!(int_table
+            .header
+            .text("TFORM1")
+            .is_some_and(|form| { form.starts_with("1PB(") && form.ends_with(')') }));
         assert_eq!(int_table.header.int("GCOUNT"), Some(1));
         assert!(!int_table.header.has("THEAP"));
         assert!(!int_table.header.has("ZSCALE"));
@@ -1725,12 +1723,8 @@ mod tests {
         verify(&int_original, &int_candidate, &opts).expect("integer generated cards verify");
 
         let float_data = sample(-32, 64, 128);
-        let (float_original, float_candidate, opts) = optimize_extension_fixture(
-            -32,
-            &[128, 64],
-            &float_data,
-            &[("EXTNAME", "'SCI'")],
-        );
+        let (float_original, float_candidate, opts) =
+            optimize_extension_fixture(-32, &[128, 64], &float_data, &[("EXTNAME", "'SCI'")]);
         let float_hdus = scan(&float_candidate).expect("float candidate parses");
         let float_table = &float_hdus[1];
         assert_eq!(float_table.header.text("ZTENSION"), Some("IMAGE"));
@@ -1773,13 +1767,13 @@ mod tests {
     #[test]
     fn verify_rejects_an_image_extension_table_with_the_wrong_z_kind_role() {
         let data = sample(-32, 64, 128);
-        let (original, mut candidate, opts) = optimize_extension_fixture(
-            -32,
-            &[128, 64],
-            &data,
-            &[("EXTNAME", "'SCI'")],
+        let (original, mut candidate, opts) =
+            optimize_extension_fixture(-32, &[128, 64], &data, &[("EXTNAME", "'SCI'")]);
+        insert_candidate_card(
+            &mut candidate,
+            1,
+            boolean_card("ZSIMPLE", true, "wrong role"),
         );
-        insert_candidate_card(&mut candidate, 1, boolean_card("ZSIMPLE", true, "wrong role"));
         assert_verify_rejects(&original, &candidate, &opts, "ZSIMPLE");
     }
 
@@ -1799,8 +1793,7 @@ mod tests {
     #[test]
     fn verify_rejects_changed_float_quantization_cards() {
         let data = sample(-32, 64, 128);
-        let (original, candidate, opts) =
-            optimize_primary_fixture(-32, &[128, 64], &data, &[]);
+        let (original, candidate, opts) = optimize_primary_fixture(-32, &[128, 64], &data, &[]);
         for (keyword, replacement) in [
             ("ZNAME1", string_card("ZNAME1", "BLOCKED", "changed")),
             ("ZVAL1", numeric_card("ZVAL1", 1, "changed")),
@@ -1832,8 +1825,7 @@ mod tests {
     #[test]
     fn verify_rejects_zscale_and_zzero_cards() {
         let data = sample(-32, 64, 128);
-        let (original, candidate, opts) =
-            optimize_primary_fixture(-32, &[128, 64], &data, &[]);
+        let (original, candidate, opts) = optimize_primary_fixture(-32, &[128, 64], &data, &[]);
         for (keyword, card) in [
             ("ZSCALE", numeric_card("ZSCALE", 1, "must not be generated")),
             ("ZZERO", numeric_card("ZZERO", 0, "must not be generated")),
@@ -1867,14 +1859,20 @@ mod tests {
         let table = &hdus[1];
         let single_group_bytes =
             8 * table.header.int("NAXIS2").unwrap() + table.header.int("PCOUNT").unwrap();
-        assert!(single_group_bytes * 2 <= RECORD as i64, "corruption should remain parseable");
+        assert!(
+            single_group_bytes * 2 <= RECORD as i64,
+            "corruption should remain parseable"
+        );
         replace_candidate_card(
             &mut candidate,
             1,
             "GCOUNT",
             numeric_card("GCOUNT", 2, "corrupted for verifier regression"),
         );
-        assert!(scan(&candidate).is_ok(), "the mutated file is still structurally walkable");
+        assert!(
+            scan(&candidate).is_ok(),
+            "the mutated file is still structurally walkable"
+        );
         assert_verify_rejects(&original, &candidate, &opts, "GCOUNT");
     }
 
