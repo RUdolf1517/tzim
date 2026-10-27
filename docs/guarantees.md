@@ -86,7 +86,7 @@ would suggest more than any of these delivers.
 
 | Level | Meaning | Used for |
 | --- | --- | --- |
-| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip and ZIP payloads (`flate2`, `miniz_oxide`), **JPEG pixels** (`jpeg-decoder`) when this build has the `jpeg-v1` feature, and the whole corpus through Pillow in the `third-party` job |
+| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip, ZIP and FITS tile payloads (`flate2`, `miniz_oxide`), **JPEG pixels** (`jpeg-decoder`) when this build has the `jpeg-v1` feature, and the whole corpus through Pillow in the `third-party` job |
 | **V2 — separate reader** | Code in this repository, used only for reading, that the writer's output never passes through. | *Not used anywhere today.* |
 | **V3 — shared implementation** | The candidate is parsed by the same reader the handler used to build it. | ZIP structure, ICO directory, JPEG markers and JPEG coefficients |
 
@@ -96,6 +96,7 @@ would suggest more than any of these delivers.
 | gzip | V3 (own header walker) | **V1** (`flate2` decodes both bodies; CRC-32 and ISIZE recomputed) | A header misreading; the payload comparison would still be independent |
 | zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
+| FITS | V3 (own card/header/table reader) | **V1** for external gzip inflation and CRC-32/ISIZE checks, **plus V3** for the shared `shuffle`/`unshuffle` permutation | A symmetric byte-permutation error can survive the in-binary check; external astropy/HEASARC evidence is separate and run-scoped |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
 | TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; **shared `flate2`** for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none, so one `flate2` decode is compared with another `flate2` decode |
 | JPEG | V3 | **V3 for coefficients; V1 for pixels with the `jpeg-v1` feature**, and V1 for the whole corpus in CI (Pillow) | A published build (no `jpeg-v1`) can still miss a defect symmetric in our encoder and decoder; the CI comparison is what covers it there, and it does not run inside `verify` |
@@ -135,6 +136,12 @@ field by field (V3), which is where a layout mistake would show up, and the fuzz
 **For ZIP** the risk is smaller than it sounds: the structure is copied, not synthesized, so most bytes are
 compared literally; the payload of every entry is inflated independently and its CRC-32 recomputed from the
 decompressed bytes, which the writer cannot fake without also changing the content.
+
+**For FITS** the independence claim is deliberately mixed. `flate2` supplies an external gzip inflater and
+checks the gzip CRC-32/ISIZE, but the `GZIP_2` byte permutation is shared by the writer and the in-binary
+reader. A symmetric permutation defect is therefore a stated blind spot, not something to hide behind the
+label “V1”. The astropy oracle and the HEASARC `fitsverify`/`funpack` gate are external, run-scoped evidence;
+they are not a second decoder embedded in every user's invocation.
 
 ### 2.7 G4 — metadata removed on request
 
@@ -1004,21 +1011,25 @@ median < 1 % refuses it with the numbers on record.
 
 ### 4.12. FITS — tile-compressed image HDUs, v0.14, opt-in
 
-**Status: implemented in v0.14, behind two doors and both are shut by default.** The handler is compiled
+**Status: implemented in v0.14.0 and opt-in; both doors are shut by default.** The handler is compiled
 only with the `fits` cargo feature — it is **not** in `default`, because the release binary's size gate is
 its own measurement to the byte and this handler measures **+36 864 bytes** (36 KiB), which is
 [size-budget §3](size-budget.md#3-feature-matrix)'s measurement rather than an estimate — and it does nothing
-unless the run asks for it with `--fits-tile`. The second door is the
-one the measurement required: rewriting an uncompressed image HDU as a tile-compressed binary table turns an
-`IMAGE` HDU into a `BINTABLE`, and a pipeline that reads `NAXIS1` from an image does not expect that. The
-transformation is the same class of change as TIFF `Compression 1 → 8` in [§4.8](#48-tiff-classic-baseline-strips--v07),
-with a larger social footprint, so it is opt-in per run.
+unless the run asks for it with `--fits-tile`. The second door is the one the measurement required: rewriting
+an uncompressed image HDU as a tile-compressed binary table turns an `IMAGE` HDU into a `BINTABLE`, and a
+pipeline that reads `NAXIS1` from an image does not expect that. The transformation is the same class of change
+as TIFF `Compression 1 → 8` in [§4.8](#48-tiff-classic-baseline-strips--v07), with a larger social footprint,
+so it is opt-in per run. This is an implementation contract for the general opt-in release, not a claim of
+full FITS format admission or stability.
 
-**What the measurement decided** ([fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance),
-thresholds fixed before the run): rewriting an uncompressed image HDU saves a median **21.9 %** of the file
-(Q1 17.4 %, Q3 27.3 %) on **84.8 %** of a 178-file corpus, against a bar of 8 % and 15 %, and Tier 2 was
-admitted. Recompressing tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %** on 21 720 tiles and
-**does not ship** — a `ZIMAGE` table is copied verbatim.
+**Historical audit, not current release/performance evidence.** The historical audit reported median **21.9 %**
+on **84.8 %** of its 178-file sample and admitted Tier 2 under its written thresholds. Those figures and that
+admission are retained as history, not used to make a current release or performance claim. The owner has
+selected a general release with this implementation behind `--fits-tile`; investigation of current measurement
+differences and the missing supplemental samples remains necessary for full FITS admission. Recompressing
+tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %** in that historical run and **does not ship** — a
+`ZIMAGE` table is copied verbatim. See [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
+and [measurement status](measurement-status.md) for the limitations and open decisions.
 
 **Transformation.** One tier, and it is the only one.
 
@@ -1091,7 +1102,8 @@ otherwise:
 No byte offset elsewhere in the file has to be updated: FITS has no pointer table, so a shorter HDU moves
 what follows it and nothing points at the old position.
 
-**Verification** — structure **V3** (this repository's own card, header and table reader), content **V1**
+**Verification** — structure **V3** (this repository's own card, header and table reader), content **V1 for
+external gzip inflation and CRC-32/ISIZE checks plus V3 for the shared `shuffle`/`unshuffle` permutation**
 (`flate2` inflates the candidate's tiles and the bytes are compared):
 
 1. both files parse, every HDU begins and ends on a 2880-byte boundary, and the HDU count is unchanged
@@ -1111,15 +1123,17 @@ what follows it and nothing points at the old position.
 7. `candidate.len() < input.len()`. `--strip-metadata` removes nothing here, so an equal-size candidate is
    never written.
 
-**A second implementation, and one that has not run.** The checks above are made by code in this repository,
-which is exactly the position [§2.6](#26-verification-independence) calls weak. `.github/scripts/fits-oracle.py`
-reads every candidate back with **`astropy`** — CFITSIO underneath, the same tile decoder `fpack` and
-`funpack` call — compares the arrays bit for bit (`equal_nan` on floats, because NaN is not a difference of
-content), checks that each `ZIMAGE` table declares the codec its `ZBITPIX` requires, and compares every
-copied HDU with the original's bytes. It runs in the `fits oracle (astropy)` job on every pull request.
-**`fitsverify` has still not run anywhere**, so [fits-audit §8.3](fits-audit.md#83-the-decision)'s gate
-stands and nothing here licenses a release: this section describes code that exists and is tested, not a
-claim about a version that has shipped.
+**External checks, with their scope stated.** The checks above are made by code in this repository, which is
+exactly the position [§2.6](#26-verification-independence) calls weak. `.github/scripts/fits-oracle.py` reads
+every candidate back with **`astropy`** — CFITSIO underneath, the same tile decoder `fpack` and `funpack` call —
+compares integer arrays by bytes and floating-point arrays by their FITS storage bytes (including NaN payloads
+and signed zero), checks that each `ZIMAGE` table declares the codec required by tzim's writer policy without
+calling that policy a universal convention rule, and compares every copied HDU with the original's bytes. It
+runs in the `fits oracle (astropy)` job on every pull request. The separate HEASARC gate runs `fitsverify` and
+`funpack` in CI; a successful gate is evidence for its exact SHA, not a second decoder embedded in every user's
+invocation and not full format admission. Current run identities, retained-evidence limits and the remaining
+release decisions are tracked in [measurement status](measurement-status.md). This describes the opt-in
+implementation and its evidence scope, not full FITS admission or a stability guarantee for every FITS file.
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`
@@ -1136,11 +1150,10 @@ observation — `OBJECT`, `OBSERVER`, `DATE-OBS`, `HISTORY`, `COMMENT` are the o
 and the compression convention has no field that exists only for human convenience. The flag is accepted and
 the output is the same as without it, as for zlib in [§4.10](#410-zlib-rfc-1950--v09).
 
-**Expected gain, as measured:** median **21.9 %** per file, 17 827 200 bytes → 13 343 040 across the 151
-accepted files of the corpus (25.2 % of the bytes, because the large files sit above the median), by corpus
-`reproject` 41.9 %, `cfitsio` 42.1 %, `drizzlepac` 21.9 %, and **`astropy` −7.1 %**: its test images are so
-small that the compressed table's header outweighs its tiles. **13 of the 151 files grow** under the
-transformation, so the handler keeps the smaller bytes and reports `already_optimal` — which is the case
+**Expected gain:** no current release/performance promise is made from the historical FITS audit. Its figures
+are retained in [fits-audit §8.2](fits-audit.md#82-the-result), including the small-image and missing-survey
+limitations. The historical run included **13 of 151 files that grew** under the transformation; the handler
+keeps the smaller bytes and reports `already_optimal` — which is the case
 `fits_a_file_that_would_grow_is_left_alone` and the oracle's `tiny.fits` both pin.
 
 ### 4.13. DICOM — contract written, not implemented

@@ -321,16 +321,27 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
 
 The tag is cut from `main` only after each test fails before its fix and passes after it.
 
-### v0.13+ — the queue after this
+### v0.14 — opt-in FITS and reproducible validation — **implemented**
 
-The queue is empty, and that is the result rather than an omission. What is left was examined and refused
-with a reason, so the next release does not start with "add another format":
+- **FITS behind two switches** (#70): the `fits` feature is outside the default release build and the
+  transformation requires `--fits-tile`; every non-target HDU is copied and non-smaller candidates are refused.
+- **External and reproducible checks** (#71/#72): candidate-specific astropy and HEASARC gates, controlled
+  refusals, full-SHA corpus identities and retained measurement reports. Their exact run and evidence limits
+  are in [measurement status](measurement-status.md).
+- **Scope stated without a stability shortcut**: historical FITS figures are not release/performance evidence;
+  the current differences, unavailable Zopfli cells and supplemental samples remain disclosed. This release
+  does not claim full FITS or PDF admission.
+
+### v0.14+ — the queue after this
+
+The v0.14 implementation queue is complete. Full-format admission and other examined candidates remain separate
+follow-ups rather than reasons to smuggle another format into this release:
 
 | Candidate | State | Why |
 | --- | --- | --- |
 | FLAC | refused, measured | 0.4 % for a quarter of the binary |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
-| FITS | implemented, opt-in | an uncompressed image HDU rewritten as a tile-compressed table saves a median 21.9 % on 84.8 % of the corpus ([guarantees §4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in), [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)); behind `--fits-tile` and the `fits` feature, which is not in `default`; release still gated on `fitsverify` |
+| FITS full-admission follow-up | open, outside the v0.14.0 opt-in release | The v0.14.0 handler is behind `--fits-tile` and the non-default `fits` feature. Historical audit figures are not release/performance evidence; current differences and the supplemental survey sample remain open for full admission. Candidate-specific HEASARC evidence and limitations are tracked in [measurement status](measurement-status.md) |
 | DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
 | PDF | refused after measurement | the permitted slice covers 45.7 % of a 2 208-file corpus and saves a median 0.08 %; repacking would save 20.1 % and is forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |

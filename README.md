@@ -11,18 +11,19 @@
 [![binary](https://img.shields.io/badge/static%20binary-1024%20KiB-111111?style=flat-square)](docs/size-budget.md)
 [![license](https://img.shields.io/badge/license-MIT-0b3d91?style=flat-square)](LICENSE)
 
-[Install](#install) · [Usage](#usage) · [Formats](#formats) · [Why tzim](#why-tzim) · [Guarantees](#guarantees) · [Docs](#documentation)
+[Install](#install) · [Usage](#usage) · [Formats](#formats) · [Why tzim](#why-tzim) · [Compare](#choose-the-right-tool) · [Guarantees](#guarantees) · [Docs](#documentation)
 
 </div>
 
 ---
 
-`oxipng`, `jpegoptim` and `advzip` make a file smaller. Tzim makes it smaller **or leaves it alone** — and when
-it cannot prove the result is the same information, it refuses and says why. Every format has a written
-contract, every candidate is checked by an independent decoder against that contract, and a file is replaced
-only if the new one is smaller — metadata is removed only if you type `--strip-metadata`. There is no quality
-setting, no "visually lossless" mode and no automatic fallback to a lossy path, because none of them are in
-the program.
+Tzim makes a file smaller **or leaves it alone**. Every supported format has a written preservation contract:
+a candidate replaces the original only when it is strictly smaller and passes that contract's checks. If a
+check fails or the format is outside the supported subset, the original stays byte-for-byte untouched and
+Tzim says why. Verification never reuses the encoder; decoder independence and the remaining blind spots are
+[stated per format](docs/guarantees.md#26-verification-independence), not hidden behind a blanket claim.
+Metadata is removed only if you type `--strip-metadata`. There is no quality setting, no "visually lossless"
+mode and no automatic fallback to a lossy path, because none of them are in the program.
 
 ```bash
 $ tzim ./photos -r
@@ -128,19 +129,37 @@ it the handler only says why it did nothing, because turning an `IMAGE` HDU into
 every reader that indexes `NAXIS1`. The `fits` cargo feature is the code: it is not in `default`, so a build
 that wants FITS is `cargo build --release --features fits`, and [size-budget §3](docs/size-budget.md#3-feature-matrix)
 measures what it costs: **+36 KiB**, which is enough to break the byte-exact gate on the default build. `--list-formats` names FITS only when the feature is compiled in.
+FITS is an opt-in implementation, not full format admission or a stability claim. Historical FITS audit figures
+are not current release/performance evidence; the remaining measurement and supplemental-sample limits are
+recorded in [measurement status](docs/measurement-status.md).
 
 ## Why tzim
 
 | | |
 | --- | --- |
 | **It refuses instead of guessing** | Progressive and arithmetic-coded JPEG, LZW TIFF, signed ZIPs, preset-dictionary zlib, BigTIFF: each is skipped with a precise reason and exit code 0. None of them is approximated. |
-| **It verifies with something other than its own writer** | PNG is decoded with the `png` crate, not with our encoder; gzip and zlib payloads are compared through `flate2`; JPEG is compared as coefficients, a condition that implies pixel identity. |
+| **Its verification does not reuse the encoder** | PNG pixels are decoded with the `png` crate; gzip and zlib payloads through `flate2`; JPEG coefficients with the project codec. Where the reader is independent and where code is shared are stated explicitly in [the verification matrix](docs/guarantees.md#26-verification-independence). |
 | **It writes nothing unless it is smaller** | Equal or larger candidate: discarded, file untouched, `already optimal`. |
 | **It is one static binary** | No C, no `unsafe` in our code, no shell-outs. Built with `panic = "abort"`, LTO and `opt-level = "s"`; the size is measured by CI on every pull request ([budget](docs/size-budget.md)). |
 | **It costs what it costs, measured** | `docs/benchmarks.md` compares the ratio, the wall clock and the memory against `oxipng`, `optipng`, `jpegtran` and `gzip -9` — including the rows where the other tool wins. |
 
-On PNG, `oxipng -o max` compresses better than this tool and the benchmarks say so plainly. What it does not
-do is tell you when it declined to touch a file, or keep a per-format contract it can be held to.
+## Choose the right tool
+
+All three tools below have lossless uses. This table compares scope and trade-offs; it is **not** a safety
+ranking.
+
+| Tool | Scope | Where it stands out | Trade-off |
+| --- | --- | --- | --- |
+| **Tzim** | PNG/APNG, JPEG, TIFF, gzip, ZIP, ICO/CUR and zlib | One command for mixed file trees, explicit per-format preservation contracts and a reason for every refusal | Not the ratio winner in the published PNG or JPEG comparison |
+| **oxipng** | PNG / APNG | Best PNG ratio in this comparison: `oxipng -o max --strip none` saved **26.80 %** against Tzim's **7.63 %** on the published small-file benchmark | One format family; that run used more CPU time and memory than Tzim |
+| **jpegtran** | JPEG | Lossless JPEG transformations and entropy optimization; `jpegtran -copy all -optimize` saved **6.51 %** against Tzim's **2.15 %** in the published mixed-scope JPEG row | Different preservation scope: it handles progressive JPEG, which Tzim refuses, and re-serialises markers, which Tzim copies verbatim |
+
+Versions, commands, timings, memory and corpus limitations are in
+[benchmarks §3.2](docs/benchmarks.md#32-against-the-established-tools). In particular, the JPEG percentages
+above are **not a like-for-like encoder comparison**.
+
+On PNG, choose `oxipng -o max` for the last percent of compression. Choose Tzim when the mixed-format
+workflow, written contracts and explicit refusals matter more than winning that ratio contest.
 
 ## Guarantees
 

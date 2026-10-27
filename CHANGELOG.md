@@ -11,6 +11,8 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-27
+
 ### Added
 
 - **FITS: an uncompressed image HDU becomes a tile-compressed table** (#70), behind two doors that are both
@@ -23,9 +25,12 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   permutation the convention specifies, quantisation off and stated in the header (`ZNAME1 = 'NOISEBIT'`,
   `ZVAL1 = 0`), every other HDU copied verbatim including `NonstandardExtHDU`s such as `HDRLET`, and an HDU
   carrying `CHECKSUM`/`DATASUM` refused rather than rewritten with a checksum that no longer matches. Verification
-  is this repository's own reader for structure and a gzip member's CRC-32 and `ISIZE` for content, with
-  `astropy` reading every candidate back in the `fits oracle` job. The contract is
-  [guarantees §4.12](docs/guarantees.md); the release is still gated on `fitsverify`, which has not run anywhere.
+  is this repository's own reader for structure and external gzip inflation/CRC-32/`ISIZE` for content, with
+  the shared permutation blind spot named in [guarantees §2.6](docs/guarantees.md#26-verification-independence).
+  `astropy` reads candidates back in the `fits oracle` job using FITS storage-byte comparison, and the separate
+  HEASARC `fitsverify`/`funpack` gate has successful candidate-specific runs recorded in
+  [measurement status](docs/measurement-status.md). The contract is [guarantees §4.12](docs/guarantees.md);
+  this is an opt-in implementation, not full FITS admission or a stability claim for every FITS file.
 - **`--info` states the JPEG verification level of the build it is in** (#66). The shipped binary verifies a
   JPEG candidate with the codec that wrote it, and [guarantees §2.6](docs/guarantees.md#26-verification-independence)
   has said so since v0.4 — but the tool did not, so a user could only learn it from the documentation. The line
@@ -57,6 +62,14 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ### Documentation
 
+- **Measurement acceptance clarified** ([status](docs/measurement-status.md)): the FITS gain is not a
+  proven lower bound for full-size survey images. The owner selected a general release with FITS opt-in,
+  not full format admission; historical FITS results are not release/performance evidence, and the historical
+  mismatch-stop exception is not retroactively approved. Current measurement differences remain under
+  investigation, supplemental samples remain required for full admission, and unavailable Zopfli cells remain
+  an explicit limitation. A durable evidence artifact is required before publication, but this documentation
+  update does not authorise a Release or change handler behaviour.
+
 - **`jpeg-decoder` at `opt-level = "s"` is measured, and it is not enough** ([size budget
   §3](docs/size-budget.md#3-feature-matrix)): the feature's cost falls from 118 784 to **102 400 bytes**, which
   still leaves the `jpeg-v1` build 32 768 bytes above the 1 049 440-byte condition issue #39 was approved
@@ -79,25 +92,27 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   rounding error. What repacking would buy is **20.1 %**, which is the price of the invariant stated in bytes.
   [guarantees §4.11](docs/guarantees.md#411-pdf--refused-after-measurement) keeps the contract and names it
   refused, as FLAC's did.
-- **FITS is admitted by measurement** (#59). [fits-audit §8](docs/fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
-  measured 178 files from `astropy`, `cfitsio`, `drizzlepac` and `reproject`. Rewriting an uncompressed image HDU
-  as a tile-compressed binary table saves a median **21.9 %** of the file (Q1 17.4 %, Q3 27.3 %) on **84.8 %** of
-  the corpus, against a bar of 8 % and 15 %, with every array compared bit for bit after the round trip;
-  recompressing tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %**, because the ones in the corpus are
-  already at roughly level 6. The first tier is admissible as an opt-in `--fits-tile`; the second does not ship.
-  The handler that follows from the admission is under `### Added` below.
+- **FITS implementation is opt-in; the historical audit is retained with limits** (#59).
+  [fits-audit §8](docs/fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) measured 178 files from
+  `astropy`, `cfitsio`, `drizzlepac` and `reproject` and reported a median **21.9 %** on **84.8 %** of that
+  historical sample. Those figures are audit history, not current release/performance evidence or full FITS
+  admission. Tier 2 (uncompressed images) is the historically admitted opt-in `--fits-tile` path; Tier 1
+  (recompressing existing tiles) does not ship. The owner selected a general opt-in release while leaving the
+  current differences and full-admission sample requirements open. The handler implementation is recorded
+  under `### Added` above.
 - **A correction the FITS audit earned:** the tile payload of `GZIP_1`/`GZIP_2` is a **gzip** member (RFC 1952,
   CRC-32 and `ISIZE`), not an RFC 1950 zlib stream as [fits-audit §0](docs/fits-audit.md#0-what-is-a-fact-here-and-what-had-to-be-re-read-from-the-source)
   had assumed, and the `GZIP_2` permutation is the decreasing order of significance the convention states. Both
   were marked "re-read before coding"; re-reading them is what produced the correction.
-- **The FITS run did not satisfy every step of #59, and says which.** `fitsverify` could not be installed, so no
-  candidate was checked by a program written by someone else — the round trip was compared with `astropy` and
-  every array bit for bit, which is stronger on content and weaker on independence, and
-  [fits-audit §4](docs/fits-audit.md#4-what-a-rewrite-may-change-tier-by-tier) gates Tier 2 on exactly that missing check. The
-  corpus is pinned by commit rather than by archive SHA-256, which pins the bytes more tightly than a hash of a
-  re-tarball but is not what the issue asked for. And the pre-registered clause "a single round-trip mismatch
-  ends the discussion" fired twice: both failures belong to the reference writer rather than to the transform,
-  and [fits-audit §8.2](docs/fits-audit.md#82-the-result) records that this distinction was made after the fact
+- **The historical FITS run did not satisfy every step of #59, and says which.** `fitsverify` was not run
+  (the handover reports no installation attempt), so the historical candidates lacked that external structural
+  check. The round trip used `astropy` numeric equality; that was not a bitwise proof of NaN payloads or signed
+  zero, and was not a substitute for the missing HEASARC gate. The current oracle and candidate-specific HEASARC
+  runs are recorded separately in [measurement status](docs/measurement-status.md). The corpus is pinned by
+  commit rather than by archive SHA-256, which pins the bytes more tightly than a hash of a re-tarball but is
+  not what the issue asked for. And the pre-registered clause "a single round-trip mismatch ends the discussion"
+  fired twice: both failures belong to the reference writer rather than to the transform, and
+  [fits-audit §8.2](docs/fits-audit.md#82-the-result) records that this distinction was made after the fact
   rather than before it.
 
 ### Errata for 0.12.1
