@@ -7,9 +7,11 @@ This is stage 1 for FITS, in the order the FLAC and PDF work established: the au
 the code only if the numbers justify it. FITS was not refused anywhere — it was simply absent from
 [formats](formats.md) §5, which is a gap this document closes one way or the other.
 
-**Status: not implemented, not measured.** No FITS code exists and `--list-formats` does not name the format.
-The contract in [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) says what an implementation
-would have to preserve; §8 below fixes the decision rule **before** the numbers exist.
+**Status of this document: historical stage-1 audit, with an implemented opt-in handler introduced in v0.14.0.**
+The implementation is behind the `fits` feature and `--fits-tile`; it is not in the default build. The contract
+in [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) records what the implementation must
+preserve, while §8 below preserves the decision rule and the historical numbers **before** the current release
+review. Those numbers are not current release/performance evidence and do not establish full FITS admission.
 
 Unlike the PDF audit, this one has a confidence problem that has to be stated up front rather than buried.
 
@@ -220,8 +222,9 @@ distribution (median, quartiles, share above zero) **separately for the two tier
 
 ### 8.1 What was actually run, and with what
 
-The measurement was made where `fpack`, `fitsverify` and `funpack` were not installable and no archive was
-reachable. The instrument is committed: [`.github/scripts/fits-measure.py`](../.github/scripts/fits-measure.py)
+The historical measurement used `astropy` instead of `fpack` and `funpack`; `fitsverify` was not run.
+The outgoing manager reported on 2026-10-26 that installation of `fitsverify` was not attempted during that
+measurement. Tool unavailability was not established by a retained installation log. The instrument is committed: [`.github/scripts/fits-measure.py`](../.github/scripts/fits-measure.py)
 reproduces the numbers in §8.2 from the checkouts listed below — it is not part of the build and not a
 dependency of the crate, and its header carries the exact `git clone` commands and the pinned commits. A number
 nobody can re-run is a claim; the script is what makes this one a measurement. The substitutes are named,
@@ -230,7 +233,7 @@ because a substitute is only honest when it is named:
 | Needed | Used instead | Why it is equivalent enough |
 | --- | --- | --- |
 | `fpack -g` | `astropy.io.fits.CompImageHDU` | it calls the same CFITSIO tile writer (`imcomp_compress_tile`) that `fpack` calls, with `quantize_level=0` so nothing is quantised |
-| `funpack` | reading the candidate back with `astropy` and comparing **every array bit for bit** (`array_equal` with `equal_nan`, after checking shape) | a stronger check than `funpack`'s own output comparison |
+| `funpack` | reading the candidate back with `astropy` and comparing numeric arrays (`array_equal` with `equal_nan`, after checking shape) | a content check, not a bitwise proof of NaN payloads or signed zero and not a substitute for the external HEASARC gate |
 | `fitsverify -l` | not run | the structural checks are the ones this document's contract would make; they are not a second implementation, and this is the one gap in the run. **A gap, not a substitute**: no candidate here was checked by a program written by someone else |
 | published survey products | none obtainable | see the corpus note below; this is the run's real limitation |
 
@@ -248,9 +251,15 @@ bytes and an archive hash does not survive a re-tarball:
 The fourth row of the pre-registered corpus — published survey products — could not be obtained, and that is
 the honest weakness of this run: 122 of the 178 files are HST products from `drizzlepac`, but they are
 **sample cutouts of 10×10 to 100×100 pixels**, not the 4K×4K frames an archive serves. The gains measured here
-are gains on small images; large frames carry more context per tile and compress at least as well, so the
-number below is a floor rather than a ceiling — but it is not a measurement of survey data and is not quoted as
-one.
+apply to this accepted sample. No experiment or source establishes that larger frames compress at least as
+well: the former claim that 21.9 % is a lower bound is withdrawn. Generalisation to published full-size survey
+products remains untested.
+
+> **Evidence status (2026-10-26):** the outgoing manager reports that historical per-file outputs and the
+> temporary execution environment were not retained. The aggregates below have not been independently
+> re-run in this review. Script links exist above, but environment pinning and retained execution evidence
+> are incomplete. See [measurement acceptance status](measurement-status.md) for open criteria, owner
+> decisions and coder assignments #71/#72. These tables do not establish full protocol compliance.
 
 ### 8.2 The result
 
@@ -279,8 +288,10 @@ numbers arrive:
 - both failures are in **what the reference writer produced**, not in the transform this contract specifies.
   `zerowidth.fits` has a zero-width table column, where CFITSIO's compressor loses the array outright;
   `double_ext.fits` carries an `EXTNAMX` card the compressed form has no keyword to carry back;
-- neither can arise from a handler that checks what it writes, because the contract refuses both inputs
-  **before a candidate exists** — they are in issue #70's fixture list as required refusals, not accepted cases;
+- these are not examples of the contract refusing two eligible image inputs **before a candidate exists**:
+  `zerowidth.fits` is a `BINTABLE`, while the `EXTNAMX` discrepancy concerns an extension that the handler
+  copies in `double_ext.fits`. They are reference-writer/instrument findings, not evidence that tzim accepted
+  and corrupted an eligible image HDU, and they must not be used to broaden the accepted subset;
 - the clause was written against a mismatch between an original and a *correct* candidate. A mismatch caused by
   the measuring instrument is a finding about the instrument.
 
@@ -298,26 +309,36 @@ and the rule was fixed before the number existed.
 
 ### 8.3 The decision
 
-Applying the rule as written, not as it would be convenient to read:
+The numerical thresholds below were met on the counted subset. The original protocol as a whole was
+**not** followed: §8.2 records two round-trip mismatches and a post-hoc exception. In the handover of
+2026-10-26, the outgoing manager stated that this exception was their decision alone, without owner
+approval. The admission recorded below is therefore a historical managerial decision, not evidence of
+compliance with the pre-registered rule. On 2026-10-27 the owner selected **2C**: these historical results
+are not used for acceptance or release/performance claims, and the exception is not retroactively approved.
+Separately, **1A** selects a general release with the implementation opt-in, not full FITS admission.
 
-- **Tier 2 clears both bars**: median **21.9 % ≥ 8 %**, and **84.8 % of the corpus ≥ 15 %**, with zero
-  round-trip mismatches in the counted set. Tier 2 is therefore **admitted**, and ships **opt-in behind
-  `--fits-tile`** as the rule says — never in `default`, because a pipeline that reads `NAXIS1` from an `IMAGE`
-  HDU does not expect a `BINTABLE` there.
+- **Historical Tier 2 result**: median **21.9 % ≥ 8 %**, and **84.8 % of the corpus ≥ 15 %**, with zero
+  round-trip mismatches in the counted set. The audit recorded Tier 2 as admitted and opt-in behind
+  `--fits-tile`, never in `default`, because a pipeline that reads `NAXIS1` from an `IMAGE` HDU does not
+  expect a `BINTABLE` there. This is a historical record, not a current performance or full-admission claim.
+
+Execution and evidence for this release gate are tracked in [issue #71](https://github.com/RUdolf1517/tzim/issues/71).
 
 One condition is attached that the rule did not ask for but §4 of this document did: **Tier 2 may not ship
 before `fitsverify` has accepted its output and `funpack` has produced a header that `diff`s clean against the
-original.** That is the gate §4 names and this run could not perform, because the HEASARC tools were not
-installable. The admission is therefore a green light for **writing** the handler (issue #70), not for releasing
-it: until that check runs somewhere with `fpack`/`fitsverify`/`funpack`, the honest status is "admitted, not
-implemented, and not yet verified by a second implementation".
+original.** The historical run could not perform that gate. Subsequent candidate-specific CI runs have executed
+the HEASARC gate; their exact SHAs, run identities and retained-evidence limits are recorded in
+[measurement status](measurement-status.md), not retroactively attributed to this historical measurement. A green
+external gate is not, by itself, full format admission or release approval. The v0.14.0 scope is an opt-in
+implementation; current measurement differences and supplemental-sample requirements remain open for full
+admission.
 - **Tier 1 does not clear its bar**: median **0.00 % < 2 %**, so it does **not** ship on by default.
 - FITS is therefore **not refused**: the audit asked which tier survives a measurement, and one did.
 
-What that does *not* mean: no handler exists, `--list-formats` does not name the format, and nothing about this
-result is a claim of support. It means the next issue is worth opening with the
-[formats §4](formats.md#4-admission-criteria-for-a-new-format) checklist attached, and that the size it will be
-judged against is now a number instead of an adjective.
+What that does *not* mean: the historical result is not a current support, stability, performance, or full
+format-admission claim. The handler is an opt-in implementation behind both switches; `--list-formats` names
+FITS only in a build with the `fits` feature. The release-scope record and full-admission questions are tracked
+separately in [measurement status](measurement-status.md).
 
 ## 9. Open questions that must be answered before any code
 

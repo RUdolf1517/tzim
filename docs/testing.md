@@ -492,10 +492,10 @@ knowledge), and the memory budget of §3's whole-file model.
 | --- | --- | --- |
 | `test` | ubuntu-latest, macos-latest, windows-latest | two configurations on every platform: `cargo test --all-features --locked` and the plain `cargo test --locked` a release ships. Until v0.14 the second one was never run anywhere, so the `--info` sentence every published binary prints was a branch no CI run executed ([#68](https://github.com/Rudolf1517/tzim/issues/68)) |
 | `minimal` | ubuntu-latest | `--no-default-features --features png`: every test target must **compile** (`--no-run`), then the library's unit tests, `verification` and `packaging` run. The 65 integration tests that assert what gzip, ZIP, ICO, JPEG, TIFF, zlib or `--zopfli` do cannot hold in a build without those handlers, and they are not filtered out by name — a name filter would silently run fewer tests as the suite grows |
-| `fits oracle (astropy)` | ubuntu-latest | builds with `--features fits` and reads every candidate back with `astropy` (CFITSIO underneath, the same tile decoder `fpack` calls): the array must compare bit for bit. `fitsverify` has not run anywhere, and [fits-audit §8.3](fits-audit.md#83-the-decision) says the handler may not ship before it does — this job is the stand-in that makes "not yet" a measured statement |
+| `fits oracle (astropy)` | ubuntu-latest | builds with `--features fits` and reads every candidate back with `astropy` (CFITSIO underneath): integer arrays compare by bytes and floats by FITS storage bytes, with negative controls. The separate `fits-heasarc` workflow runs `fitsverify`/`funpack`; both are external, run-scoped checks rather than decoders embedded in the binary |
 | `msrv` | ubuntu-latest | `cargo build --all-features --locked` on Rust 1.88.0, the floor in `Cargo.toml` |
 | `clippy` | ubuntu-latest | `cargo clippy --all-targets --all-features --locked -- -D warnings` |
-| `fmt` | ubuntu-latest | `cargo fmt --all`; formats the tree and commits the result (§4.1) |
+| `fmt` | ubuntu-latest | on pull requests, `cargo fmt --all -- --check` only; on non-PR events, formats the tree and commits changes (§4.2) |
 | `deny` | ubuntu-latest | `cargo deny check` — licences, advisories, duplicate versions, sources |
 | `audit` | ubuntu-latest | `cargo audit` against the RustSec database |
 | `size` | ubuntu-latest | `x86_64-unknown-linux-musl` build that `file` reports as `static-pie linked` (no interpreter, no libc), size gate and per-feature matrix (see [size budget](size-budget.md#6-ci-gate)) |
