@@ -23,6 +23,14 @@ from typing import Iterable
 
 SCHEMA_VERSION = 1
 GATE_ARTIFACTS = ("fits-heasarc-evidence", "measure-repro-evidence")
+# These are the exact paths created by the workflows' upload-artifact `path`
+# inputs. The HEASARC upload has two roots, so its `evidence/` directory stays
+# inside the artifact; measure-repro uploads that directory itself, so its
+# contents are at the artifact root.
+GATE_IDENTITY_LOCATIONS = {
+    "fits-heasarc": ("fits-heasarc-evidence", ("evidence", "run-identity.json")),
+    "measure-repro": ("measure-repro-evidence", ("run-identity.json",)),
+}
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -322,12 +330,11 @@ def create_bundle(args: argparse.Namespace) -> dict[str, object]:
             artifacts.append({"name": artifact_name, "present": False, "files": 0, "bytes": 0})
 
     gate_identity_matches = True
-    for gate_name, artifact_name in (
-        ("fits-heasarc", "fits-heasarc-evidence"),
-        ("measure-repro", "measure-repro-evidence"),
-    ):
+    for gate_name, (artifact_name, identity_parts) in GATE_IDENTITY_LOCATIONS.items():
         gate = gate_identities[gate_name]
-        identity_path = gates_root / artifact_name / "run-identity.json"
+        identity_path = gates_root / artifact_name
+        for part in identity_parts:
+            identity_path /= part
         try:
             document = json.loads(identity_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError) as error:
