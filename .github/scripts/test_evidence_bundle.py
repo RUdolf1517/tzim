@@ -4,6 +4,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import unittest
 from argparse import Namespace
@@ -14,6 +15,12 @@ SPEC = importlib.util.spec_from_file_location("evidence_bundle", SCRIPT)
 evidence_bundle = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(evidence_bundle)
+
+LONG_GATE_ARTIFACT_PATH = (
+    "gates/fits-heasarc-evidence/evidence/"
+    "controlled-refusal-control-corrupt-int16_primary.fits.candidate.fits"
+)
+LONG_GATE_ARTIFACT_CONTENT = b"recorded controlled-refusal candidate bytes\n"
 
 
 class EvidenceBundleTests(unittest.TestCase):
@@ -53,6 +60,14 @@ class EvidenceBundleTests(unittest.TestCase):
                 ) + "\n",
                 encoding="utf-8",
             )
+        long_artifact = (
+            self.inputs
+            / "fits-heasarc-evidence"
+            / "evidence"
+            / "controlled-refusal-control-corrupt-int16_primary.fits.candidate.fits"
+        )
+        long_artifact.parent.mkdir(parents=True)
+        long_artifact.write_bytes(LONG_GATE_ARTIFACT_CONTENT)
         self.output = self.root / "bundle-output"
 
     def tearDown(self):
@@ -82,11 +97,67 @@ class EvidenceBundleTests(unittest.TestCase):
         first_bytes = archive.read_bytes()
         self.assertTrue(first["identity_matches"])
         self.assertEqual(evidence_bundle.verify_archive(archive), [])
+        manifest = json.loads((self.output / "bundle-manifest.json").read_text(encoding="utf-8"))
+        self.assertIn(
+            LONG_GATE_ARTIFACT_PATH,
+            {row["path"] for row in manifest["payloads"]},
+        )
 
         second = evidence_bundle.create_bundle(self.arguments())
         self.assertEqual(first["archive_sha256"], second["archive_sha256"])
         self.assertEqual(first_bytes, archive.read_bytes())
         self.assertEqual((self.output / "bundle-self-check.txt").read_text().splitlines()[0], "PASS")
+
+    def test_long_pax_path_round_trips_and_two_independent_archives_match(self):
+        self.assertEqual(len(LONG_GATE_ARTIFACT_PATH.encode("utf-8")), 105)
+        archive_hashes = []
+        archive_member = "evidence/" + LONG_GATE_ARTIFACT_PATH
+
+        for index in range(2):
+            root = self.root / ("long-path-input-%d" % index)
+            artifact = root.joinpath(*LONG_GATE_ARTIFACT_PATH.split("/"))
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(LONG_GATE_ARTIFACT_CONTENT)
+            (root / "README.md").write_text("deterministic PAX path fixture\n", encoding="utf-8")
+            inventory = {
+                "inventory_sha256": evidence_bundle.sha256_bytes(b""),
+                "files": [],
+            }
+            evidence_bundle._write_json(root / "source-inventory.json", inventory)
+            evidence_bundle._write_json(
+                root / "bundle-manifest.json",
+                {
+                    "schema_version": evidence_bundle.SCHEMA_VERSION,
+                    "requested_sha": self.sha,
+                    "checked_out_sha": self.sha,
+                    "payloads": evidence_bundle._payload_rows(
+                        root, omit=("bundle-manifest.json", "SHA256SUMS")
+                    ),
+                },
+            )
+            evidence_bundle._write_checksums(root)
+
+            archive = self.root / ("long-path-%d.tar.gz" % index)
+            evidence_bundle.write_deterministic_tar(root, archive)
+            self.assertEqual(evidence_bundle.verify_archive(archive), [])
+            with tarfile.open(archive, "r:gz") as tar:
+                member = tar.getmember(archive_member)
+                self.assertEqual(member.pax_headers.get("path"), archive_member)
+                with tar.extractfile(member) as stream:
+                    self.assertEqual(stream.read(), LONG_GATE_ARTIFACT_CONTENT)
+            archive_hashes.append(evidence_bundle.sha256_file(archive))
+
+        self.assertEqual(archive_hashes[0], archive_hashes[1])
+
+    def test_create_bundle_preserves_realistic_nested_gate_artifact(self):
+        result = evidence_bundle.create_bundle(self.arguments())
+        archive = self.output / "evidence-bundle.tar.gz"
+        self.assertTrue(result["identity_matches"])
+        self.assertEqual(evidence_bundle.verify_archive(archive), [])
+        with tarfile.open(archive, "r:gz") as tar:
+            member = tar.getmember("evidence/" + LONG_GATE_ARTIFACT_PATH)
+            with tar.extractfile(member) as stream:
+                self.assertEqual(stream.read(), LONG_GATE_ARTIFACT_CONTENT)
 
     def test_measurement_failure_is_recorded_not_promoted(self):
         result = evidence_bundle.create_bundle(self.arguments(measurement_result="failure"))

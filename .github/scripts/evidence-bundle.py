@@ -145,21 +145,34 @@ def _tar_add(tar: tarfile.TarFile, source: Path, archive_name: str) -> None:
     info.uname = ""
     info.gname = ""
     info.mtime = 0
+    info.pax_headers = {}
     with source.open("rb") as handle:
         tar.addfile(info, handle)
 
 
 def write_deterministic_tar(root: Path, destination: Path) -> None:
-    """Write a gzip-compressed tar with sorted paths and normalized metadata."""
+    """Write a deterministic gzip-compressed POSIX PAX archive.
+
+    PAX carries long UTF-8 paths in a length-prefixed ``path`` record; the
+    logical member name is preserved exactly rather than truncated or renamed.
+    Member order, PAX headers, tar metadata, and gzip timestamps are normalized
+    so independently created bundles have identical bytes.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("wb") as raw:
         with gzip.GzipFile(fileobj=raw, mode="wb", filename="", mtime=0, compresslevel=9) as compressed:
-            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.USTAR_FORMAT) as tar:
+            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as tar:
                 for path in sorted(item for item in root.rglob("*") if item.is_file()):
                     relative = path.relative_to(root).as_posix()
-                    if len(relative.encode("utf-8")) > 100:
-                        raise ValueError("bundle path exceeds deterministic USTAR limit: %s" % relative)
-                    _tar_add(tar, path, "evidence/" + relative)
+                    archive_name = "evidence/" + relative
+                    logical_name = PurePosixPath(archive_name)
+                    if (
+                        logical_name.is_absolute()
+                        or ".." in logical_name.parts
+                        or logical_name.as_posix() != archive_name
+                    ):
+                        raise ValueError("unsafe bundle path: %s" % relative)
+                    _tar_add(tar, path, archive_name)
 
 
 def verify_archive(path: Path) -> list[str]:
