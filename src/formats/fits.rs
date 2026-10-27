@@ -1519,7 +1519,7 @@ mod tests {
             "fixture header has room for one inserted card"
         );
         candidate[end..end + CARD].copy_from_slice(&card);
-        candidate[end + CARD..end + 2 * CARD].copy_from_slice(&end_card());
+        candidate[end + CARD..end + 2 * CARD].copy_from_slice(&assemble("END", ""));
     }
 
     fn assert_verify_rejects(original: &[u8], candidate: &[u8], opts: &Options, reason: &str) {
