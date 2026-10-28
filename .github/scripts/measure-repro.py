@@ -696,11 +696,22 @@ def environment():
         env["git_head"] = subprocess.run(
             ["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True
         ).stdout.strip()
+        # Evidence is written under the checkout and appears as an untracked
+        # directory; dirty means tracked source changes, not this run's outputs.
         env["git_dirty"] = bool(
-            subprocess.run(["git", "-C", HERE, "status", "--porcelain"], capture_output=True, text=True).stdout
+            subprocess.run(
+                ["git", "-C", HERE, "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True,
+                text=True,
+            ).stdout
         )
     except OSError:
         pass
+    env["requested_sha"] = os.environ.get("REQUESTED_SHA", os.environ.get("GITHUB_SHA"))
+    env["checked_out_sha"] = env.get("git_head")
+    env["run_id"] = os.environ.get("GITHUB_RUN_ID")
+    env["run_attempt"] = os.environ.get("GITHUB_RUN_ATTEMPT")
+    env["workflow"] = os.environ.get("GITHUB_WORKFLOW")
     return env
 
 
