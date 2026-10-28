@@ -23,7 +23,7 @@ if [[ ! -x "$default_bin" ]]; then
     exit 2
 fi
 
-"$root/.github/scripts/corpus-fetch.sh" "$source_work" | tee "$work/corpus-fetch.log"
+bash "$root/.github/scripts/corpus-fetch.sh" "$source_work" | tee "$work/corpus-fetch.log"
 
 # Record a fixed selection before measuring either binary. corpus-fetch.sh
 # flattens upstream paths into provenance-bearing names, so each name is unique.
