@@ -136,12 +136,53 @@ jobs:
         shell: bash
         run: exit 1
 
+  # A script/docs-only change must not replay already reviewed FITS candidates.
+  # The exact-SHA HEASARC residual gate has its own selected rows for that case;
+  # this broader Astropy oracle runs when the FITS implementation or its oracle
+  # harness changes, and on non-PR pushes where the changed range is explicit.
+  fits-change-scope:
+    name: detect FITS implementation changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_oracle: ${{ steps.scope.outputs.run_oracle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select implementation diff
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BEFORE_SHA"
+          else
+            base="$(git merge-base origin/main "$EVENT_SHA")"
+          fi
+          git diff --name-only "$base" "$EVENT_SHA" | tee /tmp/fits-changed-files.txt
+          if grep -Eq '^(src/|\.github/scripts/fits-oracle\.py$|Cargo\.toml$|Cargo\.lock$|build\.rs$)' /tmp/fits-changed-files.txt; then
+            run_oracle=true
+          else
+            run_oracle=false
+          fi
+          echo "run_oracle=$run_oracle" >> "$GITHUB_OUTPUT"
+          echo "Astropy FITS oracle required: $run_oracle"
+
   # FITS has a separate Astropy/CFITSIO check for the array round trip. This is
   # not the HEASARC release gate: `fits-heasarc.yml` runs fitsverify and funpack
   # on exact-SHA candidates. Keep their evidence and guarantees distinct; neither
   # job alone is full-format admission or a runtime read-back in every binary.
   fits-oracle:
     name: fits oracle (astropy)
+    needs: [fits-change-scope]
+    if: needs.fits-change-scope.outputs.run_oracle == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

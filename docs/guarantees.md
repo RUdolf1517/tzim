@@ -1128,12 +1128,22 @@ exactly the position [§2.6](#26-verification-independence) calls weak. `.github
 every candidate back with **`astropy`** — CFITSIO underneath, the same tile decoder `fpack` and `funpack` call —
 compares integer arrays by bytes and floating-point arrays by their FITS storage bytes (including NaN payloads
 and signed zero), checks that each `ZIMAGE` table declares the codec required by tzim's writer policy without
-calling that policy a universal convention rule, and compares every copied HDU with the original's bytes. It
-runs in the `fits oracle (astropy)` job on every pull request. The separate HEASARC gate runs `fitsverify` and
-`funpack` in CI; a successful gate is evidence for its exact SHA, not a second decoder embedded in every user's
-invocation and not full format admission. Current run identities, retained-evidence limits and the remaining
-release decisions are tracked in [measurement status](measurement-status.md). This describes the opt-in
-implementation and its evidence scope, not full FITS admission or a stability guarantee for every FITS file.
+calling that policy a universal convention rule, and compares every copied HDU with the original's bytes. The
+separate HEASARC gate runs `fitsverify` and `funpack -C` in CI; a successful gate is evidence for its exact SHA,
+not a second decoder embedded in every user's invocation. Its manifest names the exact `tzim` binary SHA-256,
+fixture hashes and run identity. The residual #78 scope can run only additive missing rows; it does not replay the
+previously confirmed candidates. These are CI-only independent reads, not per-file runtime reads.
+
+**Enforced accepted-file guarantee.** At runtime, a file is replaced only when it parses as the accepted subset
+above, the repository's structure/header/table verifier accepts the candidate, every generated gzip tile passes
+CRC-32/ISIZE inflation and yields the original pixel-storage bytes, every non-target HDU is byte-identical, and
+the complete output is strictly smaller. Replacement follows successful verification; parse, verification or I/O
+failure leaves the original path intact. CI additionally applies `fitsverify` and independent CFITSIO `funpack -C`
+to every rewritten candidate in the selected fixture scope, comparing literal headers, pixel-storage bytes and
+non-target HDUs; explicit refusal rows are checked for their status and unchanged source bytes. That independent
+read-back is not run on every file a user may process. No full FITS admission or universal stability guarantee
+is claimed; FITS Tier 2 remains opt-in and non-default. Current run identities, retained-evidence limits and the
+remaining release decisions are tracked in [measurement status](measurement-status.md).
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`

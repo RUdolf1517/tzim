@@ -28,6 +28,14 @@ on:
         required: false
         default: true
         type: boolean
+      scope:
+        description: Full gate or only new residual #78 rows.
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - residual
   workflow_call:
     inputs:
       sha:
@@ -39,6 +47,11 @@ on:
         required: false
         default: false
         type: boolean
+      scope:
+        description: Full gate or only new residual #78 rows.
+        required: false
+        default: full
+        type: string
     outputs:
       requested_sha:
         description: SHA requested by the caller.
@@ -55,6 +68,7 @@ on:
       - "tests/integration.rs"
       - "tests/common/mod.rs"
       - ".github/scripts/fits-heasarc.py"
+      - ".github/scripts/test_fits_heasarc.py"
       - ".github/scripts/evidence-bundle.py"
       - ".github/scripts/test_evidence_bundle.py"
       - ".github/workflows/fits-heasarc.yml"
@@ -90,10 +104,12 @@ jobs:
       gate_result: ${{ steps.gate_outcome.outputs.result }}
     env:
       REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+      FITS_HEASARC_SCOPE: ${{ inputs.scope || 'full' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Record exact run identity
         id: identity
@@ -136,6 +152,36 @@ jobs:
             echo "::error::requested SHA does not match the checked-out commit"
             exit 1
           fi
+
+      - name: Select exact-SHA FITS evidence scope
+        id: scope
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          REQUESTED_SCOPE: ${{ inputs.scope || 'full' }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            if [ -z "$PR_BASE_SHA" ]; then
+              echo "::error::pull-request base SHA is missing"
+              exit 2
+            fi
+            git diff --name-only "$PR_BASE_SHA" "$CHECKED_OUT_SHA" | tee "${RUNNER_TEMP}/changed-files.txt"
+            if grep -Eq '^(src/|tests/integration\.rs$|tests/common/mod\.rs$|Cargo\.toml$|Cargo\.lock$|build\.rs$)' "${RUNNER_TEMP}/changed-files.txt"; then
+              scope=full
+            else
+              scope=residual
+            fi
+          else
+            scope="$REQUESTED_SCOPE"
+          fi
+          case "$scope" in
+            full|residual) ;;
+            *) echo "::error::unknown FITS evidence scope: $scope"; exit 2 ;;
+          esac
+          echo "FITS_HEASARC_SCOPE=$scope" >> "$GITHUB_ENV"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "FITS exact-SHA gate scope: $scope"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -284,6 +330,7 @@ jobs:
           } | tee "${RUNNER_TEMP}/evidence/tool-versions.txt"
 
       - name: Fetch and verify the external Astropy EXTNAMX fixture
+        if: steps.scope.outputs.scope == 'full'
         shell: bash
         run: |
           set -euo pipefail
@@ -329,12 +376,18 @@ jobs:
       - name: Run the HEASARC gate
         shell: bash
         run: |
-          set -o pipefail
-          python3 .github/scripts/fits-heasarc.py \
-            --binary target/release/tzim \
-            --external-double-ext "${RUNNER_TEMP}/astropy-double-ext.fits" \
-            --work "${RUNNER_TEMP}/fits-heasarc-work" \
-            --evidence "${RUNNER_TEMP}/evidence" 2>&1 | tee "${RUNNER_TEMP}/fits-heasarc.log"
+          set -euo pipefail
+          args=(
+            --binary target/release/tzim
+            --work "${RUNNER_TEMP}/fits-heasarc-work"
+            --evidence "${RUNNER_TEMP}/evidence"
+            --scope "$FITS_HEASARC_SCOPE"
+          )
+          if [ "$FITS_HEASARC_SCOPE" = "full" ]; then
+            args+=(--external-double-ext "${RUNNER_TEMP}/astropy-double-ext.fits")
+          fi
+          python3 .github/scripts/fits-heasarc.py "${args[@]}" 2>&1 \
+            | tee "${RUNNER_TEMP}/fits-heasarc.log"
 
       - name: Seal the evidence
         if: always()
@@ -353,6 +406,7 @@ jobs:
             echo "checked-out SHA: ${CHECKED_OUT_SHA:-unknown}"
             echo "run ID: ${GITHUB_RUN_ID}"
             echo "run attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "evidence scope: ${FITS_HEASARC_SCOPE:-unknown}"
             echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } >> "$dir/run.txt"
           ( cd "$dir" && find . -type f ! -name workflow-SHA256SUMS -print0 | sort -z | \
@@ -415,7 +469,7 @@ jobs:
 
   measurement:
     name: measurement reproducibility gate
-    if: ${{ inputs.bundle }}
+    if: ${{ inputs.bundle && inputs.scope != 'residual' }}
     uses: ./.github/workflows/measure-repro.yml
     with:
       sha: ${{ inputs.sha || github.sha }}
@@ -423,7 +477,7 @@ jobs:
 
   bundle:
     name: build and verify final-SHA evidence bundle
-    if: ${{ always() && inputs.bundle }}
+    if: ${{ always() && inputs.bundle && inputs.scope != 'residual' }}
     needs: [heasarc, measurement]
     runs-on: ubuntu-latest
     permissions:

@@ -107,8 +107,9 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                 "GITHUB_RUN_ATTEMPT": "2",
             },
         ):
-            manifest = GATE.corpus_manifest(str(self.root), [case])
+            manifest = GATE.corpus_manifest(str(self.root), [case], "residual")
 
+        self.assertEqual(manifest["scope"], "residual")
         self.assertEqual(manifest["requested_sha"], "a" * 40)
         self.assertEqual(manifest["checked_out_sha"], "a" * 40)
         self.assertEqual(manifest["run_id"], "1234")
@@ -119,6 +120,83 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             hashlib.sha256(b"pinned fixture bytes").hexdigest(),
         )
         self.assertFalse(manifest["external_astropy"]["included"])
+        self.assertEqual(manifest["prior_run"]["run_id"], "40551071072")
+        self.assertEqual(manifest["prior_run"]["sha"], "0232d92b3171b4b7af5cdb4910f852a66308e7b4")
+        self.assertFalse(manifest["prior_run"]["replayed"])
+        self.assertTrue(manifest["prior_run"]["context_only"])
+
+    def test_acceptance_matrix_binds_all_three_hashes_and_strict_size(self):
+        name = "residual_matrix_fixture.fits"
+        identity = {"role": "PRIMARY", "bitpix": -32, "naxis": 2}
+        result = {
+            "name": name,
+            "input_sha256": "a" * 64,
+            "candidate_sha256": "b" * 64,
+            "binary_sha256": "c" * 64,
+            "bytes": {"before": 5760, "after": 4320},
+            "tzim_exit": 0,
+            "tzim": {"status": "optimized"},
+            "source_matrix": [identity],
+            "candidate_matrix": [identity],
+            "candidate_acceptance": True,
+            "strict_size": {"improved": True},
+            "problems": [],
+        }
+        matrix = GATE.acceptance_matrix_summary(
+            [{"name": name, "matrix": identity}], [result], "residual"
+        )
+        row = matrix["rows"][0]
+        self.assertTrue(matrix["complete"])
+        self.assertTrue(row["accepted"])
+        self.assertTrue(row["identity_bound"])
+        self.assertEqual(row["input_sha256"], "a" * 64)
+        self.assertEqual(row["candidate_sha256"], "b" * 64)
+        self.assertEqual(row["binary_sha256"], "c" * 64)
+        self.assertFalse(matrix["inherited_run_replayed"])
+
+        result.pop("binary_sha256")
+        incomplete = GATE.acceptance_matrix_summary(
+            [{"name": name, "matrix": identity}], [result], "residual"
+        )
+        self.assertFalse(incomplete["complete"])
+        self.assertFalse(incomplete["rows"][0]["identity_bound"])
+
+    def test_residual_reports_bind_scope_binary_and_runtime_boundary(self):
+        summary = {
+            "run": {
+                "scope": "residual",
+                "requested_sha": "a" * 40,
+                "checked_out_sha": "a" * 40,
+                "run_id": "1234",
+                "run_attempt": "1",
+            },
+            "binary": {"path": "/tmp/tzim", "bytes": 123, "sha256": "b" * 64},
+            "environment": {"python": "3.12", "platform": "Linux", "machine": "x86_64"},
+            "tools": {},
+            "fixtures": [],
+            "controls": [],
+            "acceptance_matrix": {
+                "scope": "residual",
+                "complete": True,
+                "observed": {"bitpix": [-32, 8]},
+                "rows": [],
+            },
+            "verification_scope": {
+                "runtime": "runtime checks",
+                "ci_only": "independent CI read-back",
+                "limitation": "not a full-format guarantee",
+            },
+            "ok": True,
+        }
+        summary_text = GATE.render_summary(summary)
+        diagnostics = GATE.render_diagnostics(summary, self.evidence)
+        self.assertIn("residual scope", summary_text)
+        self.assertIn("b" * 64, summary_text)
+        self.assertIn("independent CI read-back", summary_text)
+        self.assertIn("\n", diagnostics)
+        self.assertIn("context only", diagnostics)
+        self.assertIn("not full-format admission", diagnostics)
+        self.assertNotIn("The external fixture did not run", diagnostics)
 
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):
         original = self.write_basic_image()
@@ -175,6 +253,137 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         )
         self.assertNotIn("Traceback", result["problems"][0])
 
+    def test_residual_scope_contains_only_additive_issue_78_rows(self):
+        fixture_root = self.root / "fixtures"
+        all_cases = GATE.build_fixtures(str(fixture_root))
+        selected = GATE.select_fixtures(all_cases, "residual")
+        names = {case["name"] for case in selected}
+        self.assertIn("residual_bitpix8_naxis1_primary.fits", names)
+        self.assertIn("residual_bitpix16_naxis999_primary.fits", names)
+        self.assertIn("residual_theap_non_target.fits", names)
+        self.assertNotIn("int16_primary.fits", names)
+        self.assertNotIn("float32_specials.fits", names)
+        self.assertEqual(
+            {case["matrix"]["bitpix"] for case in selected if case.get("matrix")},
+            {8, 16, 32, 64, -32, -64},
+        )
+        manifest = GATE.corpus_manifest(str(fixture_root), selected, "residual")
+        manifest_names = {fixture["name"] for fixture in manifest["fixtures"]}
+        self.assertEqual(manifest_names, names)
+        self.assertFalse(manifest["prior_run"]["replayed"])
+        self.assertFalse(manifest["external_astropy"]["included"])
+
+    def test_residual_matrix_and_float_specials_parse_as_declared(self):
+        fixture_root = self.root / "fixtures"
+        cases = GATE.build_fixtures(str(fixture_root))
+        matrix_cases = [case for case in cases if case.get("matrix")]
+        self.assertEqual(len(matrix_cases), 6)
+        for case in matrix_cases:
+            hdus = GATE.parse((fixture_root / case["name"]).read_bytes())
+            images = [hdu for hdu in hdus if hdu.kind() in ("PRIMARY", "IMAGE") and hdu.axes()]
+            self.assertEqual(len(images), 1, case["name"])
+            image = images[0]
+            expected = case["matrix"]
+            self.assertEqual(image.kind(), expected["role"], case["name"])
+            self.assertEqual(image.int("BITPIX"), expected["bitpix"], case["name"])
+            self.assertEqual(image.int("NAXIS"), expected["naxis"], case["name"])
+            if expected["floating_storage"]:
+                presence = GATE.float_specials_present(image.data, expected["bitpix"])
+                self.assertTrue(all(presence.get(key) for key in expected["floating_storage"]), case["name"])
+
+    def test_random_groups_and_theap_fixtures_have_expected_data_boundaries(self):
+        fixture_root = self.root / "fixtures"
+        GATE.build_fixtures(str(fixture_root))
+        groups = GATE.parse((fixture_root / "residual_random_groups.fits").read_bytes())
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0].value("GROUPS"), "T")
+        self.assertEqual(len(groups[0].data), 528)
+        theap = GATE.parse((fixture_root / "residual_theap_non_target.fits").read_bytes())
+        table = next(hdu for hdu in theap if hdu.kind() == "BINTABLE")
+        self.assertEqual(table.int("THEAP"), 16)
+        self.assertEqual(len(table.data), 24)
+
+    def test_float_storage_mutations_survive_gzip_but_change_pixel_bytes(self):
+        source = GATE.float32_residual_specials(100)
+        candidate = self.root / "float-candidate.fits"
+        candidate.write_bytes(GATE.empty_primary() + GATE.tiles_fixture("GZIP_2", [source], 4))
+        self.assertEqual(GATE.inflate_tiles(str(candidate)), source)
+
+        for name, old, new in (
+            ("nan", bytes.fromhex("7fc00001"), bytes.fromhex("7fc00002")),
+            ("signed-zero", bytes.fromhex("00000000"), bytes.fromhex("80000000")),
+        ):
+            mutated = self.root / (name + ".fits")
+            GATE.mutate_zimage_candidate(
+                str(candidate),
+                str(mutated),
+                payload_mutator=lambda data, bitpix, old=old, new=new: GATE._mutate_float_word(
+                    data, bitpix, old, new
+                ),
+            )
+            actual = GATE.inflate_tiles(str(mutated))
+            self.assertNotEqual(actual, source, name)
+            self.assertEqual(len(actual), len(source), name)
+
+    def test_descriptor_bounds_and_gzip_crc_mutations_are_refused(self):
+        source = struct.pack(">16h", *range(16))
+        candidate = self.root / "int-candidate.fits"
+        candidate.write_bytes(GATE.empty_primary() + GATE.tiles_fixture("GZIP_1", [source], 2))
+
+        def offset_past_heap(descriptors, heap, rows):
+            descriptors[4:8] = struct.pack(">I", len(heap) + 1)
+            return dict(offset=len(heap) + 1)
+
+        bad_offset = self.root / "bad-offset.fits"
+        GATE.mutate_zimage_candidate(
+            str(candidate), str(bad_offset), descriptor_mutator=offset_past_heap
+        )
+        with self.assertRaisesRegex(ValueError, "lies outside its heap"):
+            GATE.inflate_tiles(str(bad_offset))
+
+        bad_count = self.root / "bad-count.fits"
+        GATE.mutate_zimage_candidate(
+            str(candidate),
+            str(bad_count),
+            descriptor_mutator=lambda descriptors, heap, rows: (
+                descriptors.__setitem__(slice(0, 4), struct.pack(">I", len(heap) + 1))
+                or dict(length=len(heap) + 1)
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "lies outside its heap"):
+            GATE.inflate_tiles(str(bad_count))
+
+        negative_offset = self.root / "negative-offset.fits"
+        GATE.mutate_zimage_candidate(
+            str(candidate),
+            str(negative_offset),
+            descriptor_mutator=lambda descriptors, heap, rows: (
+                descriptors.__setitem__(slice(4, 8), struct.pack(">i", -1))
+                or dict(offset=-1)
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "lies outside its heap"):
+            GATE.inflate_tiles(str(negative_offset))
+
+        zero_length = self.root / "zero-length.fits"
+        GATE.mutate_zimage_candidate(
+            str(candidate),
+            str(zero_length),
+            descriptor_mutator=lambda descriptors, heap, rows: (
+                descriptors.__setitem__(slice(0, 4), struct.pack(">I", 0))
+                or dict(length=0)
+            ),
+        )
+        with self.assertRaisesRegex(ValueError, "lies outside its heap"):
+            GATE.inflate_tiles(str(zero_length))
+
+        bad_crc = self.root / "bad-crc.fits"
+        GATE.mutate_zimage_candidate(
+            str(candidate), str(bad_crc), compressed_member_mutator=GATE._damage_gzip_crc
+        )
+        with self.assertRaises((OSError, EOFError)):
+            GATE.inflate_tiles(str(bad_crc))
+
     def test_short_descriptor_is_a_recorded_tile_inflation_refusal(self):
         candidate = bytearray(GATE.empty_primary() + GATE.compressed_table_fixture())
         hdus = GATE.parse(bytes(candidate))
@@ -192,7 +401,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         path = self.root / "short-descriptor.fits"
         path.write_bytes(candidate)
         self.assertEqual(len(GATE.parse(path.read_bytes())), 2)
-        with self.assertRaises(struct.error):
+        with self.assertRaisesRegex(ValueError, "descriptors and PCOUNT"):
             GATE.inflate_tiles(str(path))
 
         tiles, refusal = GATE.safe_inflate_tiles(
