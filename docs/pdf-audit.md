@@ -328,3 +328,11 @@ reason FLAC's audit was kept.
 
 Either way, the answer to "can tzim touch PDF" becomes a number and a paragraph instead of an opinion — which is
 the only kind of refusal this project has ever been willing to keep.
+
+## 11. PR #84 follow-up — #57 sample not run
+
+The figures in §9 are the historical 2,208-file audit, not the additional #57 result. This update did not run a
+new measurement: the separately required 20–50-file real-toolchain sample has no pre-registered per-file
+provenance/permission manifest in this checkout, and qpdf/MuPDF are not installed in the runner. No row,
+threshold, or refusal count above was altered. For the exact blocker and the one owner action needed to unblock
+it, see [measurement status](measurement-status.md).
