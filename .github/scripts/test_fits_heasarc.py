@@ -214,7 +214,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                 {
                     "name": "residual_bitpix16_naxis999_primary.fits",
                     "expect": "untouched",
-                    "status": "skipped",
+                    "expected_status": "skipped",
                     "input_sha256": hash_a,
                     "candidate_sha256": hash_a,
                     "tzim": {
@@ -250,6 +250,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertIn("funpack -C exited 1: BITPIX=64 mismatch", diagnostics)
         self.assertIn("Z-form keyword ZNAXIS100 does not fit in eight columns", diagnostics)
         self.assertIn("byte-identical", diagnostics)
+        self.assertIn("| skipped | skipped | yes |", diagnostics)
         self.assertIn(hash_a, diagnostics)
 
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):

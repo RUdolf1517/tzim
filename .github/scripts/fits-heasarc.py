@@ -2130,6 +2130,7 @@ def check_fixture(binary, case, root, scratch, evidence):
         name=case["name"],
         why=case["why"],
         expect=case["expect"],
+        expected_status=case.get("status"),
         input_case=case.get("input_case"),
         contract_expectation=case.get("contract_expectation"),
         input_sha256=input_sha,
@@ -2572,7 +2573,7 @@ def render_diagnostics(summary, evidence):
                 lines.append(
                     "| %(fixture)s | %(expected)s | %(actual)s | %(unchanged)s | `%(input_sha)s` | `%(candidate_sha)s` | %(note)s | %(problems)s |" % {
                         "fixture": markdown_cell(fixture.get("name", "?")),
-                        "expected": markdown_cell(fixture.get("status")),
+                        "expected": markdown_cell(fixture.get("expected_status")),
                         "actual": markdown_cell(record.get("status")),
                         "unchanged": unchanged,
                         "input_sha": input_sha or "not recorded",
