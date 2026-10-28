@@ -717,9 +717,16 @@ jobs:
         run: cargo build --release --locked
 
       - name: Measure baseline and default JPEG runs
+        id: measure
+        continue-on-error: true
+        shell: bash
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: bash .github/scripts/jpeg-runtime.sh target/release/tzim "${RUNNER_TEMP}/tzim-jpeg-runtime"
+        run: |
+          set -o pipefail
+          work="${RUNNER_TEMP}/tzim-jpeg-runtime"
+          mkdir -p "$work"
+          bash .github/scripts/jpeg-runtime.sh target/release/tzim "$work" 2>&1 | tee "$work/runner.log"
 
       - name: Add measurement report to the run summary
         if: always()
@@ -729,6 +736,30 @@ jobs:
           if [[ -f "$report" ]]; then
             cat "$report" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Publish runtime failure log
+        if: steps.measure.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-jpeg-runtime/runner.log" jpeg-runtime
+
+      - name: Hash raw JPEG runtime evidence
+        if: always()
+        shell: bash
+        run: |
+          work="${RUNNER_TEMP}/tzim-jpeg-runtime"
+          if [[ -d "$work" ]]; then
+            (
+              cd "$work"
+              find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            )
+          fi
+
+      - name: Fail the job
+        if: steps.measure.outcome == 'failure'
+        shell: bash
+        run: exit 1
 
       - name: Retain raw JPEG runtime evidence
         if: always()

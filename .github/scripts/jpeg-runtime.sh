@@ -87,7 +87,7 @@ fi
     echo "rustc=$(rustc --version)"
     echo "cargo=$(cargo --version)"
     echo "python=$(python3 --version)"
-    echo "time=$( /usr/bin/time --version 2>&1 | head -1 )"
+    echo "time=$( /usr/bin/time --version 2>&1 | sed -n '1p' )"
     echo "runtime_script_sha256=$(sha256sum "$root/.github/scripts/jpeg-runtime.sh" | cut -d' ' -f1)"
     echo "workflow_sha256=$(sha256sum "$root/.github/workflows/ci.yml" | cut -d' ' -f1)"
     echo "cargo_lock_sha256=$(sha256sum "$root/Cargo.lock" | cut -d' ' -f1)"
