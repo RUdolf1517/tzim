@@ -3870,7 +3870,10 @@ mod fits_tests {
             let (code, stdout, stderr) = run(&["--fits-tile", &name], &ws.path);
             assert_eq!(code, 0, "{codec}: stdout={stdout} stderr={stderr}");
             assert!(stdout.contains("skipped"), "{codec}: {stdout}");
-            assert!(stdout.contains(codec), "{codec} was missing from refusal: {stdout}");
+            assert!(
+                stdout.contains(codec),
+                "{codec} was missing from refusal: {stdout}"
+            );
             assert_eq!(
                 std::fs::read(&path).unwrap(),
                 original,

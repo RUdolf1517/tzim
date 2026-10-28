@@ -2026,7 +2026,11 @@ mod tests {
     #[test]
     fn quoted_text_stops_before_a_comment_containing_quotes_and_slashes() {
         let card = Card {
-            raw: string_card("OBJECT", "science/field", "comment has 'quoted text' / note"),
+            raw: string_card(
+                "OBJECT",
+                "science/field",
+                "comment has 'quoted text' / note",
+            ),
         };
         assert_eq!(card.text(), Some("science/field"));
     }
