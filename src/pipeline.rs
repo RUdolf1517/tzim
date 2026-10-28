@@ -161,11 +161,7 @@ pub fn process_with_confirmation(
 }
 
 #[allow(unused_mut)]
-fn process_inner(
-    path: &Path,
-    cfg: &Config,
-    mut confirm: Confirmation<'_>,
-) -> Outcome {
+fn process_inner(path: &Path, cfg: &Config, mut confirm: Confirmation<'_>) -> Outcome {
     let started = Instant::now();
     let mut outcome = Outcome::new(path.to_path_buf(), Status::Skipped, 0);
     let result = run(path, cfg, &mut outcome, &mut confirm);
@@ -372,9 +368,8 @@ fn run(
         if let Some(confirm) = confirm.as_deref_mut() {
             if !confirm(path) {
                 outcome.status = Status::Skipped;
-                outcome.note = Some(
-                    "FITS tile rewrite was not confirmed; the file is unchanged".to_string(),
-                );
+                outcome.note =
+                    Some("FITS tile rewrite was not confirmed; the file is unchanged".to_string());
                 return Ok(());
             }
         }
@@ -473,10 +468,8 @@ mod tests {
 
     #[cfg(feature = "fits")]
     fn fits_test_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "tzim-fits-confirm-{}-{label}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("tzim-fits-confirm-{}-{label}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -504,7 +497,13 @@ mod tests {
             let staged = fs::read_dir(&dir)
                 .unwrap()
                 .map(|entry| entry.unwrap().path())
-                .find(|entry| entry.file_name().unwrap().to_string_lossy().starts_with(".tzim-"))
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with(".tzim-")
+                })
                 .expect("candidate must be staged before confirmation");
             let candidate = fs::read(staged).unwrap();
             formats::verify(detect::Format::Fits, &original, &candidate, &options)
@@ -521,7 +520,10 @@ mod tests {
         assert_eq!(outcome.after, original.len() as u64);
         assert!(outcome.note.as_deref().unwrap().contains("not confirmed"));
         assert_eq!(fs::read(&path).unwrap(), original);
-        let remaining: Vec<_> = fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().path()).collect();
+        let remaining: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
         assert_eq!(remaining, vec![path]);
         let _ = fs::remove_dir_all(dir);
     }
@@ -549,7 +551,10 @@ mod tests {
         assert!(candidate.len() < original.len());
         formats::verify(detect::Format::Fits, &original, &candidate, &options)
             .expect("the installed file must be the fully verified candidate");
-        let remaining: Vec<_> = fs::read_dir(&dir).unwrap().map(|entry| entry.unwrap().path()).collect();
+        let remaining: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
         assert_eq!(remaining, vec![path]);
         let _ = fs::remove_dir_all(dir);
     }

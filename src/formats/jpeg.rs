@@ -1672,7 +1672,10 @@ mod oracle {
             let candidate = super::super::tests::sample_jpeg_with_swapped_dc_mapping();
             let before = digest(&original).expect("independent decoder accepts original");
             let after = digest(&candidate).expect("independent decoder accepts corrupted mapping");
-            assert_ne!(before, after, "the symbol-map mutation changes decoded pixels");
+            assert_ne!(
+                before, after,
+                "the symbol-map mutation changes decoded pixels"
+            );
             let err = cross_check(&original, &candidate).unwrap_err();
             assert!(matches!(err, Error::Verify(_)), "{err}");
             assert!(err.to_string().contains("different image"), "{err}");
@@ -1783,7 +1786,10 @@ mod tests {
         assert_eq!(jpeg[payload + 2], 1, "one code has length two");
         assert_eq!(&jpeg[payload + 17..payload + 19], &[0, 1]);
         jpeg.swap(payload + 17, payload + 18);
-        assert_eq!(dht_len, 21, "fixture's DC table segment contains two symbols");
+        assert_eq!(
+            dht_len, 21,
+            "fixture's DC table segment contains two symbols"
+        );
 
         let sos = jpeg
             .windows(2)

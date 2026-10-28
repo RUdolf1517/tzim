@@ -1831,7 +1831,10 @@ fn jpeg_is_enabled_by_default_but_formats_remains_an_allowlist() {
     let (code, stdout, stderr) = run(&["photo.jpg"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     let optimized = std::fs::read(&path).unwrap();
-    assert!(optimized.len() < original.len(), "default build did not optimize JPEG");
+    assert!(
+        optimized.len() < original.len(),
+        "default build did not optimize JPEG"
+    );
 
     let excluded = ws.write("excluded.jpg", &original);
     let (code, stdout, stderr) = run(&["--formats", "png", "excluded.jpg"], &ws.path);

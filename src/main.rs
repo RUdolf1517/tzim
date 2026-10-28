@@ -445,8 +445,18 @@ mod prompt_policy_tests {
         assert!(should_prompt_fits_tile(&direct, &files, true, true));
         let no_tile_consent = args(&[], &[&file]);
         let formats_is_not_consent = args(&["--formats", "fits"], &[&file]);
-        assert!(!should_prompt_fits_tile(&no_tile_consent, &files, true, true));
-        assert!(!should_prompt_fits_tile(&formats_is_not_consent, &files, true, true));
+        assert!(!should_prompt_fits_tile(
+            &no_tile_consent,
+            &files,
+            true,
+            true
+        ));
+        assert!(!should_prompt_fits_tile(
+            &formats_is_not_consent,
+            &files,
+            true,
+            true
+        ));
         // `--jobs` does not create a worker for this one eligible interactive
         // file; processing stays synchronous so the prompt remains on main.
         let with_jobs = args(&["--fits-tile", "--jobs", "4"], &[&file]);
@@ -493,13 +503,11 @@ mod prompt_policy_tests {
         assert!(!should_prompt_fits_tile(&direct, &filtered, true, true));
 
         let mut errored = scan(vec![file.clone()]);
-        errored.errors.push((
-            file.clone(),
-            error::Error::Io(io::Error::other("test")),
-        ));
+        errored
+            .errors
+            .push((file.clone(), error::Error::Io(io::Error::other("test"))));
         assert!(!should_prompt_fits_tile(&direct, &errored, true, true));
 
         let _ = fs::remove_dir_all(dir);
     }
-
 }

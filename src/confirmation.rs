@@ -6,11 +6,7 @@ use std::path::Path;
 /// Ask about the visible FITS IMAGE-to-BINTABLE transformation. Only an
 /// explicit `y` or `yes` (case-insensitive) consents; EOF, invalid input, and
 /// input/output errors all mean No.
-pub fn ask_fits_tile<R: BufRead, W: Write>(
-    path: &Path,
-    input: &mut R,
-    output: &mut W,
-) -> bool {
+pub fn ask_fits_tile<R: BufRead, W: Write>(path: &Path, input: &mut R, output: &mut W) -> bool {
     if writeln!(
         output,
         "tzim: --fits-tile changes an eligible FITS IMAGE HDU into a tile-compressed BINTABLE. Rewrite {}? [y/N]",
