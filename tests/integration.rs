@@ -3849,8 +3849,9 @@ mod fits_tests {
             let mut compressed = fits_compressed_image(16, &axis, codec, &tiles);
             if codec == "HCOMPRESS_1" {
                 let expected_card = fits_card_raw("ZCMPTYPE= 'HCOMPRESS_1         '");
-                let card_index = compressed[..FITS_RECORD]
-                    .chunks_exact(80)
+                let header_cards = compressed[..FITS_RECORD].as_chunks::<80>().0;
+                let card_index = header_cards
+                    .iter()
                     .position(|card| &card[..8] == b"ZCMPTYPE")
                     .expect("the compressed image has a ZCMPTYPE card");
                 let start = card_index * 80;
