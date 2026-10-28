@@ -362,3 +362,12 @@ separately in [measurement status](measurement-status.md).
   measured size delta, and `fitsverify` wired into CI.
 
 Either way the answer stops being "nobody looked". That is the only claim this document makes.
+
+## 11. PR #84 follow-up — #59 full-size survey sample not run
+
+The historical 178-file corpus and the later candidate-specific HEASARC checks are not the separately required
+full-size survey-product measurement. This update has no pre-registered survey-product selection with per-file
+source/permission records, and the current runner lacks `fitsverify` and `funpack`; no new Tier 1 or Tier 2
+numbers, checksum exceptions, or acceptance claims are added. The checksum refusal, historical baselines and
+thresholds remain unchanged. See [measurement status](measurement-status.md) for the exact blocker and owner
+action.
