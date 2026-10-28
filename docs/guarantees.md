@@ -1147,20 +1147,25 @@ and fails unless the PR head is one of them. The corpus manifest, acceptance mat
 the same SHA/parent fields and an explicit `source_identity_valid` result. A full exact-head rerun can also record
 the PR-head SHA explicitly and must then check out that same SHA. The residual #78 scope can run only additive
 missing rows; it does not replay the previously confirmed candidates. These are CI-only independent reads, not
-per-file runtime reads.
+per-file runtime reads. The Astropy oracle's generated `multi.fits` fixture (including its HDRLET traversal case)
+belongs only to that separate CI check; it is not included in the HEASARC artifact.
 
 **Enforced accepted-file guarantee.** At runtime, a file is replaced only when it parses as the accepted subset
 above, the repository's structure/header/table verifier accepts the candidate, every generated gzip tile passes
 CRC-32/ISIZE inflation and yields the original pixel-storage bytes, every non-target HDU is byte-identical, and
 the complete output is strictly smaller. Replacement follows successful verification; parse, verification or I/O
-failure leaves the original path intact. CI additionally applies `fitsverify` and independent CFITSIO `funpack -C`
-to every rewritten candidate in the selected fixture scope, comparing literal headers, pixel-storage bytes and
-non-target HDUs; explicit refusal rows are checked for their status and unchanged source bytes. The original
-`fitsverify` result on a valid-but-unsupported no-rewrite row is retained as a source diagnostic, not treated as
-candidate acceptance; every rewritten candidate (including THEAP controls) still requires exit 0, with no warning
-allowlist. That independent read-back is not run on every file a user may process. No full FITS admission or
-universal stability guarantee is claimed; FITS Tier 2 remains opt-in and non-default. Current run identities,
-retained-evidence limits and the remaining release decisions are tracked in [measurement status](measurement-status.md).
+failure leaves the original path intact. In the HEASARC evidence, every registered rewritten candidate (including
+THEAP controls) requires `fitsverify` exit 0, CFITSIO `funpack -C` exit 0, and exact pixel-storage array comparison;
+literal headers and non-target HDUs are checked byte-for-byte. Explicit refusal rows are checked for their status
+and unchanged source bytes, not independently decompressed. The sole named preservation-only exception is
+`hdrlet_preservation.fits`: its candidate `fitsverify` diagnostics are compared with the inherited per-file input
+baseline (no new marker or increased warning/error count), all non-target HDUs must remain byte-identical, the
+whole-file output must still be strictly smaller, and a second `--fits-tile` run must return `already_optimal`
+with unchanged bytes. The HEASARC artifact contains no CFITSIO `funpack -C` or exact array read-back for this
+HDRLET fixture. This is a per-file baseline exception, not a global warning allowlist. The independent reads are
+not run on every file a user may process. No full FITS admission or universal stability guarantee is claimed;
+FITS Tier 2 remains opt-in and non-default. Current run identities, retained-evidence limits and the remaining
+release decisions are tracked in [measurement status](measurement-status.md).
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`

@@ -247,6 +247,67 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertFalse(incomplete["complete"])
         self.assertFalse(incomplete["rows"][0]["identity_bound"])
 
+    def test_skip_funpack_requires_a_named_exception_and_omitted_checks(self):
+        valid_exception = {
+            "name": "HDRLET preservation-only exception",
+            "omitted_checks": [
+                "CFITSIO funpack -C read-back",
+                "exact array read-back",
+            ],
+        }
+        self.assertEqual(
+            GATE.funpack_skip_exception_problems(
+                [{"name": "hdrlet.fits", "skip_funpack": True,
+                 "skip_funpack_exception": valid_exception}]
+            ),
+            [],
+        )
+
+        silent_skip = GATE.funpack_skip_exception_problems(
+            [{"name": "silent.fits", "skip_funpack": True}]
+        )
+        self.assertTrue(any("without a named exception listing omitted checks" in problem
+                            for problem in silent_skip))
+        incomplete = GATE.funpack_skip_exception_problems(
+            [{"name": "incomplete.fits", "skip_funpack": True,
+              "skip_funpack_exception": {"name": "unnamed checks", "omitted_checks": [
+                  "CFITSIO funpack -C read-back"
+              ]}}]
+        )
+        self.assertTrue(any("exact array read-back" in problem for problem in incomplete))
+
+    def test_unsupported_codec_fixtures_require_notes_and_preserve_exact_input(self):
+        fixture_root = self.root / "codec-fixtures"
+        cases = GATE.build_fixtures(str(fixture_root))
+        for codec in ("HCOMPRESS_1", "PLIO_1"):
+            with self.subTest(codec=codec):
+                name = "residual_unsupported_%s.fits" % codec.lower()
+                case = next(item for item in cases if item["name"] == name)
+                self.assertEqual(case["required_note"], codec)
+                path = fixture_root / name
+                original = path.read_bytes()
+                if codec == "HCOMPRESS_1":
+                    hdus = GATE.parse(original)
+                    cards = [card for hdu in hdus for card in hdu.cards
+                             if card[:8].strip() == "ZCMPTYPE"]
+                    self.assertEqual(
+                        cards,
+                        ["ZCMPTYPE= 'HCOMPRESS_1         '".ljust(GATE.CARD)],
+                    )
+                record = {
+                    "status": "skipped",
+                    "note": "fits: the image tiles are %s, which this build has no codec for" % codec,
+                }
+                with mock.patch.object(GATE, "tzim_run", return_value=(0, record, "")):
+                    result = GATE.check_fixture(
+                        "/tmp/tzim", case, str(fixture_root), str(self.scratch), self.evidence
+                    )
+                self.assertEqual(result["tzim_exit"], 0)
+                self.assertEqual(result["tzim"]["status"], "skipped")
+                self.assertEqual(result["candidate_sha256"], result["input_sha256"])
+                self.assertEqual(path.read_bytes(), original)
+                self.assertEqual(result["problems"], [])
+
     def test_residual_reports_bind_scope_binary_and_runtime_boundary(self):
         summary = {
             "run": {
@@ -269,7 +330,16 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             },
             "verification_scope": {
                 "runtime": "runtime checks",
-                "ci_only": "independent CI read-back",
+                "ci_only": (
+                    "every registered rewritten candidate requires fitsverify exit 0, funpack -C "
+                    "exit 0, and exact array comparison"
+                ),
+                "hdrlet_preservation_exception": (
+                    "HDRLET is preservation-only; no funpack -C or exact array read-back is in this artifact"
+                ),
+                "separate_astropy_multi_fits": (
+                    "Astropy multi.fits is only in separate CI, not this artifact"
+                ),
                 "limitation": "not a full-format guarantee",
             },
             "ok": True,
@@ -278,11 +348,59 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         diagnostics = GATE.render_diagnostics(summary, self.evidence)
         self.assertIn("residual scope", summary_text)
         self.assertIn("b" * 64, summary_text)
-        self.assertIn("independent CI read-back", summary_text)
+        self.assertIn("every registered rewritten candidate", summary_text)
+        self.assertIn("fitsverify exit 0", summary_text)
+        self.assertIn("HDRLET preservation-only exception", summary_text)
+        self.assertIn("no funpack -C or exact array read-back", summary_text)
+        self.assertIn("Astropy multi.fits", summary_text)
         self.assertIn("\n", diagnostics)
         self.assertIn("context only", diagnostics)
         self.assertIn("not full-format admission", diagnostics)
         self.assertNotIn("The external fixture did not run", diagnostics)
+
+    def test_rendered_hdrlet_summary_states_the_preservation_only_boundary(self):
+        summary = {
+            "run": {"scope": "full"},
+            "fixtures": [
+                {
+                    "name": "hdrlet_preservation.fits",
+                    "expect": "mixed",
+                    "skip_funpack_exception": {
+                        "name": "HDRLET preservation-only exception",
+                        "omitted_checks": [
+                            "CFITSIO funpack -C read-back",
+                            "exact array read-back",
+                        ],
+                    },
+                    "original_fitsverify_exit": 1,
+                    "fitsverify_exit": 1,
+                    "funpack_exit": None,
+                    "external_diagnostic_comparison": {
+                        "no_new_diagnostics": True,
+                        "exact_match": False,
+                    },
+                    "strict_size": {"improved": True},
+                    "idempotence": {
+                        "ok": True,
+                        "second_run_status": "already_optimal",
+                        "unchanged": True,
+                    },
+                    "original_hdus": [],
+                    "candidate_hdus": [],
+                    "problems": [],
+                }
+            ],
+            "controls": [],
+        }
+        diagnostics = GATE.render_diagnostics(summary, self.evidence)
+        self.assertIn("HDRLET preservation-only exception", diagnostics)
+        self.assertIn("inherited per-file baseline", diagnostics)
+        self.assertIn("strict whole-file size improvement: True", diagnostics)
+        self.assertIn("second-run idempotence: ok=True", diagnostics)
+        self.assertIn("funpack -C exit not run", diagnostics)
+        self.assertIn("no `funpack -C` or exact array read-back", diagnostics)
+        self.assertIn("Astropy's `multi.fits`", diagnostics)
+        self.assertIn("not included in this HEASARC artifact", diagnostics)
 
     def test_residual_diagnostics_include_matrix_errors_and_unchanged_refusals(self):
         hash_a = "a" * 64

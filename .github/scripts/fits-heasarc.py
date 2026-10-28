@@ -17,11 +17,13 @@ between two uncompressed FITS files.
 What it proves, and what it cannot
 ----------------------------------
 * `fitsverify -l` exits with **the number of errors plus warnings** (read from
-  `utilities/fitsverify.c`, which prints that sentence itself). Every rewritten
-  candidate and every registered positive original must exit 0; the tolerated
-  warning allowlist is **empty**. For explicitly unsupported no-rewrite inputs,
-  the original's output and exit are retained as diagnostic evidence only: no
-  candidate is submitted for acceptance, and this does not relax candidate checks.
+  `utilities/fitsverify.c`, which prints that sentence itself). Every registered
+  rewritten candidate and every registered positive original must exit 0; the
+  tolerated warning allowlist is **empty**. The named HDRLET preservation-only
+  case compares against its own original `fitsverify` baseline instead. For
+  explicitly unsupported no-rewrite inputs, the original's output and exit are
+  retained as diagnostic evidence only: no candidate is submitted for
+  acceptance, and this does not relax candidate checks.
 * `funpack` is the reference *reader* of the compressed convention. If it can
   reconstruct the array and the header, a reader written by someone else
   understood the file.
@@ -686,7 +688,17 @@ def build_fixtures(root):
             verbatim=["HDRLET", "BINTABLE"],
             diagnostics="compare_original",
             skip_funpack=True,
-            why="HDRLET is not registered in fitsverify; preserve it exactly and compare the per-file diagnostic baseline without making it the first compressed-HDU traversal control",
+            skip_funpack_exception=dict(
+                name="HDRLET preservation-only exception",
+                omitted_checks=["CFITSIO funpack -C read-back", "exact array read-back"],
+            ),
+            contract_expectation=(
+                "Preserve every non-target HDU byte-for-byte and compare candidate fitsverify "
+                "diagnostics with this input's inherited per-file baseline; still require a strictly "
+                "smaller whole file and a second --fits-tile run that returns already_optimal with "
+                "unchanged bytes. This HEASARC fixture has no funpack -C or exact array read-back."
+            ),
+            why="HDRLET is a named preservation-only exception, not a registered candidate acceptance row",
         )
     )
 
@@ -1058,6 +1070,7 @@ def build_fixtures(root):
                 expect="untouched",
                 status="skipped",
                 residual_only=True,
+                required_note=codec,
                 input_case=(
                     "Deterministic ZIMAGE refusal fixture with registered but unsupported "
                     "%s codec; its payload is not claimed to be a real %s stream."
@@ -1885,6 +1898,47 @@ def safe_inflate_tiles(path, evidence, evidence_tag):
         return None, refusal
 
 
+FUNPACK_SKIP_REQUIRED_OMISSIONS = (
+    "CFITSIO funpack -C read-back",
+    "exact array read-back",
+)
+
+
+def funpack_skip_exception_problems(cases):
+    """Reject unnamed funpack skips or exceptions that hide omitted checks."""
+    problems = []
+    for case in cases:
+        if not case.get("skip_funpack"):
+            continue
+        fixture = case.get("name", "<unnamed fixture>")
+        exception = case.get("skip_funpack_exception")
+        if not isinstance(exception, dict):
+            problems.append(
+                "%s sets skip_funpack without a named exception listing omitted checks"
+                % fixture
+            )
+            continue
+        name = exception.get("name")
+        if not isinstance(name, str) or not name.strip():
+            problems.append("%s skip_funpack exception has no name" % fixture)
+        omitted = exception.get("omitted_checks")
+        if not isinstance(omitted, (list, tuple)) or any(
+            not isinstance(item, str) or not item.strip() for item in omitted
+        ):
+            problems.append(
+                "%s skip_funpack exception must list omitted checks as non-empty strings"
+                % fixture
+            )
+            continue
+        missing = [item for item in FUNPACK_SKIP_REQUIRED_OMISSIONS if item not in omitted]
+        if missing:
+            problems.append(
+                "%s skip_funpack exception %r does not list omitted checks: %s"
+                % (fixture, name or "unnamed", ", ".join(missing))
+            )
+    return problems
+
+
 def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence, evidence_tag):
     """Implementation for the guarded candidate acceptance entry point."""
     with open(original_path, "rb") as handle:
@@ -2055,7 +2109,16 @@ def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence
             )
 
     if case.get("skip_funpack"):
-        result["funpack"] = "not run: HDRLET case is a byte-preservation and external-baseline test"
+        exception_problems = funpack_skip_exception_problems([case])
+        if exception_problems:
+            result["problems"].extend(exception_problems)
+            result["accepted"] = False
+            return result
+        exception = case["skip_funpack_exception"]
+        omitted = list(exception["omitted_checks"])
+        result["funpack"] = "not run: %s" % exception["name"]
+        result["omitted_checks"] = omitted
+        result["array_checks"] = []
         result["accepted"] = not result["problems"]
         return result
 
@@ -2185,6 +2248,7 @@ def check_fixture(binary, case, root, scratch, evidence):
         expected_status=case.get("status"),
         input_case=case.get("input_case"),
         contract_expectation=case.get("contract_expectation"),
+        skip_funpack_exception=case.get("skip_funpack_exception"),
         input_sha256=input_sha,
         original=kept,
         source_matrix=source_image_matrix(before),
@@ -2569,6 +2633,8 @@ def corpus_manifest(root, cases, scope="full"):
                 matrix=case.get("matrix"),
                 diagnostics=case.get("diagnostics"),
                 required_note=case.get("required_note"),
+                skip_funpack=bool(case.get("skip_funpack")),
+                skip_funpack_exception=case.get("skip_funpack_exception"),
                 input_case=case.get("input_case"),
                 why=case.get("why"),
             )
@@ -2687,12 +2753,13 @@ def render_diagnostics(summary, evidence):
 
     lines += ["## Literal 80-column header diffs", ""]
     lines.append(
-        "The comparison is original HDU versus the bytes produced by `tzim` then `funpack -C`. "
-        "It includes every 80-byte card through END, card order, comments, spacing, CHECKSUM, "
-        "DATASUM, EXTEND and ZEXTEND; nothing is normalized or excluded. These diffs diagnose "
-        "the complete round trip and do not by themselves assign a difference to one program. "
-        "The raw source, tzim candidate, full JSON/text diff, and per-tool output are retained in "
-        "the checksummed artifact."
+        "For registered rewritten candidates, the comparison is original HDU versus the bytes "
+        "reconstructed from the `tzim` candidate by `funpack -C`. It includes every 80-byte card "
+        "through END, card order, comments, spacing, CHECKSUM, DATASUM, EXTEND and ZEXTEND; nothing "
+        "is normalized or excluded. These diffs diagnose the complete read-back and do not by "
+        "themselves assign a difference to one program. The HDRLET preservation-only exception "
+        "has no `funpack -C` or array read-back in this artifact. The raw source, tzim candidate, "
+        "full JSON/text diff, and per-tool output are retained in the checksummed artifact."
     )
     lines.append("")
     diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
@@ -2769,8 +2836,10 @@ def render_diagnostics(summary, evidence):
             lines += [
                 "",
                 "For valid-but-unsupported no-rewrite fixtures, the original `fitsverify` output and exit are "
-                "recorded as source diagnostics only. No candidate is accepted on that basis: every rewritten "
-                "candidate, including THEAP controls, still requires `fitsverify` exit 0, with no warning allowlist.",
+                "recorded as source diagnostics only. No candidate is accepted on that basis: every registered "
+                "rewritten candidate, including THEAP controls, requires `fitsverify` exit 0, `funpack -C` exit 0, "
+                "and exact array comparison. HDRLET is the named preservation-only exception described below; "
+                "it does not create a global warning allowlist.",
             ]
 
         untouched = [fixture for fixture in summary["fixtures"] if fixture.get("expect") == "untouched"]
@@ -2827,9 +2896,13 @@ def render_diagnostics(summary, evidence):
         lines.append(
             "The per-file inputs, rewritten candidates, independent-reader reconstructions, literal card diffs, "
             "control JSON, second-run outputs, and SHA-256 sidecars are retained in the sealed artifact. "
-            "`fitsverify` and independent CFITSIO `funpack -C` reads occur in CI only; they are not "
-            "runtime reads for every accepted user file. FITS remains opt-in Tier 2; this evidence is "
-            "not full-format admission or a universal stability guarantee."
+            "Every registered rewritten candidate requires `fitsverify` exit 0, independent CFITSIO `funpack -C` "
+            "exit 0, and exact array-byte comparison. HDRLET is a named preservation-only exception: the "
+            "candidate is checked against its inherited per-file `fitsverify` baseline, non-target HDUs must be "
+            "byte-identical, strict-size improvement and second-run idempotence remain required, and this artifact "
+            "contains no `funpack -C` or array read-back for it. Astropy's `multi.fits` is exercised only by the "
+            "separate Astropy CI oracle and is not included in this HEASARC artifact. FITS remains opt-in Tier 2; "
+            "this evidence is not full-format admission or a universal stability guarantee."
         )
         return "\n".join(lines).rstrip() + "\n"
 
@@ -2844,11 +2917,13 @@ def render_diagnostics(summary, evidence):
             lines.append("The fixture did not run.")
             lines.append("")
             continue
+        funpack_exit = fixture.get("funpack_exit")
+        if funpack_exit is None:
+            funpack_exit = "not run"
         lines.append(
             "Original fitsverify exit %s; candidate exit %s; funpack -C exit %s."
             % (fixture.get("original_fitsverify_exit", "not run"),
-               fixture.get("fitsverify_exit", "not run"),
-               fixture.get("funpack_exit", "not run"))
+               fixture.get("fitsverify_exit", "not run"), funpack_exit)
         )
         if fixture_name == "multi_hdu.fits":
             lines.append(
@@ -2857,16 +2932,33 @@ def render_diagnostics(summary, evidence):
             )
         else:
             comparison = fixture.get("external_diagnostic_comparison", {})
+            exception = fixture.get("skip_funpack_exception") or {}
+            strict_size = fixture.get("strict_size") or {}
+            idempotence = fixture.get("idempotence") or {}
             lines.append(
-                "The original's unregistered HDRLET diagnostic is an explicit per-file baseline; "
-                "candidate added no new marker or warning/error count: %s (exact match: %s)."
-                % (comparison.get("no_new_diagnostics", "not compared"),
+                "Named exception: `%s`. The original's unregistered HDRLET diagnostic is the inherited "
+                "per-file baseline; candidate added no new marker or increased warning/error count: %s "
+                "(exact match: %s)."
+                % (exception.get("name", "not recorded"),
+                   comparison.get("no_new_diagnostics", "not compared"),
                    comparison.get("exact_match", "not compared"))
             )
             lines.append(
-                "The inherited unregistered-XTENSION error may remain or disappear; a different/new "
-                "candidate diagnostic fails this case. This is not a global warning/error allowlist. "
-                "HDRLET raw bytes must match exactly."
+                "All non-target HDUs must remain byte-identical; strict whole-file size improvement: %s; "
+                "second-run idempotence: ok=%s, status `%s`, unchanged=%s. The inherited "
+                "unregistered-XTENSION error may remain or disappear; a different/new candidate diagnostic "
+                "fails this case. This is not a global warning/error allowlist."
+                % (strict_size.get("improved", "not recorded"),
+                   idempotence.get("ok", "not recorded"),
+                   idempotence.get("second_run_status", "not recorded"),
+                   idempotence.get("unchanged", "not recorded"))
+            )
+            omitted = exception.get("omitted_checks", fixture.get("omitted_checks", []))
+            lines.append(
+                "The HEASARC artifact contains no `funpack -C` or exact array read-back for HDRLET; "
+                "omitted checks: %s. Astropy's `multi.fits` is exercised only by the separate Astropy "
+                "CI oracle and is not included in this HEASARC artifact. HDRLET raw bytes must match exactly."
+                % (", ".join(omitted) if omitted else "not recorded")
             )
         for label in ("original", "candidate"):
             layout = fixture.get(label + "_hdus") or []
@@ -2973,7 +3065,7 @@ def render_diagnostics(summary, evidence):
         "is `fpack → funpack -C`: its output must pass fitsverify and its full literal header diff "
         "must be empty. The fpack reference is integer-only; float arrays are compared only as "
         "original versus `tzim → funpack -C`. The additional #78 controls run every "
-        "successful residual rewrite a second time, preserve malformed inputs and their "
+        "successful rewrite in the selected scope a second time, preserve malformed inputs and their "
         "directory contents on failure, and send NaN-payload, signed-zero, gzip, descriptor "
         "and card mutations through the same independent acceptance path."
     )
@@ -2992,7 +3084,7 @@ def _first_source_image(path):
 
 
 def run_idempotence_control(binary, cases, fixture_results, root, scratch, evidence, binary_sha256):
-    """Run every successful residual rewrite a second time and retain both byte streams."""
+    """Run every successful rewrite in this scope a second time and retain both byte streams."""
     by_name = {result.get("name"): result for result in fixture_results}
     rows = []
     for case in cases:
@@ -3431,10 +3523,21 @@ def main():
             "HDU preservation; strict whole-file size gate; atomic replacement only after success"
         ),
         ci_only=(
-            "on the exact checked-out SHA, fitsverify and independent CFITSIO funpack -C read every candidate "
-            "that tzim rewrites in the selected scope, including altered-candidate controls; compare "
-            "pixel-storage bytes, literal headers, and byte-exact non-target HDUs. Explicit refusal rows "
-            "are checked for their declared status and unchanged source bytes, not independently decompressed"
+            "on the exact checked-out SHA, every registered rewritten candidate in the selected scope requires "
+            "fitsverify exit 0, CFITSIO funpack -C exit 0, and exact array-byte comparison; literal headers and "
+            "byte-exact non-target HDUs are also checked. Explicit refusal rows are checked for their declared "
+            "status and unchanged source bytes, not independently decompressed"
+        ),
+        hdrlet_preservation_exception=(
+            "hdrlet_preservation.fits is a named preservation-only exception: candidate fitsverify diagnostics "
+            "are compared with this input's inherited per-file baseline (no new marker or increased warning/error "
+            "count); all non-target HDUs must remain byte-identical; strict whole-file size improvement and "
+            "second-run idempotence remain required. This HEASARC artifact contains no funpack -C or exact array "
+            "read-back for this fixture"
+        ),
+        separate_astropy_multi_fits=(
+            "Astropy's multi.fits fixture is exercised only by the separate Astropy CI oracle and is not included "
+            "in this HEASARC artifact"
         ),
         limitation=(
             "the CI matrix is representative candidate evidence, not an independent runtime read-back on every "
@@ -3814,6 +3917,8 @@ def self_check(root, cases, scratch, evidence, summary):
         hdus = parse(raw)
         check(b"".join(h.raw for h in hdus) == raw, "%s does not round trip through the reader" % case["name"])
         check(len(raw) % RECORD == 0, "%s is not a whole number of records" % case["name"])
+    for problem in funpack_skip_exception_problems(cases):
+        check(False, problem)
     print("reader: %d fixtures re-emit their own bytes" % len(cases))
 
     multi = parse(open(os.path.join(root, "multi_hdu.fits"), "rb").read())
@@ -3832,6 +3937,9 @@ def self_check(root, cases, scratch, evidence, summary):
     hdrlet_case = next((c for c in cases if c["name"] == "hdrlet_preservation.fits"), None)
     check(hdrlet_case is not None and hdrlet_case.get("skip_funpack") is True,
           "HDRLET must be a separate preservation-only case")
+    hdrlet_exception = (hdrlet_case or {}).get("skip_funpack_exception") or {}
+    check(hdrlet_exception.get("name") == "HDRLET preservation-only exception",
+          "HDRLET funpack omission must have its named preservation-only exception")
     hdrlet_hdus = parse(open(os.path.join(root, "hdrlet_preservation.fits"), "rb").read())
     hdrlet = next((h for h in hdrlet_hdus if h.kind() == "HDRLET"), None)
     check(hdrlet is not None and hdrlet.data == b"\x01\x02\x03\x04" * 200,
@@ -3855,6 +3963,23 @@ def self_check(root, cases, scratch, evidence, summary):
     check(zero_case is not None and zero_case.get("expect") == "untouched"
           and zero_case.get("status") == "already_optimal",
           "zero-width column must expect unchanged + already_optimal")
+
+    for codec in ("PLIO_1", "HCOMPRESS_1"):
+        codec_case = next(
+            (c for c in cases if c["name"] == "residual_unsupported_%s.fits" % codec.lower()),
+            None,
+        )
+        check(codec_case is not None and codec_case.get("required_note") == codec,
+              "%s refusal must require its codec name in the actual-binary note" % codec)
+    hcompress_path = os.path.join(root, "residual_unsupported_hcompress_1.fits")
+    hcompress_hdus = parse(open(hcompress_path, "rb").read())
+    hcompress_cards = [
+        card for hdu in hcompress_hdus for card in hdu.cards
+        if card[:8].strip() == "ZCMPTYPE"
+    ]
+    expected_hcompress_card = "ZCMPTYPE= 'HCOMPRESS_1         '".ljust(CARD)
+    check(hcompress_cards == [expected_hcompress_card],
+          "HCOMPRESS fixture card must remain exactly ZCMPTYPE= 'HCOMPRESS_1         '")
 
     # The specials fixture really does carry four NaN payloads and both zeros.
     specials = parse(open(os.path.join(root, "float32_specials.fits"), "rb").read())[0]
@@ -4050,6 +4175,12 @@ def render_summary(summary):
             original_fitsverify = "%s (%s)" % (
                 original_fitsverify, fixture["original_fitsverify_mode"]
             )
+        fitsverify_exit = fixture.get("fitsverify_exit")
+        if fitsverify_exit is None:
+            fitsverify_exit = "not run"
+        funpack_exit = fixture.get("funpack_exit")
+        if funpack_exit is None:
+            funpack_exit = "not run"
         lines.append(
             "| %s | %s | %s | %s | %s | %s | %s |"
             % (
@@ -4057,8 +4188,8 @@ def render_summary(summary):
                 fixture.get("expect"),
                 fixture.get("tzim", {}).get("status") if isinstance(fixture.get("tzim"), dict) else "-",
                 original_fitsverify,
-                fixture.get("fitsverify_exit", "-"),
-                fixture.get("funpack_exit", "-"),
+                fitsverify_exit,
+                funpack_exit,
                 "; ".join(problems) if problems else "none",
             )
         )
@@ -4069,8 +4200,10 @@ def render_summary(summary):
         lines += [
             "",
             "For valid-but-unsupported no-rewrite fixtures, original `fitsverify` output and exit are "
-            "recorded as source diagnostics only. Every rewritten candidate, including THEAP controls, "
-            "still requires `fitsverify` exit 0; the warning allowlist remains empty.",
+            "recorded as source diagnostics only. Every registered rewritten candidate, including THEAP "
+            "controls, requires `fitsverify` exit 0, `funpack -C` exit 0, and exact array comparison. "
+            "HDRLET is the named preservation-only exception described below; it does not create a global "
+            "warning allowlist.",
         ]
     matrix = summary.get("acceptance_matrix") or {}
     if matrix:
@@ -4128,6 +4261,13 @@ def render_summary(summary):
         lines.append("Runtime: " + verification.get("runtime", "not recorded") + ".")
         lines.append("")
         lines.append("CI only: " + verification.get("ci_only", "not recorded") + ".")
+        for field, label in (
+            ("hdrlet_preservation_exception", "HDRLET preservation-only exception"),
+            ("separate_astropy_multi_fits", "Separate Astropy multi.fits check"),
+        ):
+            if verification.get(field):
+                lines.append("")
+                lines.append(label + ": " + verification[field] + ".")
         lines.append("")
         lines.append(verification.get("limitation", ""))
     lines += ["", "Overall: **%s**" % ("PASS" if summary["ok"] else "FAIL")]

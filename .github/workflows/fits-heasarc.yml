@@ -7,10 +7,12 @@ name: fits-heasarc
 #
 # This is a release gate, not a required merge check. It is not allowed to be
 # quiet: there is no `continue-on-error` anywhere in it, and a tool that cannot
-# be built, a nonzero `fitsverify` result on a positive original or rewritten
-# candidate, or a header that does not diff clean fails the run. Valid but
-# unsupported no-rewrite inputs have no candidate; their original `fitsverify`
-# result is retained as source diagnostic evidence, not candidate acceptance.
+# be built, a nonzero `fitsverify` result on a registered positive original or
+# rewritten candidate, or a registered candidate header that does not diff clean
+# fails the run. The separate HDRLET preservation-only case uses its inherited
+# per-file diagnostic baseline. Valid but unsupported no-rewrite inputs have no candidate; their
+# original `fitsverify` result is retained as source diagnostic evidence, not
+# candidate acceptance.
 #
 # The tools are built from one archive whose SHA-256 is pinned below, so the
 # provenance of the verifier is a hash and not a package manager's mood:

@@ -162,16 +162,26 @@ impl Card {
 
     /// A character string value, without its quotes.
     ///
-    /// FITS escapes a quote inside a value by doubling it; a keyword this
-    /// handler reads (`XTENSION`, `ZCMPTYPE`, `TFORMn`, `EXTNAME`) never
-    /// contains one, so the closing quote is the last quote in the field and a
-    /// doubled quote would leave a visible artefact rather than being silently
-    /// mangled.
+    /// A FITS string may extend past column 30. Scan the complete card value
+    /// area and stop at its closing quote, before any trailing comment. A slash
+    /// before that quote is part of the value, and doubled quotes are skipped
+    /// while locating the terminator but kept in the returned slice.
     fn text(&self) -> Option<&str> {
-        let text = self.field().trim_start();
-        let rest = text.strip_prefix('\'')?;
-        let end = rest.rfind('\'')?;
-        Some(&rest[..end])
+        let value_area = std::str::from_utf8(&self.raw[10..]).ok()?.trim_start();
+        let rest = value_area.strip_prefix('\'')?;
+        let bytes = rest.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'\'' {
+                if bytes.get(index + 1) == Some(&b'\'') {
+                    index += 2;
+                    continue;
+                }
+                return Some(&rest[..index]);
+            }
+            index += 1;
+        }
+        None
     }
 }
 
@@ -2003,5 +2013,21 @@ mod tests {
             raw: assemble("ZCMPTYPE= 'GZIP_2'", ""),
         };
         assert_eq!(card.text(), Some("GZIP_2"));
+    }
+
+    #[test]
+    fn a_padded_long_codec_string_uses_the_complete_card_value_area() {
+        let card = Card {
+            raw: string_card("ZCMPTYPE", "HCOMPRESS_1         ", ""),
+        };
+        assert_eq!(card.text(), Some("HCOMPRESS_1         "));
+    }
+
+    #[test]
+    fn quoted_text_stops_before_a_comment_containing_quotes_and_slashes() {
+        let card = Card {
+            raw: string_card("OBJECT", "science/field", "comment has 'quoted text' / note"),
+        };
+        assert_eq!(card.text(), Some("science/field"));
     }
 }
