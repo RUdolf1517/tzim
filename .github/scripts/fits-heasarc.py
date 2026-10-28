@@ -259,7 +259,9 @@ def binary_table_with_theap():
         int_card("GCOUNT", 1),
         int_card("TFIELDS", 1),
         string_card("TTYPE1", "PAYLOAD"),
-        _card("%-8s= '%s'" % ("TFORM1", "1PB(4)")),
+        # CFITSIO funpack writes TFORM strings padded to eight characters inside
+        # quotes. Preserve the logical value 1PB(4) but match that literal form.
+        string_card("TFORM1", "1PB(4)  "),
         int_card("THEAP", 16),
     ]
     data = struct.pack(">II", 4, 0) + struct.pack(">II", 4, 4) + b"HEAPDATA"

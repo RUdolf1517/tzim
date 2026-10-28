@@ -596,6 +596,10 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         table = next(hdu for hdu in theap if hdu.kind() == "BINTABLE")
         self.assertEqual(table.int("THEAP"), 16)
         self.assertEqual(table.text("TFORM1"), "1PB(4)")
+        self.assertIn(
+            GATE.string_card("TFORM1", "1PB(4)  ").decode("ascii"),
+            table.cards,
+        )
         self.assertEqual(
             table.data,
             struct.pack(">II", 4, 0) + struct.pack(">II", 4, 4) + b"HEAPDATA",
