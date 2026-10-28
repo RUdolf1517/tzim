@@ -175,10 +175,11 @@ jobs:
           echo "run_oracle=$run_oracle" >> "$GITHUB_OUTPUT"
           echo "Astropy FITS oracle required: $run_oracle"
 
-  # FITS has a separate Astropy/CFITSIO check for the array round trip. This is
-  # not the HEASARC release gate: `fits-heasarc.yml` runs fitsverify and funpack
-  # on exact-SHA candidates. Keep their evidence and guarantees distinct; neither
-  # job alone is full-format admission or a runtime read-back in every binary.
+  # FITS has a separate Astropy `astropy.io.fits` check for the array round
+  # trip. Its GZIP_1/GZIP_2 decoder is not CFITSIO's `funpack`; the HEASARC gate
+  # below runs CFITSIO `fitsverify` and `funpack -C` on exact-SHA candidates.
+  # Keep their evidence and guarantees distinct; neither is full-format admission
+  # or a runtime read-back in every binary.
   fits-oracle:
     name: fits oracle (astropy)
     needs: [fits-change-scope]

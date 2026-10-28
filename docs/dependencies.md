@@ -258,9 +258,13 @@ the symmetry [guarantees §2.6](../docs/guarantees.md#26-verification-independen
 
 What the transformation actually needs is a gzip member (§2.1), an inflater and a CRC-32, so `fits` is
 `fits = ["dep:flate2", "dep:crc32fast"]` and nothing else. The CRC crate is the verifier's: the writer's
-framing comes from `flate2`, and the candidate's trailer is recomputed with an implementation it never calls. The second implementation lives outside the binary, in
-`.github/scripts/fits-oracle.py`, where `astropy` — CFITSIO underneath — reads every candidate back. It costs
-the binary nothing and the CI job one `pip install`.
+framing comes from `flate2`, and the candidate's trailer is recomputed with an implementation it never calls.
+The second implementation lives outside the binary, in `.github/scripts/fits-oracle.py`, where Astropy's own
+`astropy.io.fits` reader reads the GZIP_1/GZIP_2 candidates. Those paths use Python's `gzip` and Astropy's own
+GZIP2 byte shuffle; they do not call CFITSIO's `funpack`. Astropy has CFITSIO-derived C routines for other
+codecs, but tzim does not emit those codecs and this oracle does not exercise them. The separate HEASARC gate
+runs the actual CFITSIO `fitsverify` and `funpack -C` tools. The Astropy reader costs the binary nothing and the
+CI job one `pip install`.
 
 ## 3. Rejected dependencies
 

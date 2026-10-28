@@ -1033,8 +1033,9 @@ and [measurement status](measurement-status.md) for the limitations and open dec
 
 **Transformation.** One tier, and it is the only one.
 
-- Every eligible image HDU — the primary array or an `XTENSION = 'IMAGE'` extension with `NAXIS >= 1`, a
-  supported `BITPIX` and no `GROUPS` — is replaced by a tile-compressed `BINTABLE`: `ZIMAGE = T`, `TFIELDS =
+- Every eligible image HDU — the primary array or an `XTENSION = 'IMAGE'` extension with `1 <= NAXIS <= 6`,
+  a rewrite-supported `BITPIX` (`8`, `16`, `32`, `−32` or `−64`) and no `GROUPS` — is replaced by a
+  tile-compressed `BINTABLE`: `ZIMAGE = T`, `TFIELDS =
   1`, `TTYPE1 = 'COMPRESSED_DATA'`, `TFORM1 = '1PB(max)'`, `NAXIS1 = 8`, `NAXIS2 = ` the number of tiles,
   `PCOUNT = ` the heap length. Each row is the 32-bit big-endian `(count, offset)` descriptor a variable
   length column uses, and the tiles themselves are gzip members in the table's heap.
@@ -1069,14 +1070,20 @@ question 3, taken in the direction that can be verified: no `ZHECKSUM`/`ZDATASUM
 so there is no mirrored checksum that could be wrong, and the cost is named — archival products that carry
 checksums are not rewritten by this version.
 
-**Accepted subset** — an HDU is rewritten only when all of these hold, and the file is skipped with a reason
-otherwise:
+**Accepted subset** — an image HDU is rewritten only when all of these hold. A valid-but-unsupported image
+HDU is left byte-identical; in a mixed-HDU file, other eligible HDUs retain their existing per-HDU behavior:
 
 - `SIMPLE = T` starts the file at offset 0; every HDU is a whole number of 2880-byte records;
 - every header ends with an `END` card inside its records, and no card is truncated;
 - `|BITPIX|/8 × Π NAXISn` equals the data length the file actually holds;
-- `BITPIX` is one of 8, 16, 32, 64, −32, −64;
-- image rank is at most 99: the writer's `ZNAXISn` names must fit FITS's eight-character keyword field; higher standard-valid ranks are refused and preserved;
+- the writer's rewrite-only `BITPIX` subset is 8, 16, 32, −32 and −64. `BITPIX = 64` is still a recognized,
+  standard-valid input value but is not rewritten by this build;
+- image rank is `1 <= NAXIS <= 6`. The parser still recognizes ranks through `MAX_NAXIS = 999`; ranks 7 through
+  999 are valid-but-unsupported for rewriting and are preserved. The writer ceiling aligns with the pinned
+  CFITSIO `MAX_COMPRESS_DIM = 6` in [`fitsio.h`](https://github.com/HEASARC/cfitsio/blob/113781d8aa442cf8d3c27295d9084674b8b039f2/fitsio.h#L295);
+  this is a tool-interoperability subset, not the FITS standard's image-rank limit. A separate serializer guard
+  continues to refuse generated Z-keywords longer than FITS's eight-character field (for example `ZNAXIS100`),
+  even though the rank-six policy means an eligible rewrite cannot reach that case;
 - `GROUPS = T` is absent, and `PCOUNT = 0`/`GCOUNT = 1` where they appear;
 - no axis has length zero, and no `Z*` card appears on an image HDU;
 - `BSCALE = 1` and `BZERO = 0`, i.e. the image is not scaled;
@@ -1126,14 +1133,21 @@ external gzip inflation and CRC-32/ISIZE checks plus V3 for the shared `shuffle`
 
 **External checks, with their scope stated.** The checks above are made by code in this repository, which is
 exactly the position [§2.6](#26-verification-independence) calls weak. `.github/scripts/fits-oracle.py` reads
-every candidate back with **`astropy`** — CFITSIO underneath, the same tile decoder `fpack` and `funpack` call —
-compares integer arrays by bytes and floating-point arrays by their FITS storage bytes (including NaN payloads
-and signed zero), checks that each `ZIMAGE` table declares the codec required by tzim's writer policy without
-calling that policy a universal convention rule, and compares every copied HDU with the original's bytes. The
-separate HEASARC gate runs `fitsverify` and `funpack -C` in CI; a successful gate is evidence for its exact SHA,
-not a second decoder embedded in every user's invocation. Its manifest names the exact `tzim` binary SHA-256,
-fixture hashes and run identity. The residual #78 scope can run only additive missing rows; it does not replay the
-previously confirmed candidates. These are CI-only independent reads, not per-file runtime reads.
+every candidate back with Astropy's own `astropy.io.fits` compressed-image implementation and compares integer
+arrays by bytes and floating-point arrays by their FITS storage bytes (including NaN payloads and signed zero).
+For the only codecs tzim writes, `GZIP_1` and `GZIP_2`, Astropy uses Python's `gzip` plus its own GZIP2 byte
+shuffle; that path is separate from CFITSIO's `funpack`. Astropy's other codecs include CFITSIO-derived C
+routines, but they are not emitted or evaluated here. The oracle also checks that each `ZIMAGE` table declares
+the codec required by tzim's writer policy without calling that policy a universal convention rule, and compares
+every copied HDU with the original's bytes. The separate HEASARC gate runs CFITSIO `fitsverify` and `funpack -C`
+in CI; a successful gate is evidence for its exact SHA, not a second decoder embedded in every user's
+invocation. Its manifest names the exact `tzim` binary SHA-256, fixture hashes and run identity. On pull requests,
+the workflow records the PR-head SHA separately from the checked-out test-merge SHA, records both merge parents,
+and fails unless the PR head is one of them. The corpus manifest, acceptance matrix and rendered summary carry
+the same SHA/parent fields and an explicit `source_identity_valid` result. A full exact-head rerun can also record
+the PR-head SHA explicitly and must then check out that same SHA. The residual #78 scope can run only additive
+missing rows; it does not replay the previously confirmed candidates. These are CI-only independent reads, not
+per-file runtime reads.
 
 **Enforced accepted-file guarantee.** At runtime, a file is replaced only when it parses as the accepted subset
 above, the repository's structure/header/table verifier accepts the candidate, every generated gzip tile passes
@@ -1148,10 +1162,10 @@ remaining release decisions are tracked in [measurement status](measurement-stat
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`
-that are not the identity; an HDU carrying `CHECKSUM`/`DATASUM`; an axis of length zero; image rank above 99
-(`ZNAXIS100` cannot fit the eight-character keyword field); an `XTENSION` that is neither `IMAGE` nor `BINTABLE`
-(copied verbatim); the run not asking for it (`--fits-tile`); a candidate that is not strictly smaller, which
-is reported as `already_optimal`.
+that are not the identity; an HDU carrying `CHECKSUM`/`DATASUM`; an axis of length zero; valid `BITPIX = 64`
+or image rank above 6 (including ranks 7, 99 and 999), which are outside this writer's current rewrite subset;
+an `XTENSION` that is neither `IMAGE` nor `BINTABLE` (copied verbatim); the run not asking for it (`--fits-tile`);
+a candidate that is not strictly smaller, which is reported as `already_optimal`.
 
 **Corrupt (failed, exit 1):** a data length that disagrees with `NAXIS`/`BITPIX`; a header record that runs
 past the end of the file; bytes after the `END` card in a record; bytes after the last HDU; a second primary
