@@ -103,6 +103,9 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             {
                 "REQUESTED_SHA": "a" * 40,
                 "CHECKED_OUT_SHA": "a" * 40,
+                "PULL_REQUEST_HEAD_SHA": "b" * 40,
+                "CHECKED_OUT_PARENTS": "c" * 40 + " " + "b" * 40,
+                "GITHUB_EVENT_NAME": "pull_request",
                 "GITHUB_RUN_ID": "1234",
                 "GITHUB_RUN_ATTEMPT": "2",
             },
@@ -112,6 +115,13 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertEqual(manifest["scope"], "residual")
         self.assertEqual(manifest["requested_sha"], "a" * 40)
         self.assertEqual(manifest["checked_out_sha"], "a" * 40)
+        self.assertTrue(manifest["requested_sha_matches_checkout"])
+        self.assertEqual(manifest["pull_request_head_sha"], "b" * 40)
+        self.assertEqual(manifest["checked_out_parents"], ["c" * 40, "b" * 40])
+        self.assertTrue(manifest["pull_request_head_is_parent"])
+        self.assertFalse(manifest["pull_request_head_is_checked_out"])
+        self.assertTrue(manifest["source_identity_valid"])
+        self.assertTrue(manifest["run_identity"]["pull_request_head_is_parent"])
         self.assertEqual(manifest["run_id"], "1234")
         self.assertEqual(manifest["run_attempt"], "2")
         self.assertEqual(manifest["fixtures"][0]["bytes"], len(b"pinned fixture bytes"))
@@ -124,6 +134,43 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertEqual(manifest["prior_run"]["sha"], "0232d92b3171b4b7af5cdb4910f852a66308e7b4")
         self.assertFalse(manifest["prior_run"]["replayed"])
         self.assertTrue(manifest["prior_run"]["context_only"])
+
+    def test_manual_full_head_identity_is_distinct_from_merge_parent_check(self):
+        head_sha = "a" * 40
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUESTED_SHA": head_sha,
+                "CHECKED_OUT_SHA": head_sha,
+                "PULL_REQUEST_HEAD_SHA": head_sha,
+                "CHECKED_OUT_PARENTS": "b" * 40,
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+            },
+        ):
+            identity = GATE.run_identity()
+
+        self.assertEqual(identity["pull_request_head_sha"], head_sha)
+        self.assertIsNone(identity["pull_request_head_is_parent"])
+        self.assertIs(identity["pull_request_head_is_checked_out"], True)
+        self.assertTrue(identity["source_identity_valid"])
+        self.assertEqual(
+            GATE.run_identity_relationship(identity),
+            "PR head equals checked-out SHA: `True`",
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUESTED_SHA": "c" * 40,
+                "CHECKED_OUT_SHA": "c" * 40,
+                "PULL_REQUEST_HEAD_SHA": "d" * 40,
+                "CHECKED_OUT_PARENTS": "e" * 40,
+                "GITHUB_EVENT_NAME": "pull_request",
+            },
+        ):
+            invalid = GATE.run_identity()
+        self.assertFalse(invalid["pull_request_head_is_parent"])
+        self.assertFalse(invalid["source_identity_valid"])
 
     def test_acceptance_matrix_binds_all_three_hashes_and_strict_size(self):
         name = "residual_matrix_fixture.fits"
@@ -142,9 +189,21 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             "strict_size": {"improved": True},
             "problems": [],
         }
-        matrix = GATE.acceptance_matrix_summary(
-            [{"name": name, "matrix": identity}], [result], "residual"
-        )
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUESTED_SHA": "e" * 40,
+                "CHECKED_OUT_SHA": "e" * 40,
+                "PULL_REQUEST_HEAD_SHA": "f" * 40,
+                "CHECKED_OUT_PARENTS": "g" * 40 + " " + "f" * 40,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_RUN_ID": "5678",
+                "GITHUB_RUN_ATTEMPT": "1",
+            },
+        ):
+            matrix = GATE.acceptance_matrix_summary(
+                [{"name": name, "matrix": identity}], [result], "unit-test"
+            )
         row = matrix["rows"][0]
         self.assertTrue(matrix["complete"])
         self.assertTrue(row["accepted"])
@@ -152,7 +211,34 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertEqual(row["input_sha256"], "a" * 64)
         self.assertEqual(row["candidate_sha256"], "b" * 64)
         self.assertEqual(row["binary_sha256"], "c" * 64)
+        self.assertEqual(matrix["pull_request_head_sha"], "f" * 40)
+        self.assertEqual(matrix["checked_out_sha"], "e" * 40)
+        self.assertTrue(matrix["requested_sha_matches_checkout"])
+        self.assertTrue(matrix["pull_request_head_is_parent"])
+        self.assertFalse(matrix["pull_request_head_is_checked_out"])
+        self.assertTrue(matrix["source_identity_valid"])
+        self.assertEqual(matrix["run_identity"]["pull_request_head_sha"], "f" * 40)
+        self.assertTrue(matrix["run_identity"]["pull_request_head_is_parent"])
         self.assertFalse(matrix["inherited_run_replayed"])
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "REQUESTED_SHA": "e" * 40,
+                "CHECKED_OUT_SHA": "e" * 40,
+                "PULL_REQUEST_HEAD_SHA": "f" * 40,
+                "CHECKED_OUT_PARENTS": "g" * 40,
+                "GITHUB_EVENT_NAME": "pull_request",
+            },
+        ):
+            invalid_identity = GATE.acceptance_matrix_summary(
+                [{"name": name, "matrix": identity}], [result], "unit-test"
+            )
+        self.assertFalse(invalid_identity["source_identity_valid"])
+        self.assertFalse(invalid_identity["complete"])
+        self.assertIn(
+            "source run identity relationship is invalid", invalid_identity["missing"]
+        )
 
         result.pop("binary_sha256")
         incomplete = GATE.acceptance_matrix_summary(
@@ -206,8 +292,13 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                 "scope": "residual",
                 "requested_sha": "c" * 40,
                 "checked_out_sha": "c" * 40,
+                "pull_request_head_sha": "d" * 40,
+                "checked_out_parents": ["e" * 40, "d" * 40],
+                "pull_request_head_is_parent": True,
+                "source_identity_valid": True,
                 "run_id": "4567",
                 "run_attempt": "1",
+                "event_name": "pull_request",
             },
             "binary": {"path": "/tmp/tzim", "bytes": 123, "sha256": hash_b},
             "fixtures": [
@@ -217,9 +308,10 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                     "expected_status": "skipped",
                     "input_sha256": hash_a,
                     "candidate_sha256": hash_a,
+                    "original_fitsverify_exit": 0,
                     "tzim": {
                         "status": "skipped",
-                        "note": "Z-form keyword ZNAXIS100 does not fit in eight columns",
+                        "note": "fits: NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
                     },
                     "problems": [],
                 }
@@ -248,9 +340,13 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
 
         diagnostics = GATE.render_diagnostics(summary, self.evidence)
         self.assertIn("funpack -C exited 1: BITPIX=64 mismatch", diagnostics)
-        self.assertIn("Z-form keyword ZNAXIS100 does not fit in eight columns", diagnostics)
+        self.assertIn("NAXIS = 999 exceeds this build's tile-rewrite limit of 6", diagnostics)
         self.assertIn("byte-identical", diagnostics)
         self.assertIn("| skipped | skipped | yes |", diagnostics)
+        self.assertIn("PR-head SHA `dddddddddddddddddddddddddddddddddddddddd`", diagnostics)
+        self.assertIn("PR head is a recorded parent: `True`", diagnostics)
+        self.assertIn("Source identity valid: **True**", diagnostics)
+        self.assertIn("| skipped | skipped | yes | 0 |", diagnostics)
         self.assertIn(hash_a, diagnostics)
 
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):
@@ -314,6 +410,10 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         selected = GATE.select_fixtures(all_cases, "residual")
         names = {case["name"] for case in selected}
         self.assertIn("residual_bitpix8_naxis1_primary.fits", names)
+        self.assertIn("residual_bitpix32_naxis4_primary.fits", names)
+        self.assertIn("residual_bitpix16_naxis6_primary.fits", names)
+        self.assertIn("residual_bitpix64_naxis4_primary.fits", names)
+        self.assertIn("residual_bitpix16_naxis7_primary.fits", names)
         self.assertIn("residual_bitpix16_naxis99_primary.fits", names)
         self.assertIn("residual_bitpix16_naxis999_primary.fits", names)
         self.assertIn("residual_theap_non_target.fits", names)
@@ -322,19 +422,56 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         matrix_cases = [case for case in selected if case.get("matrix")]
         self.assertEqual(
             {case["matrix"]["bitpix"] for case in matrix_cases},
-            {8, 16, 32, 64, -32, -64},
+            {8, 16, 32, -32, -64},
         )
         self.assertEqual(
             {case["matrix"]["naxis"] for case in matrix_cases},
-            {1, 3, 4, 99},
+            {1, 3, 4, 6},
         )
+        self.assertEqual(
+            {case["matrix"]["role"] for case in matrix_cases},
+            {"PRIMARY", "IMAGE"},
+        )
+        self.assertEqual(
+            {case["name"] for case in matrix_cases},
+            {
+                "residual_bitpix8_naxis1_primary.fits",
+                "residual_bitpix32_naxis3_image.fits",
+                "residual_bitpix32_naxis4_primary.fits",
+                "residual_float32_naxis1_image.fits",
+                "residual_float64_naxis3_primary.fits",
+                "residual_bitpix16_naxis6_primary.fits",
+            },
+        )
+        matrix = GATE.acceptance_matrix_summary(selected, [], "residual")
+        self.assertEqual(
+            matrix["expected"],
+            dict(bitpix=[-64, -32, 8, 16, 32], naxis=[1, 3, 4, 6], roles=["IMAGE", "PRIMARY"]),
+        )
+        self.assertEqual(matrix["declared"], matrix["expected"])
+        self.assertFalse(matrix["complete"])
         high_rank = next(
             case for case in selected
             if case["name"] == "residual_bitpix16_naxis999_primary.fits"
         )
         self.assertEqual(high_rank["expect"], "untouched")
         self.assertEqual(high_rank["status"], "skipped")
-        self.assertEqual(high_rank["required_note"], "does not fit in eight columns")
+        self.assertEqual(
+            high_rank["required_note"],
+            "NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
+        )
+        refusals = {
+            "residual_bitpix64_naxis4_primary.fits": "BITPIX 64 is outside this build's tile-rewrite subset",
+            "residual_bitpix16_naxis7_primary.fits": "NAXIS = 7 exceeds this build's tile-rewrite limit of 6",
+            "residual_bitpix16_naxis99_primary.fits": "NAXIS = 99 exceeds this build's tile-rewrite limit of 6",
+            "residual_bitpix16_naxis999_primary.fits": "NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
+        }
+        for name, note in refusals.items():
+            case = next(case for case in selected if case["name"] == name)
+            self.assertEqual(case["expect"], "untouched")
+            self.assertEqual(case["status"], "skipped")
+            self.assertEqual(case["required_note"], note)
+            self.assertEqual(case["diagnostics"], "registered")
         manifest = GATE.corpus_manifest(str(fixture_root), selected, "residual")
         manifest_names = {fixture["name"] for fixture in manifest["fixtures"]}
         self.assertEqual(manifest_names, names)
@@ -343,9 +480,58 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             if fixture["name"] == "residual_bitpix16_naxis999_primary.fits"
         )
         self.assertEqual(manifest_high_rank["expectation"], "untouched")
-        self.assertEqual(manifest_high_rank["required_note"], "does not fit in eight columns")
+        self.assertEqual(manifest_high_rank["diagnostics"], "registered")
+        self.assertEqual(
+            manifest_high_rank["required_note"],
+            "NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
+        )
         self.assertFalse(manifest["prior_run"]["replayed"])
         self.assertFalse(manifest["external_astropy"]["included"])
+
+    def test_valid_rewrite_refusals_retain_original_fitsverify_logs(self):
+        fixture_root = self.root / "fixtures"
+        cases = GATE.build_fixtures(str(fixture_root))
+        refusal_cases = [
+            case
+            for case in cases
+            if case.get("name") in {
+                "residual_bitpix64_naxis4_primary.fits",
+                "residual_bitpix16_naxis7_primary.fits",
+                "residual_bitpix16_naxis99_primary.fits",
+                "residual_bitpix16_naxis999_primary.fits",
+            }
+        ]
+        self.assertEqual(len(refusal_cases), 4)
+        for case in refusal_cases:
+            with self.subTest(fixture=case["name"]):
+                note = case["required_note"]
+                with mock.patch.object(
+                    GATE,
+                    "tzim_run",
+                    return_value=(0, {"status": "skipped", "note": "fits: " + note}, ""),
+                ):
+                    with mock.patch.object(
+                        GATE, "fitsverify", return_value=(0, "fitsverify clean\\n")
+                    ) as verify:
+                        result = GATE.check_fixture(
+                            "/tmp/tzim",
+                            case,
+                            str(fixture_root),
+                            str(self.scratch),
+                            self.evidence,
+                        )
+                self.assertEqual(result["tzim_exit"], 0)
+                self.assertEqual(result["tzim"]["status"], "skipped")
+                self.assertEqual(result["candidate_sha256"], result["input_sha256"])
+                self.assertEqual(result["original_fitsverify_exit"], 0)
+                verify.assert_called_once()
+                self.assertTrue(
+                    (
+                        self.evidence_root
+                        / ("fitsverify-original-%s.txt" % case["name"])
+                    ).is_file()
+                )
+                self.assertEqual(result["problems"], [])
 
     def test_residual_matrix_and_float_specials_parse_as_declared(self):
         fixture_root = self.root / "fixtures"
@@ -365,28 +551,31 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                 presence = GATE.float_specials_present(image.data, expected["bitpix"])
                 self.assertTrue(all(presence.get(key) for key in expected["floating_storage"]), case["name"])
 
-    def test_residual_rank_99_is_the_write_boundary_and_rank_999_is_a_refusal(self):
+    def test_residual_rank_six_is_positive_and_higher_ranks_are_refusals(self):
         fixture_root = self.root / "fixtures"
         cases = GATE.build_fixtures(str(fixture_root))
         accepted = next(
             case for case in cases
-            if case["name"] == "residual_bitpix16_naxis99_primary.fits"
+            if case["name"] == "residual_bitpix16_naxis6_primary.fits"
         )
         accepted_hdus = GATE.parse((fixture_root / accepted["name"]).read_bytes())
-        self.assertEqual(accepted_hdus[0].int("NAXIS"), 99)
-        self.assertEqual(len(accepted_hdus[0].axes()), 99)
+        self.assertEqual(accepted_hdus[0].int("NAXIS"), 6)
+        self.assertEqual(len(accepted_hdus[0].axes()), 6)
         self.assertTrue(accepted["matrix"])
+        self.assertEqual(accepted["matrix"]["naxis"], 6)
 
-        refused = next(
-            case for case in cases
-            if case["name"] == "residual_bitpix16_naxis999_primary.fits"
-        )
-        refused_hdus = GATE.parse((fixture_root / refused["name"]).read_bytes())
-        self.assertEqual(refused_hdus[0].int("NAXIS"), 999)
-        self.assertEqual(len(refused_hdus[0].axes()), 999)
-        self.assertEqual(refused["expect"], "untouched")
-        self.assertEqual(refused["status"], "skipped")
-        self.assertEqual(refused["required_note"], "does not fit in eight columns")
+        for rank in (7, 99, 999):
+            name = "residual_bitpix16_naxis%d_primary.fits" % rank
+            refused = next(case for case in cases if case["name"] == name)
+            refused_hdus = GATE.parse((fixture_root / name).read_bytes())
+            self.assertEqual(refused_hdus[0].int("NAXIS"), rank)
+            self.assertEqual(len(refused_hdus[0].axes()), rank)
+            self.assertEqual(refused["expect"], "untouched")
+            self.assertEqual(refused["status"], "skipped")
+            self.assertEqual(
+                refused["required_note"],
+                "NAXIS = %d exceeds this build's tile-rewrite limit of 6" % rank,
+            )
 
     def test_random_groups_and_theap_fixtures_have_expected_data_boundaries(self):
         fixture_root = self.root / "fixtures"
@@ -398,7 +587,11 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         theap = GATE.parse((fixture_root / "residual_theap_non_target.fits").read_bytes())
         table = next(hdu for hdu in theap if hdu.kind() == "BINTABLE")
         self.assertEqual(table.int("THEAP"), 16)
-        self.assertEqual(len(table.data), 24)
+        self.assertEqual(table.text("TFORM1"), "1PB(4)")
+        self.assertEqual(
+            table.data,
+            struct.pack(">II", 4, 0) + struct.pack(">II", 4, 4) + b"HEAPDATA",
+        )
 
     def test_float_storage_mutations_survive_gzip_but_change_pixel_bytes(self):
         source = GATE.float32_residual_specials(100)

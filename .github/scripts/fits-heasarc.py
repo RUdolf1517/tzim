@@ -3,9 +3,9 @@
 
 `docs/fits-audit.md` §8.3 and `docs/guarantees.md` §4.12 both say the FITS
 handler may not be released before the HEASARC tools have accepted its output.
-The `fits oracle (astropy)` job reads candidates back with CFITSIO through
-`astropy`, which is a second implementation for the arrays but is not that gate.
-This script is the gate.
+The `fits oracle (astropy)` job uses Astropy's own `astropy.io.fits` reader
+for the GZIP_1/GZIP_2 arrays; it does not call CFITSIO's `funpack`. This script
+is the separate HEASARC gate and runs `fitsverify` plus CFITSIO `funpack -C`.
 
 Everything is **standard library only**. That is deliberate: a FITS parser
 written here shares no code with the crate under test and none with the tools
@@ -68,6 +68,10 @@ ASTROPY_DOUBLE_EXT_BYTES = 11520
 
 #: Card widths by BITPIX, in bytes per sample.
 SAMPLE_BYTES = {8: 1, 16: 2, 32: 4, 64: 8, -32: 4, -64: 8}
+
+RESIDUAL_REQUIRED_BITPIX = [-64, -32, 8, 16, 32]
+RESIDUAL_REQUIRED_NAXIS = [1, 3, 4, 6]
+RESIDUAL_REQUIRED_ROLES = ["IMAGE", "PRIMARY"]
 
 
 # ---------------------------------------------------------------------------
@@ -254,10 +258,10 @@ def binary_table_with_theap():
         int_card("GCOUNT", 1),
         int_card("TFIELDS", 1),
         string_card("TTYPE1", "PAYLOAD"),
-        _card("%-8s= '%s'" % ("TFORM1", "8A")),
+        _card("%-8s= '%s'" % ("TFORM1", "1PB(4)")),
         int_card("THEAP", 16),
     ]
-    data = bytes(range(16)) + b"HEAPDATA"
+    data = struct.pack(">II", 4, 0) + struct.pack(">II", 4, 4) + b"HEAPDATA"
     return header_bytes(cards) + pad_data(data)
 
 
@@ -855,11 +859,11 @@ def build_fixtures(root):
             integer_pattern_bitpix(32, 64 * 32 * 16),
         ),
         (
-            "residual_bitpix64_naxis4_primary.fits",
-            64,
-            [64, 8, 4, 2],
+            "residual_bitpix32_naxis4_primary.fits",
+            32,
+            [64, 32, 16, 2],
             "PRIMARY",
-            integer_pattern_bitpix(64, 64 * 8 * 4 * 2),
+            integer_pattern_bitpix(32, 64 * 32 * 16 * 2),
         ),
         (
             "residual_float32_naxis1_image.fits",
@@ -876,9 +880,9 @@ def build_fixtures(root):
             float64_residual_specials(64 * 8 * 4),
         ),
         (
-            "residual_bitpix16_naxis99_primary.fits",
+            "residual_bitpix16_naxis6_primary.fits",
             16,
-            [1048576] + [1] * 98,
+            [1048576] + [1] * 5,
             "PRIMARY",
             integer_pattern_bitpix(16, 1048576),
         ),
@@ -918,8 +922,8 @@ def build_fixtures(root):
                     % (role, bitpix, len(axes))
                 ),
                 why=(
-                    "issue #78 residual actual-binary matrix: all six supported BITPIX values, "
-                    "representative ranks 1/3/4 and maximum writable rank 99, with primary and "
+                    "issue #78 residual actual-binary rewrite matrix: all five values in the "
+                    "BITPIX tile-rewrite subset, boundary ranks 1/3/4/6, and both primary and "
                     "IMAGE-extension rewrites"
                 ),
             )
@@ -959,6 +963,36 @@ def build_fixtures(root):
             "non-identity GCOUNT on an ordinary image is refused and preserved",
         ),
         (
+            "residual_bitpix64_naxis4_primary.fits",
+            image_hdu(
+                64,
+                [64, 8, 4, 2],
+                integer_pattern_bitpix(64, 64 * 8 * 4 * 2),
+                primary=True,
+            ),
+            "standard-valid BITPIX=64 is parsed but outside this build's tile-rewrite subset",
+        ),
+        (
+            "residual_bitpix16_naxis7_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 6,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=7 is parsed but exceeds this build's tile-rewrite limit of 6",
+        ),
+        (
+            "residual_bitpix16_naxis99_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 98,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=99 is parsed but exceeds this build's tile-rewrite limit of 6",
+        ),
+        (
             "residual_bitpix16_naxis999_primary.fits",
             image_hdu(
                 16,
@@ -966,7 +1000,7 @@ def build_fixtures(root):
                 integer_pattern_bitpix(16, 1048576),
                 primary=True,
             ),
-            "standard-valid NAXIS=999 is outside this writer's subset because ZNAXIS100 exceeds the eight-character FITS keyword field",
+            "standard-valid NAXIS=999 is parsed but exceeds this build's tile-rewrite limit of 6",
         ),
         (
             "residual_bzero_scaled.fits",
@@ -990,8 +1024,23 @@ def build_fixtures(root):
             input_case="Deterministic issue #78 refusal fixture; not a corpus measurement input.",
             why=why,
         )
-        if name == "residual_bitpix16_naxis999_primary.fits":
-            case["required_note"] = "does not fit in eight columns"
+        refusal_notes = {
+            "residual_bitpix64_naxis4_primary.fits": (
+                "BITPIX 64 is outside this build's tile-rewrite subset"
+            ),
+            "residual_bitpix16_naxis7_primary.fits": (
+                "NAXIS = 7 exceeds this build's tile-rewrite limit of 6"
+            ),
+            "residual_bitpix16_naxis99_primary.fits": (
+                "NAXIS = 99 exceeds this build's tile-rewrite limit of 6"
+            ),
+            "residual_bitpix16_naxis999_primary.fits": (
+                "NAXIS = 999 exceeds this build's tile-rewrite limit of 6"
+            ),
+        }
+        if name in refusal_notes:
+            case["required_note"] = refusal_notes[name]
+            case["diagnostics"] = "registered"
         cases.append(case)
 
     for codec in ("PLIO_1", "HCOMPRESS_1"):
@@ -2180,6 +2229,19 @@ def check_fixture(binary, case, root, scratch, evidence):
         )
         return result
 
+    if case["expect"] == "untouched" and case.get("diagnostics") == "registered":
+        verify_code, verify_output = fitsverify(kept, scratch)
+        result["original_fitsverify_exit"] = verify_code
+        result["original_fitsverify_diagnostics"] = fitsverify_diagnostics(verify_output)
+        evidence.write_text(
+            "fitsverify-original-%s.txt" % case["name"], verify_output
+        )
+        if verify_code != 0:
+            result["problems"].append(
+                "registered valid refusal fixture original fitsverify exit is %d, expected 0"
+                % verify_code
+            )
+
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
     result["tzim"] = record
@@ -2284,6 +2346,73 @@ def select_fixtures(cases, scope):
     raise ValueError("unknown FITS evidence scope %r" % scope)
 
 
+def run_identity_is_valid(identity):
+    """Check exact checkout identity and the event-specific PR-head relation."""
+    if identity.get("requested_sha_matches_checkout") is False:
+        return False
+    head = identity.get("pull_request_head_sha")
+    if identity.get("event_name") == "pull_request":
+        return bool(head) and identity.get("pull_request_head_is_parent") is True
+    if head:
+        return identity.get("pull_request_head_is_checked_out") is True
+    return True
+
+
+def run_identity():
+    """Source/run identity shared by the manifest, summary and acceptance record."""
+    parents_text = os.environ.get("CHECKED_OUT_PARENTS", "")
+    parents = parents_text.split()
+    requested_sha = os.environ.get("REQUESTED_SHA", os.environ.get("GITHUB_SHA"))
+    pull_request_head = os.environ.get("PULL_REQUEST_HEAD_SHA", "")
+    checked_out_sha = os.environ.get("CHECKED_OUT_SHA")
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    identity = dict(
+        requested_sha=requested_sha,
+        checked_out_sha=checked_out_sha,
+        requested_sha_matches_checkout=(
+            requested_sha == checked_out_sha
+            if requested_sha and checked_out_sha
+            else None
+        ),
+        pull_request_head_sha=pull_request_head,
+        checked_out_parents=parents,
+        pull_request_head_is_parent=(
+            pull_request_head in parents if event_name == "pull_request" else None
+        ),
+        pull_request_head_is_checked_out=(
+            pull_request_head == checked_out_sha if pull_request_head else None
+        ),
+        event_name=event_name,
+        run_id=os.environ.get("GITHUB_RUN_ID"),
+        run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
+        run_url=(
+            "%s/%s/actions/runs/%s"
+            % (
+                os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+                os.environ.get("GITHUB_REPOSITORY", ""),
+                os.environ.get("GITHUB_RUN_ID", ""),
+            )
+            if os.environ.get("GITHUB_RUN_ID")
+            else None
+        ),
+    )
+    identity["source_identity_valid"] = run_identity_is_valid(identity)
+    return identity
+
+
+def run_identity_relationship(run):
+    """Describe the expected PR-head relationship for the triggering event."""
+    if run.get("event_name") == "pull_request":
+        return "PR head is a recorded parent: `%s`" % run.get(
+            "pull_request_head_is_parent", "not recorded"
+        )
+    if run.get("pull_request_head_sha"):
+        return "PR head equals checked-out SHA: `%s`" % run.get(
+            "pull_request_head_is_checked_out", "not recorded"
+        )
+    return "PR-head relation: not applicable"
+
+
 def acceptance_matrix_summary(cases, fixture_results, scope):
     """Bind each new matrix row to its raw input, writer result and candidate."""
     by_name = {result.get("name"): result for result in fixture_results}
@@ -2339,28 +2468,84 @@ def acceptance_matrix_summary(cases, fixture_results, scope):
                 problems=result.get("problems", []),
             )
         )
-    expected_bitpix = sorted({row["expected"]["bitpix"] for row in rows})
-    expected_naxis = sorted({row["expected"]["naxis"] for row in rows})
-    expected_roles = sorted({row["expected"]["role"] for row in rows})
+    declared_bitpix = sorted({row["expected"]["bitpix"] for row in rows})
+    declared_naxis = sorted({row["expected"]["naxis"] for row in rows})
+    declared_roles = sorted({row["expected"]["role"] for row in rows})
+    if scope in ("residual", "full"):
+        expected_bitpix = RESIDUAL_REQUIRED_BITPIX
+        expected_naxis = RESIDUAL_REQUIRED_NAXIS
+        expected_roles = RESIDUAL_REQUIRED_ROLES
+    else:
+        expected_bitpix = declared_bitpix
+        expected_naxis = declared_naxis
+        expected_roles = declared_roles
+
+    coverage_problems = []
+    for label, declared, required in (
+        ("BITPIX", declared_bitpix, expected_bitpix),
+        ("NAXIS", declared_naxis, expected_naxis),
+        ("roles", declared_roles, expected_roles),
+    ):
+        if declared != required:
+            coverage_problems.append(
+                "declared %s coverage %s does not match required %s"
+                % (label, declared, required)
+            )
+
     accepted_rows = [row for row in rows if row["accepted"]]
     covered_bitpix = sorted({row["expected"]["bitpix"] for row in accepted_rows})
     covered_naxis = sorted({row["expected"]["naxis"] for row in accepted_rows})
     covered_roles = sorted({row["expected"]["role"] for row in accepted_rows})
     missing = [row["fixture"] for row in rows if not row["accepted"]]
+    missing.extend(coverage_problems)
+    for label, required, covered in (
+        ("BITPIX", expected_bitpix, covered_bitpix),
+        ("NAXIS", expected_naxis, covered_naxis),
+        ("roles", expected_roles, covered_roles),
+    ):
+        missing.extend(
+            "coverage %s=%s" % (label, value)
+            for value in required
+            if value not in covered
+        )
+    identity = run_identity()
+    source_identity_valid = identity["source_identity_valid"]
+    if not source_identity_valid:
+        missing.append("source run identity relationship is invalid")
+    complete = (
+        bool(rows)
+        and not missing
+        and not coverage_problems
+        and source_identity_valid
+        and covered_bitpix == expected_bitpix
+        and covered_naxis == expected_naxis
+        and covered_roles == expected_roles
+    )
     return dict(
-        schema_version=1,
+        schema_version=2,
         scope=scope,
-        source="new issue #78 residual rows; previously confirmed fixtures are not replayed in residual scope",
+        run_identity=identity,
+        requested_sha=identity["requested_sha"],
+        checked_out_sha=identity["checked_out_sha"],
+        requested_sha_matches_checkout=identity["requested_sha_matches_checkout"],
+        pull_request_head_sha=identity["pull_request_head_sha"],
+        checked_out_parents=identity["checked_out_parents"],
+        pull_request_head_is_parent=identity["pull_request_head_is_parent"],
+        pull_request_head_is_checked_out=identity["pull_request_head_is_checked_out"],
+        source_identity_valid=identity["source_identity_valid"],
+        source="issue #78 rewrite matrix; residual scope is additive and does not replay previously confirmed fixtures",
         inherited_run_id="40551071072",
         inherited_run_sha="0232d92b3171b4b7af5cdb4910f852a66308e7b4",
         inherited_run_attempt=1,
         inherited_run_context_only=True,
         inherited_run_replayed=False,
         expected=dict(bitpix=expected_bitpix, naxis=expected_naxis, roles=expected_roles),
+        declared=dict(bitpix=declared_bitpix, naxis=declared_naxis, roles=declared_roles),
         observed=dict(bitpix=covered_bitpix, naxis=covered_naxis, roles=covered_roles),
+        coverage_problems=coverage_problems,
         missing=missing,
         rows=rows,
-        complete=bool(rows) and not missing,
+        complete=complete,
     )
 
 
@@ -2380,16 +2565,25 @@ def corpus_manifest(root, cases, scope="full"):
                 status=case.get("status"),
                 residual_only=bool(case.get("residual_only")),
                 matrix=case.get("matrix"),
+                diagnostics=case.get("diagnostics"),
                 required_note=case.get("required_note"),
                 input_case=case.get("input_case"),
                 why=case.get("why"),
             )
         )
+    identity = run_identity()
     return dict(
-        schema_version=2,
+        schema_version=3,
         scope=scope,
-        requested_sha=os.environ.get("REQUESTED_SHA", os.environ.get("GITHUB_SHA")),
-        checked_out_sha=os.environ.get("CHECKED_OUT_SHA"),
+        run_identity=identity,
+        requested_sha=identity["requested_sha"],
+        checked_out_sha=identity["checked_out_sha"],
+        requested_sha_matches_checkout=identity["requested_sha_matches_checkout"],
+        pull_request_head_sha=identity["pull_request_head_sha"],
+        checked_out_parents=identity["checked_out_parents"],
+        pull_request_head_is_parent=identity["pull_request_head_is_parent"],
+        pull_request_head_is_checked_out=identity["pull_request_head_is_checked_out"],
+        source_identity_valid=identity["source_identity_valid"],
         run_id=os.environ.get("GITHUB_RUN_ID"),
         run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
         source="deterministic fixtures generated by fits-heasarc.py",
@@ -2514,12 +2708,21 @@ def render_diagnostics(summary, evidence):
         lines.append("## Exact run and issue #78 residual evidence")
         lines.append("")
         lines.append(
-            "Requested SHA `%s`; checked-out SHA `%s`; run `%s`, attempt `%s`."
+            "Requested SHA (test-merge SHA for PR events) `%s`; checked-out SHA `%s`; PR-head SHA `%s`; run `%s`, attempt `%s`."
             % (run.get("requested_sha", "not recorded"),
                run.get("checked_out_sha", "not recorded"),
+               run.get("pull_request_head_sha") or "not applicable (non-PR event)",
                run.get("run_id", "not recorded"),
                run.get("run_attempt", "not recorded"))
         )
+        lines.append(
+            "Checked-out commit parents: `%s`; %s."
+            % (
+                " ".join(run.get("checked_out_parents") or []) or "none",
+                run_identity_relationship(run),
+            )
+        )
+        lines.append("Source identity valid: **%s**." % run.get("source_identity_valid", "not recorded"))
         lines.append(
             "Run `40551071072` at SHA `0232d92b3171b4b7af5cdb4910f852a66308e7b4` is context only; "
             "it is neither downloaded nor replayed by this gate. Only the additive missing rows "
@@ -2560,8 +2763,8 @@ def render_diagnostics(summary, evidence):
         untouched = [fixture for fixture in summary["fixtures"] if fixture.get("expect") == "untouched"]
         if untouched:
             lines += ["", "### Expected untouched rows", ""]
-            lines.append("| fixture | expected status | actual status | byte-identical | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
-            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+            lines.append("| fixture | expected status | actual status | byte-identical | original fitsverify exit | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
             for fixture in untouched:
                 record = fixture.get("tzim") or {}
                 input_sha = fixture.get("input_sha256")
@@ -2571,11 +2774,12 @@ def render_diagnostics(summary, evidence):
                 else:
                     unchanged = "not recorded"
                 lines.append(
-                    "| %(fixture)s | %(expected)s | %(actual)s | %(unchanged)s | `%(input_sha)s` | `%(candidate_sha)s` | %(note)s | %(problems)s |" % {
+                    "| %(fixture)s | %(expected)s | %(actual)s | %(unchanged)s | %(original_fitsverify)s | `%(input_sha)s` | `%(candidate_sha)s` | %(note)s | %(problems)s |" % {
                         "fixture": markdown_cell(fixture.get("name", "?")),
                         "expected": markdown_cell(fixture.get("expected_status")),
                         "actual": markdown_cell(record.get("status")),
                         "unchanged": unchanged,
+                        "original_fitsverify": fixture.get("original_fitsverify_exit", "not run"),
                         "input_sha": input_sha or "not recorded",
                         "candidate_sha": candidate_sha or "not recorded",
                         "note": markdown_cell(record.get("note")),
@@ -3147,12 +3351,10 @@ def main():
     scratch = os.path.join(args.work, "scratch")
     os.makedirs(scratch, exist_ok=True)
 
+    identity = run_identity()
     summary = dict(
         run=dict(
-            requested_sha=os.environ.get("REQUESTED_SHA", os.environ.get("GITHUB_SHA")),
-            checked_out_sha=os.environ.get("CHECKED_OUT_SHA"),
-            run_id=os.environ.get("GITHUB_RUN_ID"),
-            run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
+            **identity,
             workflow=os.environ.get("GITHUB_WORKFLOW"),
             scope=args.scope,
         ),
@@ -3198,8 +3400,9 @@ def main():
     summary["verification_scope"] = dict(
         accepted_subset=(
             "only whole-file FITS inputs whose complete candidate is verified and strictly smaller; "
-            "only unscaled, non-GROUPS image HDUs with supported BITPIX, valid dimensions, "
-            "identity PCOUNT/GCOUNT, no CHECKSUM/DATASUM, and GZIP_1/GZIP_2 output"
+            "only unscaled, non-GROUPS image HDUs with BITPIX 8, 16, 32, -32 or -64 and NAXIS 1 through 6, "
+            "valid dimensions, identity PCOUNT/GCOUNT, no CHECKSUM/DATASUM, and GZIP_1/GZIP_2 output. "
+            "BITPIX 64 and standard-valid ranks above 6 are parsed and preserved as skipped refusals"
         ),
         runtime=(
             "repository V3 structure/header/table verification; candidate gzip inflation with CRC-32/ISIZE; "
@@ -3789,11 +3992,20 @@ def render_summary(summary):
     scope = run.get("scope", "full")
     lines = ["# fitsverify / funpack gate (%s scope)" % scope, ""]
     lines.append(
-        "Requested SHA `%s`; checked-out SHA `%s`; run `%s`, attempt `%s`."
+        "Requested SHA (test-merge SHA for PR events) `%s`; checked-out SHA `%s`; PR-head SHA `%s`; run `%s`, attempt `%s`."
         % (run.get("requested_sha", "not recorded"),
            run.get("checked_out_sha", "not recorded"),
+           run.get("pull_request_head_sha") or "not applicable (non-PR event)",
            run.get("run_id", "not recorded"), run.get("run_attempt", "not recorded"))
     )
+    lines.append(
+        "Checked-out commit parents: `%s`; %s."
+        % (
+            " ".join(run.get("checked_out_parents") or []) or "none",
+            run_identity_relationship(run),
+        )
+    )
+    lines.append("Source identity valid: **%s**." % run.get("source_identity_valid", "not recorded"))
     binary = summary.get("binary") or {}
     if binary:
         lines.append(
@@ -3805,15 +4017,20 @@ def render_summary(summary):
     lines.append("- Python %s on %s (%s)" % (env["python"], env["platform"], env["machine"]))
     for name, tool in summary["tools"].items():
         lines.append("- %s: exit %s, %s" % (name, tool.get("exit"), tool.get("first_lines", "").splitlines()[:1]))
-    lines += ["", "| fixture | expectation | tzim | fitsverify | funpack -C | problems |", "| --- | --- | --- | --- | --- | --- |"]
+    lines += [
+        "",
+        "| fixture | expectation | tzim | original fitsverify | candidate fitsverify | funpack -C | problems |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
     for fixture in summary["fixtures"]:
         problems = fixture.get("problems") or []
         lines.append(
-            "| %s | %s | %s | %s | %s | %s |"
+            "| %s | %s | %s | %s | %s | %s | %s |"
             % (
                 fixture.get("name"),
                 fixture.get("expect"),
                 fixture.get("tzim", {}).get("status") if isinstance(fixture.get("tzim"), dict) else "-",
+                fixture.get("original_fitsverify_exit", "-"),
                 fixture.get("fitsverify_exit", "-"),
                 fixture.get("funpack_exit", "-"),
                 "; ".join(problems) if problems else "none",
