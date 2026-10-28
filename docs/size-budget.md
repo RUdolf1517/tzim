@@ -5,18 +5,12 @@ Related: [dependencies](dependencies.md) · [roadmap](roadmap.md)
 A small binary is a project requirement, not a nice-to-have. But "small" is only meaningful when it is
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
-> **Current status:** measured by CI on every pull request (`ci` job `binary size`).
-> **Measured: 979 808 bytes (956 KiB)** for `x86_64-unknown-linux-musl`, `--release`, default features
-> (`png,gzip,zip,ico,jpeg,tiff,zlib,zopfli`) — **69 632 bytes (68 KiB) smaller than v0.12.1**, on the run
-> that also measured the feature matrix below. Per-feature measurements are in §3; the profile that got here
-> is in §2, and what it cost in speed is in §5.
-> **The progress line gave that back.** `indicatif` and `console` were 96 KiB of the v0.12.1 binary; v0.13
-> draws the line in `src/progress.rs` and costs 0, which is what paid for everything else in this release.
-> **`jpeg-v1` is not in the shipped default**: the independent JPEG decoder measures **+118 784 bytes**
-> (116 KiB), and #39 approved it on the condition that the shipping binary does not grow past 1 049 440. It
-> exists, CI tests it on every run, and `cargo build --release --features jpeg-v1` turns it on. The gate in
-> `ci.yml` is now this release's own measurement, to the byte, rather than a ceiling with 150 KiB of room
-> underneath — see the errata below.
+> **Current #82 status:** the release default includes `jpeg-v1`; the owner-authorized stripped
+> `x86_64-unknown-linux-musl` ceiling is fixed at **1,082,208 bytes**. The final-head CI size job records the
+> actual byte count and feature matrix; historical `979,808`-byte measurements below are the pre-#82 default
+> and are not acceptance evidence for this build. The profile is in §2; current per-feature sizes are in §3,
+> and the measured JPEG runtime/RSS comparison is in §5 after the final CI run.
+> The #82 limit is a ceiling, not a target: no verification is weakened and no measurement is rounded.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
 ### Errata: the v0.12.1 "same size" claim
@@ -49,8 +43,10 @@ release's measurement instead of a ceiling that leaves 150 KiB of room underneat
 
 ## 1. Budget
 
-These are **upper bounds** for the stripped release binary, one row per build CI actually performs. A row
-that CI does not build does not belong here: an unchecked budget is decoration.
+The table below preserves the **pre-#82 measurements** for the v0.14.0 feature matrix. They establish the
+previous default at `cb312fd`, but they are not current-head results. The #82 release gate remains a separate,
+owner-authorized ceiling of **1,082,208 bytes**; final-head CI must measure the actual binary below that value.
+Current feature-matrix measurements are listed in §3 once run on the final commit.
 
 | Profile | Features | Measured | vs v0.12.1 |
 | --- | --- | --- | --- |
@@ -59,7 +55,7 @@ that CI does not build does not belong here: an unchecked budget is decoration.
 | `+zip` | `png,gzip,zip` | 799 520 B (780 KiB) | −69 632 |
 | `images` | `png,gzip,zip,ico` | 811 808 B (792 KiB) | −69 632 |
 | `+jpeg` | `png,gzip,zip,ico,jpeg` | 865 056 B (844 KiB) | −73 728 |
-| **`default`** | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | **979 808 B (956 KiB)** | **−69 632** |
+| **`pre-#82 default`** | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` | **979 808 B (956 KiB)** | **−69 632** |
 | `+jpeg-v1` | `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 B (960 KiB) | −55 168 |
 | `all but fuzz-api` | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 102 688 B (1 076 KiB) | +53 248 |
 | `default +fits` | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits` | 1 016 672 B (992 KiB) | −32 768 |
@@ -73,23 +69,22 @@ full one. `fits` is measured the same way and comes out at **36 864 bytes** (36 
 
 Two rows moved for a reason that is not a handler: `png,gzip,zip` and `all but fuzz-api` measure 4 096 bytes
 above the figures they carried, because `flate2` 1.1.10 (`miniz_oxide` 0.9 alongside 0.8) is a version further
-along than the run that wrote them. `default` itself did not move — 979 808, exactly the gate — which is the
-number that decides whether a new feature may join it.
+along than the run that wrote them. In this pre-#82 measurement, the default was 979 808 bytes. That historical
+figure no longer gates the V1 default; the authorized #82 ceiling is 1 082 208 bytes and final-head CI measures
+it directly.
 
-**The one attempt to make `jpeg-v1` cheaper is measured and on record.** Building that dependency at
-`opt-level = "s"` — the profile `indicatif` and `console` used before they left — moved the lean row
+**Historical `jpeg-v1` size experiment.** Building that dependency at `opt-level = "s"` moved the lean row
 983 840 → **967 456** and the full row 1 098 592 → **1 082 208**, so the feature's cost fell from 118 784 to
-**102 400 bytes** (run [40223835591](https://github.com/Rudolf1517/tzim/actions/runs/40223835591)). That is
-16 384 bytes bought, and **32 768 still over** the 1 049 440-byte condition of issue #39, so the override is
-not in the tree. Anything that puts the second opinion inside the shipped binary has to find another 32 KiB,
-or the condition has to be renegotiated with the number in hand — there is no third option, and this paragraph
-is where the next attempt starts.
+**102 400 bytes** (historical run [40223835591](https://github.com/Rudolf1517/tzim/actions/runs/40223835591)).
+That earlier run still exceeded the then-applicable 1 049 440-byte condition. Under #82 the same dependency-
+specific override is now in `Cargo.toml`, `jpeg-v1` is in the release default, and the owner-authorized ceiling
+is **1 082 208 bytes**. The historical run does not prove the present tree fits: only the final-SHA static-musl
+measurement is acceptance evidence.
 
-`default` is gated on every pull request: the job fails when the static binary exceeds the measured 979 808
-bytes. That is a *zero-tolerance* gate, and it is deliberate: v0.12.1's gate allowed 150 KiB of headroom, so
-a green `size` job proved nothing about growth, which is what [issue
-#62](https://github.com/Rudolf1517/tzim/issues/62) was about. A compiler bump is the one thing that can move
-this number without a code change; the pull request that needs it updates the number and says why here.
+The release-default binary is gated on every pull request: the `size` job fails if the stripped static-musl
+binary exceeds **1 082 208 bytes**. This exact owner-authorized ceiling is fixed for #82; a compiler or
+linker change that makes the final build exceed it is a failure to resolve, not a reason to move the gate.
+As before, the exact byte count and the feature matrix—not a green check alone—must be retained and reported.
 
 Reference point only (not a target): the official oxipng 10.2.1 Linux release archive is ~493 KiB
 compressed, and Leanify advertises "under 1 MB" for a C++ tool covering many formats. We are in the same
@@ -113,19 +108,16 @@ incremental = false
 [profile.release.package."*"]
 opt-level = 3
 
-[profile.release.package.console]
-opt-level = "s"
-
-[profile.release.package.indicatif]
+[profile.release.package.jpeg-decoder]
 opt-level = "s"
 ```
 
 Notes:
 
-- `opt-level = "s"` applies to **this crate** and to the two crates that draw the progress line; everything
-  else it depends on — `miniz_oxide`, `fdeflate`, `png`, `zopfli` — is built at `3`. The two are named
-  individually because they are not codecs: the measurement behind that line is in §5.2. The time is in the codecs, the bytes are mostly here: the same corpus runs
-  3.6 % slower this way instead of 11 %, and the binary is 104 KiB smaller (§5 has all three measurements).
+- `opt-level = "s"` applies to **this crate**; dependencies are at `3` except `jpeg-decoder`, whose
+  dependency-specific `"s"` override is the measured size trade-off for #82. The progress line is implemented
+  in `src/progress.rs` and has no terminal-rendering crate. Historical profile comparisons remain in §5; the
+  exact current binary size and JPEG runtime cost are measured on the final head.
 - `panic = "abort"` means `Drop` guards do not run on a panic. The original file is still intact
   (replacement happens last), but a temporary file may remain. This is documented in
   [safety](safety.md#5-failure-modes).
@@ -147,13 +139,14 @@ part of the interface rather than of a format handler; v0.13 draws that line in 
 dependency in the tree is behind a feature and every row below can drop it.
 
 ```toml
-default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg-v1", "tiff", "zlib", "zopfli"]
 png     = ["dep:png", "dep:flate2", "dep:crc32fast"]
 gzip    = ["dep:flate2", "dep:crc32fast"]
 zip     = ["dep:flate2", "dep:crc32fast"]
 ico     = ["png"]
 jpeg    = []
-jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]   # the independent JPEG verifier, off by default
+jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]   # independent verifier; included in default
+# release.package.jpeg-decoder = { opt-level = "s" }           # size override, see §2
 tiff    = ["dep:flate2"]
 zlib    = ["dep:flate2"]
 fits    = ["dep:flate2", "dep:crc32fast"]   # tile compression; off by default, see guarantees §4.12
@@ -167,8 +160,8 @@ and ZIP already bring in. Turning a feature off removes the handler
 from `--list-formats`, makes `--formats <name>` a usage error instead of a silent no-op, and reports files
 of that format as `skipped: this build has no <format> handler`.
 
-Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one build per row
-(`ci` job `binary size`, step `Feature matrix`):
+**Historical pre-#82 matrix**, measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one
+build per row (`ci` job `binary size`, step `Feature matrix`):
 
 | Features | Bytes | KiB |
 | --- | --- | --- |
@@ -177,40 +170,36 @@ Measured on `x86_64-unknown-linux-musl`, release profile, cold `target/`, one bu
 | `png,gzip,zip` | 803 616 | 784 |
 | `png,gzip,zip,ico` | 811 808 | 792 |
 | `png,gzip,zip,ico,jpeg` | 865 056 | 844 |
-| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` (default) | 979 808 | 956 |
+| `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` (pre-#82 default) | 979 808 | 956 |
 | `png,gzip,zip,ico,jpeg,jpeg-v1` | 983 840 | 960 |
 | `png,gzip,zip,ico,jpeg,tiff,zlib,zopfli,fits` | 1 016 672 | 992 |
 | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli` | 1 102 688 | 1 076 |
 | `png,gzip,zip,ico,jpeg,jpeg-v1,tiff,zlib,zopfli,fits` | 1 139 552 | 1 112 |
 
-Each feature's cost is visible by subtracting the row above it: `gzip` +12 KiB, `zip` +40 KiB, `ico` +8 KiB,
-the JPEG codec +52 KiB, and the jump from `+jpeg` to the default row is TIFF, zlib and Zopfli together
-+112 KiB — of which Zopfli is +84 KiB and appears nowhere else, which is why it is the one feature worth
-turning off for a container or an installer. `jpeg-v1` is +116 KiB and `fits` is **+36 KiB**; both ship off,
-`jpeg-v1` because it would break the condition #39 put on it and `fits` because it would break the gate on the
-`default` row.
+In this historical pre-#82 matrix, feature costs are visible by subtraction: `gzip` +12 KiB, `zip` +40 KiB,
+`ico` +8 KiB, the JPEG codec +52 KiB, and the jump from `+jpeg` to the old default is TIFF, zlib and Zopfli
+together +112 KiB — of which Zopfli is +84 KiB and appears nowhere else, which is why it remains useful to
+turn off for a container or an installer. `jpeg-v1` was +116 KiB at the ordinary profile; with the now-used
+`opt-level = "s"` override it measured +100 KiB. `fits` remains **+36 KiB** and off by default because it
+requires an explicit structural transformation.
 
 `fits` is the cheapest handler since zlib: it adds no crate ([dependencies
 §2.11](dependencies.md#211-fits-no-cfitsio-and-why-that-is-not-a-gap)), and 36 KiB is what a parser, a table
 writer and a verifier cost when the codec is already in the tree. The guess in issue #70 was 60–100 KiB; the
 measurement is 36 864 bytes, and the guess is recorded here rather than quietly replaced.
 
-The rows above `default` are the narrowing path a build takes when it wants a smaller binary; the rows below it
-are the widening path — `jpeg-v1`, `fits`, and both together — taken only by `--all-features` in CI and by
-anyone who wants the second opinion on a JPEG, or a second implementation of the FITS transform, inside the
-binary.
+In this historical matrix, rows above `default` were the narrowing path and rows below it were the widening
+path (`jpeg-v1`, `fits`, and both together). #82 moves `jpeg-v1` into the current default; only `fits` remains
+an optional feature and a run-time opt-in. The current CI matrix and measured deltas belong in the table
+reported for the final SHA, not in these pre-#82 values.
 
-The same deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile change made
-visible inside each handler, because the codecs are already compiled for speed.
+The historical deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile
+change made visible inside each handler, because the codecs are already compiled for speed.
 
-The deltas are what a user saves by narrowing the build, not estimates: `png,gzip` is the smallest useful
-optimizer (PNG and `.gz`), `png,gzip,zip,ico` is the full lossless set without JPEG, `+tiff` adds the one
-format that is on by default, and the last row is the published binary.
-
-`jpeg` and `fits` are the two features that are *also* off at runtime: `jpeg`'s handler requires an explicit
-`--formats jpeg`, because the expected gain is small and the verification is the weakest in the project
-([guarantees §2.6](guarantees.md#26-verification-independence)), and `fits`'s requires `--fits-tile`, because it
-turns an `IMAGE` HDU into a `BINTABLE`
+The narrowing examples remain useful: `png,gzip` is the smallest useful optimizer (PNG and `.gz`), and
+`png,gzip,zip,ico` is the full lossless set without JPEG. Release-default builds now include verified baseline
+JPEG; `--formats` remains an allowlist. Codec-only builds that deliberately omit `jpeg-v1` keep JPEG opt-in,
+and FITS still requires `--fits-tile` because it turns an `IMAGE` HDU into a `BINTABLE`
 ([guarantees §4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in)).
 
 Build examples:

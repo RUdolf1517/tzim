@@ -64,9 +64,9 @@ pub fn compiled_names() -> Vec<&'static str> {
 
 /// Which formats a run is allowed to process.
 ///
-/// Only JPEG is off by default: it is opt-in because its gain is small and its
-/// code path is the most intricate in the project. `--formats` turns it on and
-/// can also narrow the set for everything else.
+/// JPEG is enabled by default only when the independent `jpeg-v1` verifier is
+/// compiled in; a narrower build with the codec alone keeps JPEG opt-in. `--formats` can also
+/// narrow the set for everything else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Allow {
     pub png: bool,
@@ -80,15 +80,16 @@ pub struct Allow {
 }
 
 impl Default for Allow {
-    /// Everything this build can do, except JPEG: it is opt-in because its gain
-    /// is small and its code path is the most intricate in the project.
+    /// Every compiled handler is enabled except that JPEG requires the
+    /// independent verifier for default admission. The release default includes
+    /// `jpeg-v1`; a codec-only build still requires `--formats jpeg`.
     fn default() -> Self {
         Allow {
             png: cfg!(feature = "png"),
             gzip: cfg!(feature = "gzip"),
             zip: cfg!(feature = "zip"),
             ico: cfg!(feature = "ico"),
-            jpeg: false,
+            jpeg: cfg!(feature = "jpeg-v1"),
             tiff: cfg!(feature = "tiff"),
             zlib: cfg!(feature = "zlib"),
             // The handler changes an `IMAGE` HDU into a `BINTABLE`, which is a

@@ -42,7 +42,8 @@ manifest() {
 
 manifest > "$work/manifest-before.txt"
 
-# JPEG is opt-in by design, so the run names every format it wants.
+# The explicit list keeps this regression run's accepted handler set stable; it
+# is an allowlist even though the release default now includes JPEG V1.
 run() {
     local out="$1" err="$2"
     set +e

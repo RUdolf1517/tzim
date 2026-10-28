@@ -198,9 +198,12 @@ What a single file can cost, and what the guard therefore charges for it:
 | a decoded TIFF strip | `4 × len` | `len` |
 | a decompressed ZIP entry | `--max-uncompressed`, 8 GiB by default | `--max-uncompressed` |
 
-The PNG and JPEG numbers include the verification step, which decodes a second buffer: a budget that
-counted only the file on disk would be a third incorrect size predicate. gzip and zlib are absent because
-they are inflated in 64 KiB blocks and never materialise the payload.
+The PNG and JPEG charges include verification. For JPEG, `7 × pixels` remains the #51 accounting term and
+includes the independent `jpeg-decoder` frame: each side is decoded, CRC-32 hashed and dropped before the other
+side is decoded. After the exact local coefficient comparison, both coefficient-plane sets are explicitly
+dropped before V1 starts, so they do not overlap that frame. No two independent full-frame pixel buffers are
+live at once. gzip and zlib are absent because they are inflated in 64 KiB blocks and never materialise the
+payload.
 
 The check happens **before the file is read**. A file whose charge exceeds the budget is `skipped`, with a
 reason naming the flag, and it is never opened by the pipeline — so an input that would have been killed by

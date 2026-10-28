@@ -1476,6 +1476,12 @@ pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
         ));
     }
 
+    // The coefficient planes have served their exact-comparison purpose. Drop
+    // both before V1 allocates its one decoded pixel frame so the independent
+    // check does not overlap a second full image-sized allocation with them.
+    drop(decoded_before);
+    drop(decoded_after);
+
     // Everything above decodes with this repository's own reader, which cannot
     // catch a defect that is symmetric in the reader and the writer: the same
     // wrong symbol mapping on both sides compares equal. The oracle below is a
@@ -1652,6 +1658,25 @@ mod oracle {
             let (da, db) = (digest(&a).unwrap(), digest(&b).unwrap());
             assert_ne!(da, db, "a changed image must not compare equal");
         }
+
+        /// Default-build negative control for the shared Huffman-mapping defect
+        /// tracked in #39. The candidate reverses the two DC symbols in DHT and
+        /// carries a bitstream that the standard decoder reads as DC = -1. A
+        /// reader and writer that both sorted the DHT values would instead see
+        /// DC = 0 and treat the extra zero bit as padding, so their coefficient
+        /// comparison would agree. V1 must follow the on-disk symbol order and
+        /// reject the changed pixels.
+        #[test]
+        fn independent_oracle_rejects_a_symmetric_huffman_mapping_negative_control() {
+            let original = super::super::tests::sample_jpeg_with_dc(0);
+            let candidate = super::super::tests::sample_jpeg_with_swapped_dc_mapping();
+            let before = digest(&original).expect("independent decoder accepts original");
+            let after = digest(&candidate).expect("independent decoder accepts corrupted mapping");
+            assert_ne!(before, after, "the symbol-map mutation changes decoded pixels");
+            let err = cross_check(&original, &candidate).unwrap_err();
+            assert!(matches!(err, Error::Verify(_)), "{err}");
+            assert!(err.to_string().contains("different image"), "{err}");
+        }
     }
 }
 
@@ -1735,6 +1760,40 @@ mod tests {
         }
         out.extend_from_slice(&[0xff, 0xd9]);
         out
+    }
+
+    /// A standards-valid negative-control candidate: the two DC Huffman
+    /// symbols are reversed in the DHT, and the entropy bits encode category 1,
+    /// magnitude -1, then EOB. A symmetric local bug that sorts both parsed and
+    /// written symbols would read category 0 + EOB and ignore the extra zero as
+    /// pad; the independent decoder sees the on-disk mapping and a different
+    /// image. Keep this fixture built from raw marker bytes so it does not use
+    /// the encoder under test.
+    #[cfg(feature = "jpeg-v1")]
+    pub(super) fn sample_jpeg_with_swapped_dc_mapping() -> Vec<u8> {
+        let mut jpeg = sample_jpeg_with_dc(0);
+        let dht = jpeg
+            .windows(2)
+            .position(|marker| marker == [0xff, 0xc4])
+            .expect("fixture has DHT");
+        let dht_len = u16::from_be_bytes([jpeg[dht + 2], jpeg[dht + 3]]) as usize;
+        let payload = dht + 4;
+        assert_eq!(jpeg[payload], 0x00, "first table is DC table 0");
+        assert_eq!(jpeg[payload + 1], 1, "one code has length one");
+        assert_eq!(jpeg[payload + 2], 1, "one code has length two");
+        assert_eq!(&jpeg[payload + 17..payload + 19], &[0, 1]);
+        jpeg.swap(payload + 17, payload + 18);
+        assert_eq!(dht_len, 21, "fixture's DC table segment contains two symbols");
+
+        let sos = jpeg
+            .windows(2)
+            .position(|marker| marker == [0xff, 0xda])
+            .expect("fixture has SOS");
+        let sos_len = u16::from_be_bytes([jpeg[sos + 2], jpeg[sos + 3]]) as usize;
+        let entropy = sos + 2 + sos_len;
+        assert_eq!(jpeg[entropy], 0x3f, "original is DC zero followed by EOB");
+        jpeg[entropy] = 0x1f; // DC code 0, magnitude bit 0, EOB code 0, then 1-padding.
+        jpeg
     }
 
     pub(super) fn sample_jpeg() -> Vec<u8> {

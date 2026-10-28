@@ -407,6 +407,7 @@ fn info_names_the_jpeg_verification_level_of_this_build() {
     assert_eq!(code, 0, "{stderr}");
     if cfg!(feature = "jpeg-v1") {
         assert!(stdout.contains("independent decoder (V1)"), "{stdout}");
+        assert!(stdout.contains("enabled by default"), "{stdout}");
     } else if cfg!(feature = "jpeg") {
         assert!(
             stdout.contains("the codec in this build only (V3)"),
@@ -1785,7 +1786,7 @@ fn nested_does_not_touch_signed_archives() {
 }
 
 // ---------------------------------------------------------------------------
-// JPEG (v0.4, opt-in)
+// JPEG (v0.4; default V1 build since #82)
 // ---------------------------------------------------------------------------
 
 fn has(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1820,9 +1821,29 @@ fn jpeg_baseline_is_optimized_and_then_stable() {
     assert_eq!(std::fs::read(&path).unwrap(), after);
 }
 
+#[cfg(feature = "jpeg-v1")]
 #[test]
-fn jpeg_is_inert_without_the_formats_flag() {
-    let ws = Workspace::new("jpeg-opt-in");
+fn jpeg_is_enabled_by_default_but_formats_remains_an_allowlist() {
+    let ws = Workspace::new("jpeg-default");
+    let original = build_jpeg(32, 32, 1);
+    let path = ws.write("photo.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["photo.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(optimized.len() < original.len(), "default build did not optimize JPEG");
+
+    let excluded = ws.write("excluded.jpg", &original);
+    let (code, stdout, stderr) = run(&["--formats", "png", "excluded.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("not enabled"), "{stdout}");
+    assert_eq!(std::fs::read(excluded).unwrap(), original);
+}
+
+#[cfg(all(feature = "jpeg", not(feature = "jpeg-v1")))]
+#[test]
+fn jpeg_without_the_independent_verifier_remains_opt_in() {
+    let ws = Workspace::new("jpeg-v3-only");
     let original = build_jpeg(32, 32, 1);
     let path = ws.write("photo.jpg", &original);
 

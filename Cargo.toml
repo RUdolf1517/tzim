@@ -37,7 +37,7 @@ jpeg-decoder = { version = "0.3", optional = true, default-features = false, fea
 [features]
 # One feature per handler family, so a build can drop what it will never see.
 # `default` is what the published binaries are built with.
-default = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "zopfli"]
+default = ["png", "gzip", "zip", "ico", "jpeg-v1", "tiff", "zlib", "zopfli"]
 gzip = ["dep:flate2", "dep:crc32fast"]
 png = ["dep:png", "dep:flate2", "dep:crc32fast"]
 zip = ["dep:flate2", "dep:crc32fast"]
@@ -47,20 +47,10 @@ ico = ["png"]
 # The JPEG codec is part of this repository, so the handler costs nothing but the
 # code it gates.
 jpeg = []
-# Verification of a JPEG candidate by an independent decoder, which closes the
-# hole `guarantees.md` §2.6 names: a codec shared by the writer and the checker
-# cannot catch a defect symmetric in itself.
-#
-# **Off by default, and the measurement is why.** #39 approved this on one
-# condition — the shipping binary must not grow past 1 049 440 bytes, the v0.12.1
-# measurement — and it does not fit, even with `indicatif`'s 96 KiB returned:
-# `jpeg-decoder` costs more than that. Rather than grow the binary or break the
-# condition, the feature exists, is tested in CI on every run, and is what
-# `--all-features` and the `third-party` job exercise:
-#
-#     cargo build --release --features jpeg-v1
-#
-# `docs/dependencies.md` §2.10 and `docs/size-budget.md` §3 carry the numbers.
+# Verification of a JPEG candidate by an independent decoder, closing the
+# symmetric-codec hole in `guarantees.md` §2.6. The release default includes this
+# feature and enables only the already-verified baseline subset; narrow a mixed
+# run with `--formats` or build without defaults for a smaller binary.
 jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]
 # TIFF only needs the DEFLATE codec that PNG and gzip already bring in.
 tiff = ["dep:flate2"]
@@ -85,10 +75,11 @@ zopfli = ["dep:zopfli"]
 fuzz-api = []
 
 [profile.release]
-# This crate is where the size can be bought: -Os keeps it about 10 % smaller
-# for about 3 % on the real-file corpus. The dependencies stay at -O3, because
-# that is where the CPU actually goes — shrinking them instead saved a quarter
-# of the size and cost twice the speed (docs/size-budget.md §5).
+# This crate is where most size is bought: -Os keeps it about 10 % smaller for
+# about 3 % on the real-file corpus. Dependencies stay at -O3 except the
+# independent JPEG verifier, whose historical -Os measurement motivated the
+# owner-authorized ceiling. The final tree still has to pass the size gate
+# (docs/size-budget.md §5).
 opt-level = "s"
 lto = "fat"
 codegen-units = 1
@@ -96,10 +87,16 @@ panic = "abort"
 strip = "symbols"
 incremental = false
 
-# The codecs are hot: DEFLATE, the PNG decoder, Zopfli. They are compiled at
-# full optimization even though this crate is not.
+# The codecs are hot: DEFLATE, the PNG decoder and Zopfli. They are compiled at
+# full optimization; jpeg-decoder's size override is isolated below.
 [profile.release.package."*"]
 opt-level = 3
+
+# The independent JPEG decoder is the one size-sensitive default dependency:
+# this historical override produced the previously measured configuration; the
+# owner-authorized 1,082,208-byte ceiling remains a final-tree gate.
+[profile.release.package.jpeg-decoder]
+opt-level = "s"
 
 [lints.rust]
 unsafe_code = "forbid"
