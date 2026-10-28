@@ -99,33 +99,25 @@ would suggest more than any of these delivers.
 | FITS | V3 (own card/header/table reader) | **V1** for external gzip inflation and CRC-32/ISIZE checks, **plus V3** for the shared `shuffle`/`unshuffle` permutation | A symmetric byte-permutation error can survive the in-binary check; external astropy/HEASARC evidence is separate and run-scoped |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
 | TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; **shared `flate2`** for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none, so one `flate2` decode is compared with another `flate2` decode |
-| JPEG | V3 | **V3 for coefficients; V1 for pixels with the `jpeg-v1` feature**, and V1 for the whole corpus in CI (Pillow) | A published build (no `jpeg-v1`) can still miss a defect symmetric in our encoder and decoder; the CI comparison is what covers it there, and it does not run inside `verify` |
+| JPEG | V3 | **V3 for exact coefficients; V1 for pixels in release-default builds** (`jpeg-decoder`), plus V1 corpus checks in CI (Pillow) | A deliberately narrowed `--no-default-features` build without `jpeg-v1` has only the shared coefficient check; release builds run the independent pixel oracle inside `verify` |
 
-**The honest consequence for JPEG, and what changed in v0.13.** Until v0.13 the JPEG comparison was the
-weakest of the seven: both sides of the coefficient comparison were this repository's codec, so a defect
-*symmetric* in the encoder and the decoder would have passed every check here. v0.13 adds two independent
-readers, and — this is the part that matters — **neither is in the published binary**, for the reason given
-below:
+**JPEG verification in the release default, following #82.** Before v0.13, both sides of the coefficient
+comparison used this repository's codec, so a defect *symmetric* in the encoder and decoder could pass. v0.13
+introduced independent verification; #82 admits it into the release default within the fixed size ceiling.
 
-- **`jpeg-decoder`**, inside `verify`, when this build has the `jpeg-v1` feature. Both files are decoded by a
-  library that shares nothing with this codebase and the decoded pixels must be identical; a disagreement is
-  `failed`, exit 1, and the original is untouched. Since identical coefficients imply identical pixels, this
-  adds a check the coefficient comparison cannot make: that our decoder reads the coefficients the way the
-  rest of the world reads them. If the independent decoder cannot read the *original*, the file is `skipped`
-  with that reason — an oracle that cannot read a file is not a verdict about it. The feature is off in the
-  published builds because it does not fit the size condition it was approved under
-  ([size budget §3](size-budget.md#3-feature-matrix)); `cargo build --features jpeg-v1` turns it on.
-- **Pillow**, outside the binary, in the `third-party` CI job — the same idea for the whole corpus and for
-  the other formats (PNG, TIFF, ICO pixels; `zlib` for gzip and zlib streams; `zipfile` for archives). It
-  compares at the strongest level each library offers and proves on every run that it can fail, by mutating
-  a candidate and requiring the comparison to reject it. Zero bytes of it reach the binary; see
+- **`jpeg-decoder`**, inside `verify`, is included in the release-default `jpeg-v1` feature. Both original and
+  candidate are decoded by a library that shares no code with this repository, and their pixel digests must
+  match. A disagreement is `failed`, exit 1, and the original is untouched. If the independent decoder cannot
+  read the *original*, the file is `skipped` with that reason: an oracle that cannot read a file cannot give a
+  verdict about it. A deliberately narrowed build without `jpeg-v1` has only the exact coefficient/structure
+  checks; it is not the published default.
+- **Pillow**, outside the binary, in the `third-party` CI job, independently checks the real-file corpus and
+  other formats (PNG, TIFF, ICO pixels; `zlib` for gzip and zlib streams; `zipfile` for archives). It compares
+  at the strongest level each library offers and proves it can fail by mutating a candidate. See
   [testing §3.3](testing.md#the-third-party-decoder-job).
 
-What remains true, and is stated here rather than implied: **a published build's JPEG verification is still
-V3 plus whatever CI can prove.** The in-`verify` oracle is a feature, the corpus comparison is a job, and a
-user's own file gets neither unless they build with `jpeg-v1`. None of this is a proof: a defect shared by
-several independently written decoders would survive. That is why JPEG stays opt-in and why its gain is not
-oversold.
+No verifier is a proof against a defect shared by independent decoders. That residual risk is stated rather
+than hidden, and the accepted JPEG subset remains baseline sequential only.
 
 **For TIFF** the content comparison is independent only while the strips are uncompressed: `optimize` turns
 compression `1` into Deflate, and for that path the original is raw bytes read without a decoder. A TIFF whose
@@ -484,7 +476,7 @@ defence in depth that cannot fire from the normal path.
 
 ---
 
-### 4.7. JPEG — v0.4, opt-in
+### 4.7. JPEG — v0.4, baseline default
 
 **Transformation.** Re-encode only the entropy-coded data with optimal Huffman tables. Every DCT
 coefficient, and therefore every decoded pixel, is bit-identical to the input; this is the `jpegtran
@@ -523,16 +515,15 @@ block, a restart marker where none belongs — all `failed`, exit code 1, origin
 2. **Structural identity.** The ordered sequence of non-`DHT` markers and their payload bytes must match
    exactly, the frame header must match field by field, every `DHT` table that the scan does not use must
    be carried over byte for byte, and the trailing bytes after `EOI` must be identical.
-3. **Pixel identity through an independent decoder** (`jpeg-v1`, **not** in the default build). The original
-   and the candidate are both decoded by `jpeg-decoder` — a library that shares no line with this
-   repository — and the decoded pixels must be identical. The two sides are decoded one at a time and
-   hashed with CRC-32, so verification never holds two extra images in memory (`7 × pixels` per side, as
-   [safety §7.1](safety.md#71-memory--an-enforced-budget) charges). A disagreement is `failed`, exit 1;
-   an original the library cannot read is `skipped` with that reason, because the oracle cannot be a
-   verdict on a file it cannot decode. The feature is off by default because it costs more than the size
-   condition of #39 allowed: 118 784 bytes at the release profile and 102 400 at `opt-level = "s"`, against
-   68 KiB of headroom. `verify` says nothing less when it is absent, and §2.6 says which level a published
-   build reaches.
+3. **Pixel identity through an independent decoder** (`jpeg-v1`, included in the release default under #82).
+   The original and candidate are both decoded by `jpeg-decoder` — a library that shares no line with this
+   repository — and their pixel digests must match. Each side is decoded and CRC-32 hashed one at a time; the
+   first pixel buffer is dropped before the second decode, and the local coefficient planes are dropped after
+   their exact comparison and before V1 begins. The existing `7 × pixels` JPEG charge is retained
+   ([safety §7.1](safety.md#71-memory--an-enforced-budget)); no two independent full-frame buffers overlap.
+   A disagreement is `failed`, exit 1; an original the library cannot read is `skipped` with that reason,
+   because the oracle cannot give a verdict on a file it cannot decode. Deliberately narrowed builds without
+   `jpeg-v1` retain only checks 1 and 2.
 
 If any condition fails the candidate is discarded and the original is not replaced. Condition 3 exists
 because conditions 1 and 2 share a codec with the writer, and a defect symmetric in both directions — a
@@ -542,8 +533,9 @@ change. With it, the residual risk is a defect shared by two independently writt
 Pillow in CI ([testing §3.3](testing.md#the-third-party-decoder-job)), which is the same check on files
 nobody on this project wrote.
 
-**Default:** disabled. JPEG is processed only when `--formats` names it, because the gain is small and
-the code path is the most intricate in the project.
+**Default:** the release build enables the verified baseline JPEG subset by default. `--formats` remains an
+allowlist: naming a list narrows processing (for example, `--formats png` excludes JPEG). A build that
+includes `jpeg` without `jpeg-v1` keeps JPEG opt-in, and any `--no-default-features` build can omit it.
 
 **Verification IDs:** `T-JPG-01` … `T-JPG-08`.
 
@@ -729,16 +721,18 @@ entropy of its content, while a TIFF from a modern scanner is often already Defl
 
 ### 4.9. FLAC — refused after measurement
 
-**Status: refused, contract kept.** The audit behind it is [flac-audit.md](flac-audit.md). It was measured
-before it was decided: a stronger encoder buys **0.4 %** on musical material and **0 %** on files already
-written at `flac -8`, while the encoder and the independent decoder together cost roughly **+150…300 KiB** of
-binary — a quarter of it — for a format that is already entropy-coded to its limit. The numbers are in
-[flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it).
+**Historical status: refused after measurement; current implementation scope: #79 (non-default opt-in).**
+The audit behind the original decision is [flac-audit.md](flac-audit.md): a stronger encoder measured a
+**0.4 %** gain on musical material and **0 %** on files already written at `flac -8`, while encoder and
+independent decoder were estimated at **+150…300 KiB**. Those values remain historical and were not
+re-measured in this iteration. The owner has since authorized the opt-in implementation under #79 despite that
+result.
 
-Nothing in this section is a claim that the binary supports FLAC: the handler does not exist,
-`--list-formats` does not name the format, and `docs/formats.md` records it as refused. The contract is kept
-because it is correct and free, and because a future encoder with a materially better search would restart
-from here rather than from nothing. The clauses below are what such an implementation would have to satisfy.
+This paragraph does **not** claim that the binary supports FLAC: no handler is present, and
+`--list-formats` does not name the format. The clauses below remain the required contract for #79. Runtime
+independent PCM checks, metadata/seektable tests, external references, corpus/fuzz evidence and actual
+size/speed/gain measurements are still outstanding; see [roadmap](roadmap.md) for the current blocker and
+owner action.
 
 **Transformation.** Re-encode the audio frames with a better encoder. The decoded samples are identical;
 the frames, their lengths and the byte offsets that point at them are not, because a FLAC encoder is free
@@ -913,19 +907,18 @@ the same reasoning.
 
 ### 4.11. PDF — refused after measurement
 
-**Status: refused, contract kept.** It was measured before it was decided, and the measurement is in
-[pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance): of 2 208
-files, **1 009 (45.7 %)** fall inside the slice below — far more than the pre-registered rule required — and the
-typical one saves **0.08 %** of its bytes when every permitted stream is re-deflated at level 9, 0.15 % with
-`zopfli`, 0.59 % with the loosest instrument. The rule said *median < 1 % → refused* before the number existed,
-and the number is a rounding error. What repacking would buy is **20.1 %**, and repacking is precisely what the
-contract forbids: flattening revisions, regenerating object streams and renumbering objects is a rewrite with a
-different risk class, not a recompress.
+**Historical result: refused; #57 supplemental measurement pending.** The 2 208-file audit in
+[pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) reported
+**1 009 (45.7 %)** in the narrow slice, a **0.08 %** median with level 9, 0.15 % with `zopfli`, and 0.59 % with
+the loosest instrument. That historical result applied the written *median < 1 % → refused* rule. The separately
+required 20–50-file real-toolchain sample was not assembled, so #57's current evidence-backed disposition is
+still pending. No threshold or old aggregate was changed. The historical 20.1 % forbidden-repacking number
+remains outside the allowed contract: flattening revisions, regenerating object streams and renumbering objects
+is a rewrite with a different risk class, not a recompress.
 
-Nothing in this section is a claim that the binary supports PDF: no PDF code exists, `--list-formats` does not
-name the format, and `docs/formats.md` §5 records it as refused. The contract is kept for the reason FLAC's was
-kept — it is correct, it is free, and it turns "PDF is too dangerous" into a list of clauses a future attempt
-must satisfy. Those clauses are what follows.
+Nothing in this section claims that the binary supports PDF: no PDF code exists, and `--list-formats` does not
+name it. The existing contract remains the scope boundary for any future handler; #80 is not started until
+#57's required sample and disposition exist.
 
 The shape of the opportunity is different from FLAC's and worth stating: a `FlateDecode` payload **is** an
 RFC 1950 stream, so the transformation is the one this document already specifies in
@@ -1030,6 +1023,17 @@ differences and the missing supplemental samples remains necessary for full FITS
 tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %** in that historical run and **does not ship** — a
 `ZIMAGE` table is copied verbatim. See [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
 and [measurement status](measurement-status.md) for the limitations and open decisions.
+
+**Confirmation (#83).** `--fits-tile` remains the only transformation that can request confirmation. For a
+single direct regular file on a TTY, the handler first establishes eligibility, builds the candidate, and runs
+the complete ordinary verifier; only then does it ask a default-No question naming the `IMAGE` → `BINTABLE`
+change. Only `y`/`yes` reaches the existing atomic replacement. No, EOF, closed input, invalid input, or prompt
+I/O failure leaves the original byte-identical and removes the staged candidate. Non-TTY, JSON, dry-run,
+recursive/batch, nested, unknown, refused and failed paths never prompt; an explicit `--fits-tile` in those
+non-interactive contexts is the opt-in and uses the same verifier. `--quiet` does not turn the flag into an
+implicit Yes: eligible TTY work still asks. `--jobs` does not move the eligible single-file path off the main
+thread; hard links refused by the existing safety policy do not reach the prompt.
+`--formats` remains an allowlist, never a force bypass. No other format prompts.
 
 **Transformation.** One tier, and it is the only one.
 

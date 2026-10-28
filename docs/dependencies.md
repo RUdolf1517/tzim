@@ -96,13 +96,13 @@ Additional requirements:
 | `crc32fast` | yes | features `png`, `gzip`, `zip`, `fits` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
-| `jpeg-decoder` | yes | feature `jpeg-v1` (**not** in `default`) | second opinion on a JPEG candidate | only with `jpeg-v1` |
+| `jpeg-decoder` | yes | `jpeg-v1` (included in `default` under #82) | independent pixel verification of JPEG candidates | release default and `jpeg-v1` builds |
 
-Five direct dependencies, and every one of them is behind a feature: a build with
+Every direct dependency remains behind a feature: a build with
 `--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
 unconditional crate any more — the progress line, which used to be one (§2.9), is drawn by
-`src/progress.rs` again. `jpeg-v1` is the first dependency since v0.1 that a *published* build does not carry:
-it is available, tested on every CI run, and off by default (§2.10).
+`src/progress.rs` again. Under #82 the release default includes `jpeg-v1`; only deliberately narrowed builds
+without that feature omit the independent JPEG verifier.
 
 The JPEG, ICO, TIFF, zlib and FITS handlers add code, not crates. **v0.4, v0.6, v0.7, v0.9 and v0.14 added
 none**: §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a
@@ -142,11 +142,12 @@ instead of using a vetted crate.
 
 ### 2.7 FLAC: the crates it would have needed
 
-**FLAC is refused** ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)): a
-stronger encoder buys 0.4 % on musical material and 0 % on files already written at `flac -8`, while the
-encoder and an independent decoder together would add roughly 150–300 KiB to a 920 KiB binary. The table below
-is kept as the record of what the "yes" would have cost, and of why the encoder and the decoder cannot be the
-same crate.
+**Historical FLAC refusal; #79 now authorizes a non-default opt-in implementation.** The audit measured 0.4 %
+on musical material and 0 % on files already written at `flac -8`, while the encoder and independent decoder
+were estimated to add 150–300 KiB ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)).
+Those figures are retained as history, not current size/speed evidence. The table records the earlier candidate
+review; #79 must re-review maintained versions, licences, unsafe/build requirements and transitive dependencies
+before adding them.
 
 | Crate | Version at audit | Licence | Size | Role | Why it is the right one |
 | --- | --- | --- | --- | --- | --- |
@@ -210,42 +211,29 @@ sample and a frame that could be wider than the terminal.
   animation thread would have stayed ours); `crossterm`/`termion` (terminal manipulation, raw mode, key
   reading — none of which this program does).
 
-### 2.10 `jpeg-decoder` — the second opinion on a JPEG candidate
+### 2.10 `jpeg-decoder` — the independent pixel check for JPEG
 
-- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, **off in `default`** · **Granted v0.13** (issue
-  #39, owner decision "option 3")
-- **Why:** the JPEG comparison had one author on both sides. `verify` compares coefficients, marker structure
-  and bytes, all through code in this repository; a defect symmetric in the encoder and the decoder — a
-  wrong DC prediction direction that both agree on — would be invisible. `jpeg-decoder` is an independent
-  implementation: it shares no line with `src/formats/jpeg.rs`, so its pixels and ours disagreeing is
-  evidence one of us has a bug.
-- **Configuration:** `default-features = false` with `platform_independent`. That drops `rayon` (this
-  repository has no async runtime and no thread pool in a handler), `nasm`/SIMD assembly paths, and the
-  platform-specific intrinisics that would put `unsafe` and a second build toolchain in the tree. The
-  remaining code is pure Rust — the crate's own `unsafe` is in the paths we do not compile — and the
-  `forbid(unsafe_code)` lint on our crate is untouched.
-- **What it is not for:** it cannot replace the handler. It returns pixels, and re-encoding from pixels is
-  the lossy transformation the invariant forbids (§2.6). It is a *verifier*, called once per accepted
-  candidate, on the two byte buffers that verification already has in memory.
-- **Cost:** the pixels of one side at a time are hashed with CRC-32 and dropped, so verification is not
-  charged two extra decoded images; the memory accounting in
-  [safety §7.1](safety.md#71-memory--an-enforced-budget) says `7 × pixels` per side with that in mind.
-- **Why the published builds do not have it.** #39 was approved on one condition: the shipping binary must not
-  grow past 1 049 440 bytes, the v0.12.1 measurement. It does not fit — [size budget §3](size-budget.md#3-feature-matrix)
-  has the two numbers — so the feature ships off rather than the condition being renegotiated. What the user
-  gets instead is the same check in CI, on real files, with a decoder that is even further from this
-  repository: the `third-party` job decodes the corpus with Pillow before and after
-  ([testing](testing.md#the-third-party-decoder-job)). A build that wants the check inside the binary has one
-  command for it: `cargo build --release --features jpeg-v1`.
-- **What it changes for a user:** a file whose candidate disagrees with an independent decoder is `failed`,
-  exit 1, original untouched — a class of defect that previously would have been reported as `optimized`. If
-  the independent decoder refuses the *original*, the file is `skipped` with that reason: the oracle cannot
-  be used as a verdict on a file it cannot read, and a JPEG this program understands but `jpeg-decoder` does
-  not is not a reason to fail a run.
-- **Turning it on and off:** the shipped set is `default`, which does not include it;
-  `cargo build --release --features jpeg-v1` adds it, and `--no-default-features --features
-  png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` reproduces the shipped set from a named list.
-  `docs/guarantees.md` §2.6 says in the JPEG row what each kind of build can prove.
+- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, included in the release default under #82.
+  The owner-authorized stripped `x86_64-unknown-linux-musl` ceiling is fixed at **1,082,208 bytes**; the
+  final-SHA run, not this dependency review, supplies the acceptance measurement.
+- **Why:** coefficient, marker and byte comparisons in `verify` are implemented by this repository. A defect
+  symmetric in the encoder and decoder could otherwise pass. `jpeg-decoder` shares no code with
+  `src/formats/jpeg.rs`, so differing pixel digests expose a class of such defects.
+- **Configuration:** `default-features = false` with `platform_independent`. That drops `rayon`, SIMD assembly
+  paths and platform-specific intrinsics; the selected path is pure Rust and does not add `unsafe` or a second
+  build toolchain. `Cargo.toml` applies the measured dependency-specific `opt-level = "s"` override while the
+  rest of the codecs retain their existing release profile.
+- **Role:** this crate cannot replace the handler. It returns pixels; re-encoding from pixels would be lossy.
+  It is called only to verify the original and candidate byte buffers already held by the pipeline.
+- **Memory:** each side is decoded, CRC-32 hashed and dropped before decoding the other. The exact local
+  coefficient-plane results are dropped after comparison and before the independent decoder allocates its
+  pixel frame; no pair of independent full-frame buffers overlaps. The existing #51 accounting charges
+  `7 × pixels` ([safety §7.1](safety.md#71-memory--an-enforced-budget)).
+- **Runtime outcome:** a candidate disagreement is `failed`, exit 1, original untouched. If the independent
+  decoder refuses the original, the file is `skipped` with that reason; the oracle cannot give a verdict on a
+  file it cannot read. Builds that deliberately omit `jpeg-v1` retain the coefficient/structure check only.
+- **Additional evidence:** the `third-party` job independently decodes the real-file corpus with Pillow before
+  and after, and includes a negative control ([testing](testing.md#the-third-party-decoder-job)).
 
 ---
 

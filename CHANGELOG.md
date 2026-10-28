@@ -11,6 +11,19 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Changed
+
+- **Baseline JPEG is enabled in the release default with independent V1 verification** (#82). The default
+  feature set includes `jpeg-v1`; the exact coefficient, marker and refusal checks remain, with an independent
+  decoder comparing original and candidate pixels before atomic replacement. `--formats` stays an allowlist.
+  The decoder uses the measured `opt-level = "s"` package override, and CI retains the owner-authorized
+  1,082,208-byte stripped-musl ceiling; final-SHA size and performance results are recorded in
+  [size budget](docs/size-budget.md) and [benchmarks](docs/benchmarks.md).
+- **`--fits-tile` has a FITS-only default-No TTY confirmation** (#83). For a single direct file, Tzim stages and
+  fully verifies the ordinary candidate before asking; only `y`/`yes` reaches atomic replacement. Decline,
+  EOF, invalid input or prompt I/O failure preserves the original and removes the temporary. Noninteractive,
+  JSON, batch, nested and dry-run paths do not prompt; the existing flag remains explicit consent there.
+
 ### Fixed
 
 - **FITS rewriting now declines valid images outside the verified writer subset.** The parser still recognizes
@@ -168,7 +181,7 @@ under *Changed* below.
   original untouched. If the independent decoder cannot read the *original*, the file is `skipped` with that
   reason, because an oracle that cannot read a file is not a verdict about it. The feature is separate from
   `jpeg` and the whole comparison can be removed with one flag ([dependencies
-  §2.10](docs/dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)).
+  §2.10](docs/dependencies.md#210-jpeg-decoder--the-independent-pixel-check-for-jpeg)).
 - **A third-party verification job** (issue #54): Pillow for PNG/JPEG/TIFF/ICO, the standard library's `zlib`
   for gzip and zlib streams, `zipfile` for archives — on the downloaded corpus, comparing pixel data, mode
   and dimensions for images and decompressed bytes for everything else, with the library versions printed.

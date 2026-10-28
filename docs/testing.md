@@ -21,7 +21,7 @@ These hold for every format and are tested as properties, not as anecdotes.
 | I3 | No metadata is removed | per-format inventory comparison, including unknown/private chunks and extra fields |
 | I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler may exist, so there is nothing to test |
 | I5 | Concurrent modification aborts the operation | **no test.** The `(device, inode, length, mtime)` re-check in `replace.rs` is exercised only by its unit test `snapshot_roundtrip_detects_changes`; nothing modifies a file mid-run |
-| I6 | Verification uses an independent decoder | **no test.** The separation is a property of the code layout, checked in review; nothing fails if a writer function is called from `verify()` |
+| I6 | The release-default JPEG V1 candidate is checked by an independent decoder | `independent_oracle_rejects_a_symmetric_huffman_mapping_negative_control` uses a DHT-symbol permutation whose same-reader/writer model agrees on coefficients but the independent decoder sees a different pixel image; it runs in default and all-features CI |
 | I7 | Replacement is atomic where the platform allows | `guard_removes_uncommitted_file` shows the guard deletes an uncommitted candidate; nothing asserts that `rename` is the last fallible operation, and no test kills a run between `fsync` and `rename` |
 | I8 | Unparseable input is refused, never repaired | targeted tests per format — `corrupt_png_is_refused_and_left_untouched`, `truncated_zip_is_refused`, `corrupt_entry_crc_is_refused`, `jpeg_truncated_file_fails_and_is_untouched`, `tiff_truncated_file_fails_and_is_untouched`, `a_corrupt_adler32_is_refused_and_the_file_is_untouched` — not a corpus |
 | I9 | Presentation never changes results | `colour_is_absent_in_a_pipe_and_present_when_forced` and `json_is_never_coloured`; the comparison against the previous release's totals is **not** automated — the corpus keeps no baseline |
@@ -124,10 +124,21 @@ the behaviour. `docs/cli.md` and `guarantees.md` describe the limit that does ex
 | `T-JPG-03` | Every DCT coefficient identical after the rewrite (stronger than comparing pixels) |
 | `T-JPG-04` | Progressive, arithmetic, SOF1 and 12-bit inputs are refused, exit 0, file untouched |
 | `T-JPG-05` | `DRI` and the restart markers in the scan are preserved, interval unchanged |
-| `T-JPG-06` | JPEG is inert unless `--formats jpeg`; the allowlist also narrows the other handlers |
+| `T-JPG-06` | The default V1 build optimizes eligible baseline JPEGs; `--formats png` narrows the allowlist and leaves JPEG byte-identical; codec-only builds without V1 keep JPEG opt-in |
 | `T-JPG-07` | Truncated or corrupt inputs fail with exit 1 and the original is untouched |
 | `T-JPG-08` | A non-smaller candidate is discarded; a second run reports `already optimal` |
 | `T-JPG-09` | Bytes after `EOI` are preserved verbatim |
+| `T-JPG-10` | The default V1 build's independent oracle rejects a symmetric Huffman-symbol-mapping negative control: a writer/reader that both reorder the DHT symbols would agree on coefficients, but the independent decoder reads the on-disk mapping and rejects the pixel change (`independent_oracle_rejects_a_symmetric_huffman_mapping_negative_control`)
+
+### FITS interactive confirmation (#83)
+
+| ID | Assertion |
+| --- | --- |
+| `T-FITS-C-01` | A direct single-file TTY invocation is the only prompt-eligible shape; `--jobs 4` remains synchronous, and quiet mode still prompts; JSON, dry-run, recursion, batch, nested, non-TTY and a narrowed `--formats` allowlist suppress the prompt (`only_a_single_direct_tty_fits_opt_in_is_prompt_eligible`) |
+| `T-FITS-C-02` | The candidate is already staged and passes the ordinary FITS verifier before the confirmation callback; No leaves the original byte-identical and removes the temporary (`declining_verified_fits_candidate_preserves_original_and_cleans_temp`) |
+| `T-FITS-C-03` | Only affirmative confirmation reaches atomic install; the installed file is the same verified candidate (`affirmative_confirmation_commits_only_the_verified_candidate`) |
+| `T-FITS-C-04` | Unknown, refused checksum-bearing, corrupt, and safety-skipped hard-linked FITS inputs never reach the confirmation callback; originals stay byte-identical and staged files are cleaned (`unknown_fits_like_content_does_not_reach_confirmation`, `refused_checksummed_fits_does_not_reach_confirmation`, `corrupt_fits_header_does_not_reach_confirmation_and_cleans_temp`, `hardlinked_fits_is_skipped_without_confirmation_by_default`) |
+| `T-FITS-C-05` | Only `y`/`yes` consents; empty/default, No, invalid input, EOF, closed stdin and prompt I/O failure all mean No (`src/confirmation.rs` unit tests) |
 
 ### zlib
 

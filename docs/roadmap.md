@@ -113,7 +113,7 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 **Estimate:** 4–6 days. **Risk:** medium.
 
-### v0.4 — JPEG (opt-in) — **implemented**
+### v0.4 — JPEG (opt-in at the time) — **implemented**
 
 **What shipped**
 
@@ -296,18 +296,14 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
   [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
 - **A JPEG decoder nobody here wrote** (#39): `jpeg-decoder` verifies both sides of an accepted candidate,
   which closes the symmetric-codec hole [guarantees §2.6](guarantees.md#26-verification-independence) had been
-  describing since v0.4. Approved on one condition — the binary must not grow past 1 049 440 bytes — and the
-  measurement said **+118 784 bytes**, more than the 96 KiB the progress line gave back. The condition was
-  kept and the decoder is not in the shipped default: `jpeg-v1` exists, CI tests it on every run, and one
-  flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
-  **The decision was taken with the number in hand, not by default.** Turning it on was within reach:
-  building that one dependency at `opt-level = "s"` measures 1 082 208 bytes — 32 768 over the 1 049 440
-  limit, and still 97 KiB *under* the v0.12.1 binary. It was declined for two reasons, and both are arguments
-  about this project rather than about bytes. JPEG is the one handler that is also off at run time, behind
-  `--formats jpeg`, so 102 KiB would be carried by every user for a format most of them never enable; and
-  the price would be moving the `size` gate off the zero-tolerance number it was just tightened to, which is
-  how v0.12.1's green-but-meaningless gate happened. A build that wants the second opinion has one flag; a
-  user who does not pays nothing for it.
+  describing since v0.4. At the v0.13 decision, the condition was that the binary not grow past 1 049 440
+  bytes; the ordinary-profile measurement was **+118 784 bytes**, more than the 96 KiB the progress line gave
+  back. The v0.13 release therefore kept the condition: `jpeg-v1` existed and CI tested it, but it was not in
+  that release's default, and JPEG remained opt-in behind `--formats jpeg`.
+  **This paragraph records the v0.13 decision, not the current policy.** The dependency-specific `opt-level =
+  "s"` build measured 1 082 208 bytes, 32 768 over the then-current 1 049 440-byte limit; the owner later
+  explicitly superseded that old size condition in #82. The v0.13 rationale and measurements remain history,
+  while the unreleased #82 status below records the authorized default and its unchanged new ceiling.
 - **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
   with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
   prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)). It found a defect on its
@@ -334,16 +330,29 @@ The tag is cut from `main` only after each test fails before its fix and passes 
 
 ### v0.14+ — the queue after this
 
-The v0.14 implementation queue is complete. Full-format admission and other examined candidates remain separate
-follow-ups rather than reasons to smuggle another format into this release:
+The v0.14 implementation queue is complete. The following #84 work is an **unreleased follow-up**, not part of
+the v0.14.0 release notes or artifacts. Its acceptance status is deliberately kept separate from the historical
+v0.13/v0.14 decisions above:
+
+| Issue | Unreleased status | Remaining evidence or blocker |
+| --- | --- | --- |
+| #57 — PDF measurement | pending | Need 20–50 provenance- and permission-qualified real-toolchain PDFs, per-file hashes/refusals, qpdf checks, render comparisons and independent aggregates; no supplemental qualified sample or current run is retained here. |
+| #59 — FITS measurement | pending | Need pre-registered, permission-qualified full-size survey products and separate Tier 1/Tier 2 raw results; historical cutouts do not satisfy the selection. |
+| #82 — default JPEG V1 | implementation and docs in progress | Final-SHA stripped-musl size, three-OS/default/all-features checks, corpus/fuzz/third-party results, and retained runtime/RSS evidence are still required. The ceiling is the unchanged **1,082,208 bytes**. |
+| #83 — FITS confirmation | implementation and docs in progress | Compile and run the prompt-policy, pipeline, default-No, refusal, EOF and cleanup tests on the final head; the prompt remains limited to one direct TTY `--fits-tile` run. |
+| #79 — FLAC re-encoding | not implemented | Full path requires an approved maintained encoder and independent decoder, exact PCM/metadata/seektable checks, external tools, negative controls, corpus/fuzz, and actual feature size/speed/gain measurements. |
+| #80 — narrow PDF FlateDecode | blocked on #57 | Do not implement until the required PDF measurement and disposition exist; no PDF handler is admitted by this status row. |
+
+Full-format admission and other examined candidates remain separate follow-ups rather than reasons to smuggle
+another format into the v0.14.0 release:
 
 | Candidate | State | Why |
 | --- | --- | --- |
-| FLAC | refused, measured | 0.4 % for a quarter of the binary |
+| FLAC | opt-in implementation authorized by #79; not implemented | historical audit: 0.4 % on music and estimated +150…300 KiB; final size/speed/gain remains to be measured |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
 | FITS full-admission follow-up | open, outside the v0.14.0 opt-in release | The v0.14.0 handler is behind `--fits-tile` and the non-default `fits` feature. Historical audit figures are not release/performance evidence; current differences and the supplemental survey sample remain open for full admission. Candidate-specific HEASARC evidence and limitations are tracked in [measurement status](measurement-status.md) |
 | DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| PDF | refused after measurement | the permitted slice covers 45.7 % of a 2 208-file corpus and saves a median 0.08 %; repacking would save 20.1 % and is forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
+| PDF | historical refusal; #57 evidence follow-up pending; #80 blocked | the previous 2 208-file audit reported 45.7 % in-scope and a 0.08 % median; the required supplemental real-toolchain sample and current disposition are still missing; repacking remains forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
 | raw DEFLATE | refused | no signature: recognition would be a guess |
 

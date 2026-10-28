@@ -42,11 +42,11 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | ICO / CUR | v0.3 | implemented | Optimize embedded PNGs | equals the embedded PNG gain | medium | [§4.4](guarantees.md#44-ico--cur--v03) |
 | APNG | v0.3 | implemented | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
-| JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
+| JPEG (baseline, default) | v0.4 / #82 | implemented | Entropy re-encoding with optimal Huffman tables; exact DCT-coefficient comparison plus independent V1 pixel check; markers preserved | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-baseline-default) |
 | TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW or `FillOrder 2` | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
 | zlib (`.zlib`, `.zz`) | v0.9 | implemented | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | 0–10 %, depends on the level that wrote the file | medium | [§4.10](guarantees.md#410-zlib-rfc-1950--v09) |
-| FITS (opt-in) | v0.14 | implemented in v0.14.0, behind the `fits` feature and `--fits-tile` | An uncompressed image HDU becomes a tile-compressed `BINTABLE` (`ZIMAGE`, `GZIP_1`/`GZIP_2`, quantisation off, one tile per row); every other HDU copied verbatim | Historical audit only; no current release/performance claim. Non-smaller candidates are left alone | high for the accepted subset; full admission remains open | [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) |
-| FLAC | — | **refused after measurement** | Would re-encode losslessly, but a stronger encoder buys 0.4 % and costs a quarter of the binary | 0–0.4 % | — | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
+| FITS (opt-in) | v0.14 | implemented in v0.14.0, behind the `fits` feature and `--fits-tile` | An uncompressed image HDU becomes a tile-compressed `BINTABLE` (`ZIMAGE`, `GZIP_1`/`GZIP_2`, quantisation off, one tile per row); every other HDU copied verbatim. A single-file TTY run asks default No after verification; scripted use of the flag remains explicit consent | Historical audit only; no current release/performance claim. Non-smaller candidates are left alone | high for the accepted subset; full admission remains open | [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) |
+| FLAC | #79 | **opt-in implementation authorized; not implemented** | The historical audit measured 0.4 % on music and estimated +150…300 KiB; the owner selected a non-default handler despite that result. No FLAC handler or new measurements ship yet | historical result only | high; PCM/metadata/seektable contract remains unproven | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
 
 ### ZIP-based formats covered by the ZIP handler
 
@@ -117,11 +117,14 @@ If any item is missing, the format stays out. There is no "experimental support"
 
 ## 5. Refused formats
 
-Refusals are permanent design decisions, not a backlog. Each has a reason that follows from the invariant.
+A recorded refusal is the current policy until an explicitly authorized follow-up reopens it; a pending audit or
+implementation issue is not itself format admission. The PDF row below keeps its earlier decision historical
+while #57 supplies the newly required evidence before #80 can proceed. Every actual refusal still has a reason
+that follows from the invariant.
 
 | Format | Why Tzim refuses |
 | --- | --- |
-| **PDF** | **Refused after measurement** ([audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)). The narrow slice — recompress `FlateDecode` payloads inside a preserved object graph — takes **45.7 %** of a 2 208-file corpus, so the shape is not the obstacle; the gain is. Median **0.08 %** per file (0.15 % with `zopfli`, 0.59 % with the loosest instrument) against a pre-registered bar of 1 %, for 40–70 KiB of binary and 1 500–2 500 lines. What repacking would buy is **20.1 %**, and repacking — flattening revisions, regenerating object streams — is a rewrite with a different risk class, not a recompress. Contract kept in [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement). |
+| **PDF** | **Historical refusal after measurement; #57 supplement pending** ([audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)). The old 2 208-file audit measured a 0.08 % median, but its separate 20–50 real-toolchain sample was not assembled and is still required for #57. The prior result and thresholds remain historical; no PDF handler is admitted pending that new sample and disposition. Contract in [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement). |
 | **DICOM** | Never refused — never examined, until now. The question this row used to ask (is the dictionary or the refusal list the larger cost?) is answered in [dicom-audit](dicom-audit.md): the dictionary is, it is **5 189 entries measured**, and it is needed by exactly one of three tiers. Under measurement is a recompress-only slice — a data set already compressed as Deflated Explicit VR Little Endian, whose stream is **raw DEFLATE (RFC 1951), not zlib**, and therefore carries no checksum — specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented), with the decision rule fixed before the numbers. Until that run exists, the format is not supported. |
 | **WebP (lossless)** | No mature pure-Rust lossless encoder exists; a C dependency breaks static cross-platform builds. Re-encoding could also change the bitstream in ways we cannot independently verify sample-by-sample without the same library that produced it. |
 | **AVIF / HEIC / JPEG XL** | Same as WebP: no verifiable pure-Rust lossless re-encoder. Lossless JPEG transcoding to JXL is a format change (G2), which Tzim does not do. |
@@ -165,7 +168,8 @@ Why the order in the roadmap is PNG → gzip → ZIP → ICO/APNG → JPEG:
    contract is the hardest to get right, so it ships after the replacement pipeline is proven.
 4. **ICO and APNG** reuse the PNG engine and add coverage cheaply.
 5. **JPEG** is the most common image format, but the gain is small and the codec risk is the highest. It
-   ships last, opt-in, with pixel-level verification.
+   shipped last with pixel-level verification; #82 later admitted that verified baseline subset to the
+   release default within the unchanged binary-size ceiling.
 
 Documents and PDF are excluded not because they are unpopular, but because "popular" and "safe to rewrite"
 are different properties, and only the second one matters here.
