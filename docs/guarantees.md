@@ -1076,6 +1076,7 @@ otherwise:
 - every header ends with an `END` card inside its records, and no card is truncated;
 - `|BITPIX|/8 × Π NAXISn` equals the data length the file actually holds;
 - `BITPIX` is one of 8, 16, 32, 64, −32, −64;
+- image rank is at most 99: the writer's `ZNAXISn` names must fit FITS's eight-character keyword field; higher standard-valid ranks are refused and preserved;
 - `GROUPS = T` is absent, and `PCOUNT = 0`/`GCOUNT = 1` where they appear;
 - no axis has length zero, and no `Z*` card appears on an image HDU;
 - `BSCALE = 1` and `BZERO = 0`, i.e. the image is not scaled;
@@ -1147,9 +1148,10 @@ remaining release decisions are tracked in [measurement status](measurement-stat
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`
-that are not the identity; an HDU carrying `CHECKSUM`/`DATASUM`; an axis of length zero; an `XTENSION` that is
-neither `IMAGE` nor `BINTABLE` (copied verbatim); the run not asking for it (`--fits-tile`); a candidate that
-is not strictly smaller, which is reported as `already_optimal`.
+that are not the identity; an HDU carrying `CHECKSUM`/`DATASUM`; an axis of length zero; image rank above 99
+(`ZNAXIS100` cannot fit the eight-character keyword field); an `XTENSION` that is neither `IMAGE` nor `BINTABLE`
+(copied verbatim); the run not asking for it (`--fits-tile`); a candidate that is not strictly smaller, which
+is reported as `already_optimal`.
 
 **Corrupt (failed, exit 1):** a data length that disagrees with `NAXIS`/`BITPIX`; a header record that runs
 past the end of the file; bytes after the `END` card in a record; bytes after the last HDU; a second primary

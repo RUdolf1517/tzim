@@ -876,9 +876,9 @@ def build_fixtures(root):
             float64_residual_specials(64 * 8 * 4),
         ),
         (
-            "residual_bitpix16_naxis999_primary.fits",
+            "residual_bitpix16_naxis99_primary.fits",
             16,
-            [1048576] + [1] * 998,
+            [1048576] + [1] * 98,
             "PRIMARY",
             integer_pattern_bitpix(16, 1048576),
         ),
@@ -919,7 +919,8 @@ def build_fixtures(root):
                 ),
                 why=(
                     "issue #78 residual actual-binary matrix: all six supported BITPIX values, "
-                    "rank 1/3/4/999, and both primary and IMAGE-extension rewrites"
+                    "representative ranks 1/3/4 and maximum writable rank 99, with primary and "
+                    "IMAGE-extension rewrites"
                 ),
             )
         )
@@ -958,6 +959,16 @@ def build_fixtures(root):
             "non-identity GCOUNT on an ordinary image is refused and preserved",
         ),
         (
+            "residual_bitpix16_naxis999_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 998,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=999 is outside this writer's subset because ZNAXIS100 exceeds the eight-character FITS keyword field",
+        ),
+        (
             "residual_bzero_scaled.fits",
             image_hdu(
                 16,
@@ -971,16 +982,17 @@ def build_fixtures(root):
     ]
     for name, blob, why in residual_untouched:
         write(name, blob)
-        cases.append(
-            dict(
-                name=name,
-                expect="untouched",
-                status="skipped",
-                residual_only=True,
-                input_case="Deterministic issue #78 refusal fixture; not a corpus measurement input.",
-                why=why,
-            )
+        case = dict(
+            name=name,
+            expect="untouched",
+            status="skipped",
+            residual_only=True,
+            input_case="Deterministic issue #78 refusal fixture; not a corpus measurement input.",
+            why=why,
         )
+        if name == "residual_bitpix16_naxis999_primary.fits":
+            case["required_note"] = "does not fit in eight columns"
+        cases.append(case)
 
     for codec in ("PLIO_1", "HCOMPRESS_1"):
         name = "residual_unsupported_%s.fits" % codec.lower()
@@ -2184,6 +2196,13 @@ def check_fixture(binary, case, root, scratch, evidence):
         expected_status = case.get("status")
         if expected_status and status != expected_status:
             result["problems"].append("status is %r, expected %r" % (status, expected_status))
+        required_note = case.get("required_note")
+        actual_note = (record or {}).get("note") or ""
+        if required_note and required_note not in actual_note:
+            result["problems"].append(
+                "refusal note %r does not contain required text %r"
+                % (actual_note, required_note)
+            )
         if candidate_bytes != original_bytes:
             result["problems"].append("a file that must not be rewritten was rewritten")
         required = case.get("required_card_counts", {})
@@ -2310,6 +2329,7 @@ def acceptance_matrix_summary(cases, fixture_results, scope):
                 identity_bound=identity_bound,
                 tzim_exit=result.get("tzim_exit"),
                 tzim_status=(result.get("tzim") or {}).get("status"),
+                tzim_note=(result.get("tzim") or {}).get("note"),
                 source_matrix_match=source_matches,
                 candidate_matrix_match=candidate_matches,
                 strict_size=(result.get("strict_size") or {}).get("improved"),
@@ -2359,6 +2379,7 @@ def corpus_manifest(root, cases, scope="full"):
                 status=case.get("status"),
                 residual_only=bool(case.get("residual_only")),
                 matrix=case.get("matrix"),
+                required_note=case.get("required_note"),
                 input_case=case.get("input_case"),
                 why=case.get("why"),
             )
@@ -2509,21 +2530,57 @@ def render_diagnostics(summary, evidence):
             matrix.get("scope", scope), matrix.get("complete", False),
             json.dumps(matrix.get("observed", {}), sort_keys=True)))
         lines.append("")
-        lines.append("| fixture | input SHA-256 | candidate SHA-256 | binary SHA-256 | strict-size | independent acceptance | result |")
-        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        def markdown_cell(value):
+            if isinstance(value, (list, tuple)):
+                value = "; ".join(str(item) for item in value)
+            if value is None or value == "":
+                return "none"
+            return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+
+        lines.append("| fixture | tzim status | tzim note | input SHA-256 | candidate SHA-256 | binary SHA-256 | strict-size | independent acceptance | result | diagnostics |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         for row in matrix.get("rows", []):
             lines.append(
-                "| %(fixture)s | `%(input_sha256)s` | `%(candidate_sha256)s` | `%(binary_sha256)s` | "
-                "%(strict_size)s | %(independent_acceptance)s | %(accepted)s |" % {
-                    "fixture": row.get("fixture", "?"),
+                "| %(fixture)s | %(status)s | %(note)s | `%(input_sha256)s` | `%(candidate_sha256)s` | `%(binary_sha256)s` | "
+                "%(strict_size)s | %(independent_acceptance)s | %(accepted)s | %(problems)s |" % {
+                    "fixture": markdown_cell(row.get("fixture", "?")),
+                    "status": markdown_cell(row.get("tzim_status")),
+                    "note": markdown_cell(row.get("tzim_note")),
                     "input_sha256": row.get("input_sha256") or "not recorded",
                     "candidate_sha256": row.get("candidate_sha256") or "not recorded",
                     "binary_sha256": row.get("binary_sha256") or "not recorded",
                     "strict_size": row.get("strict_size"),
                     "independent_acceptance": row.get("independent_acceptance"),
                     "accepted": row.get("accepted"),
+                    "problems": markdown_cell(row.get("problems") or "none"),
                 }
             )
+
+        untouched = [fixture for fixture in summary["fixtures"] if fixture.get("expect") == "untouched"]
+        if untouched:
+            lines += ["", "### Expected untouched rows", ""]
+            lines.append("| fixture | expected status | actual status | byte-identical | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+            for fixture in untouched:
+                record = fixture.get("tzim") or {}
+                input_sha = fixture.get("input_sha256")
+                candidate_sha = fixture.get("candidate_sha256")
+                if input_sha and candidate_sha:
+                    unchanged = "yes" if input_sha == candidate_sha else "no"
+                else:
+                    unchanged = "not recorded"
+                lines.append(
+                    "| %(fixture)s | %(expected)s | %(actual)s | %(unchanged)s | `%(input_sha)s` | `%(candidate_sha)s` | %(note)s | %(problems)s |" % {
+                        "fixture": markdown_cell(fixture.get("name", "?")),
+                        "expected": markdown_cell(fixture.get("status")),
+                        "actual": markdown_cell(record.get("status")),
+                        "unchanged": unchanged,
+                        "input_sha": input_sha or "not recorded",
+                        "candidate_sha": candidate_sha or "not recorded",
+                        "note": markdown_cell(record.get("note")),
+                        "problems": markdown_cell(fixture.get("problems") or "none"),
+                    }
+                )
         lines.append("")
         lines.append("## Residual controls")
         lines.append("")

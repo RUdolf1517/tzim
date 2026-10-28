@@ -198,6 +198,60 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertIn("not full-format admission", diagnostics)
         self.assertNotIn("The external fixture did not run", diagnostics)
 
+    def test_residual_diagnostics_include_matrix_errors_and_unchanged_refusals(self):
+        hash_a = "a" * 64
+        hash_b = "b" * 64
+        summary = {
+            "run": {
+                "scope": "residual",
+                "requested_sha": "c" * 40,
+                "checked_out_sha": "c" * 40,
+                "run_id": "4567",
+                "run_attempt": "1",
+            },
+            "binary": {"path": "/tmp/tzim", "bytes": 123, "sha256": hash_b},
+            "fixtures": [
+                {
+                    "name": "residual_bitpix16_naxis999_primary.fits",
+                    "expect": "untouched",
+                    "status": "skipped",
+                    "input_sha256": hash_a,
+                    "candidate_sha256": hash_a,
+                    "tzim": {
+                        "status": "skipped",
+                        "note": "Z-form keyword ZNAXIS100 does not fit in eight columns",
+                    },
+                    "problems": [],
+                }
+            ],
+            "controls": [],
+            "acceptance_matrix": {
+                "scope": "residual",
+                "complete": False,
+                "observed": {"bitpix": [-32, 8]},
+                "rows": [
+                    {
+                        "fixture": "residual_bitpix64_naxis4_primary.fits",
+                        "tzim_status": "optimized",
+                        "tzim_note": None,
+                        "input_sha256": hash_a,
+                        "candidate_sha256": hash_b,
+                        "binary_sha256": hash_b,
+                        "strict_size": True,
+                        "independent_acceptance": False,
+                        "accepted": False,
+                        "problems": ["funpack -C exited 1: BITPIX=64 mismatch"],
+                    }
+                ],
+            },
+        }
+
+        diagnostics = GATE.render_diagnostics(summary, self.evidence)
+        self.assertIn("funpack -C exited 1: BITPIX=64 mismatch", diagnostics)
+        self.assertIn("Z-form keyword ZNAXIS100 does not fit in eight columns", diagnostics)
+        self.assertIn("byte-identical", diagnostics)
+        self.assertIn(hash_a, diagnostics)
+
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):
         original = self.write_basic_image()
         candidate = self.root / "candidate.fits"
@@ -259,17 +313,36 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         selected = GATE.select_fixtures(all_cases, "residual")
         names = {case["name"] for case in selected}
         self.assertIn("residual_bitpix8_naxis1_primary.fits", names)
+        self.assertIn("residual_bitpix16_naxis99_primary.fits", names)
         self.assertIn("residual_bitpix16_naxis999_primary.fits", names)
         self.assertIn("residual_theap_non_target.fits", names)
         self.assertNotIn("int16_primary.fits", names)
         self.assertNotIn("float32_specials.fits", names)
+        matrix_cases = [case for case in selected if case.get("matrix")]
         self.assertEqual(
-            {case["matrix"]["bitpix"] for case in selected if case.get("matrix")},
+            {case["matrix"]["bitpix"] for case in matrix_cases},
             {8, 16, 32, 64, -32, -64},
         )
+        self.assertEqual(
+            {case["matrix"]["naxis"] for case in matrix_cases},
+            {1, 3, 4, 99},
+        )
+        high_rank = next(
+            case for case in selected
+            if case["name"] == "residual_bitpix16_naxis999_primary.fits"
+        )
+        self.assertEqual(high_rank["expect"], "untouched")
+        self.assertEqual(high_rank["status"], "skipped")
+        self.assertEqual(high_rank["required_note"], "does not fit in eight columns")
         manifest = GATE.corpus_manifest(str(fixture_root), selected, "residual")
         manifest_names = {fixture["name"] for fixture in manifest["fixtures"]}
         self.assertEqual(manifest_names, names)
+        manifest_high_rank = next(
+            fixture for fixture in manifest["fixtures"]
+            if fixture["name"] == "residual_bitpix16_naxis999_primary.fits"
+        )
+        self.assertEqual(manifest_high_rank["expectation"], "untouched")
+        self.assertEqual(manifest_high_rank["required_note"], "does not fit in eight columns")
         self.assertFalse(manifest["prior_run"]["replayed"])
         self.assertFalse(manifest["external_astropy"]["included"])
 
@@ -290,6 +363,29 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             if expected["floating_storage"]:
                 presence = GATE.float_specials_present(image.data, expected["bitpix"])
                 self.assertTrue(all(presence.get(key) for key in expected["floating_storage"]), case["name"])
+
+    def test_residual_rank_99_is_the_write_boundary_and_rank_999_is_a_refusal(self):
+        fixture_root = self.root / "fixtures"
+        cases = GATE.build_fixtures(str(fixture_root))
+        accepted = next(
+            case for case in cases
+            if case["name"] == "residual_bitpix16_naxis99_primary.fits"
+        )
+        accepted_hdus = GATE.parse((fixture_root / accepted["name"]).read_bytes())
+        self.assertEqual(accepted_hdus[0].int("NAXIS"), 99)
+        self.assertEqual(len(accepted_hdus[0].axes()), 99)
+        self.assertTrue(accepted["matrix"])
+
+        refused = next(
+            case for case in cases
+            if case["name"] == "residual_bitpix16_naxis999_primary.fits"
+        )
+        refused_hdus = GATE.parse((fixture_root / refused["name"]).read_bytes())
+        self.assertEqual(refused_hdus[0].int("NAXIS"), 999)
+        self.assertEqual(len(refused_hdus[0].axes()), 999)
+        self.assertEqual(refused["expect"], "untouched")
+        self.assertEqual(refused["status"], "skipped")
+        self.assertEqual(refused["required_note"], "does not fit in eight columns")
 
     def test_random_groups_and_theap_fixtures_have_expected_data_boundaries(self):
         fixture_root = self.root / "fixtures"
