@@ -8,10 +8,18 @@ queue in the roadmap says "contract before code", and a contract written without
 wish list: FLAC is the one format in the queue where the *lossless* part is easy and the *verifiable* part
 is the whole problem.
 
-**Status: refused after measurement (§7).** No FLAC code exists, the contract in
-[guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) stays on record, and the binary does not
-claim the format. The reason is not difficulty: it is that the format has almost nothing left to give, and the
-encoder to collect it costs a quarter of the binary. §7 has the numbers.
+**Historical status: refused after measurement (§7).** No FLAC code exists in this checkout, and the
+historical audit estimated small gains against a substantial encoder/decoder size cost. §7 retains those figures
+as evidence; no threshold or measurement below was changed.
+
+**Current owner scope: #79 authorizes a non-default opt-in implementation despite that historical result.**
+This supersedes the old refusal as the current product decision, but it does not mean a handler ships: #79's
+runtime verifier, external checks, corpus/fuzz results and actual size/speed/gain measurements remain
+unimplemented. The current runner has no Rust/Cargo toolchain or `flac`/`metaflac` executables, and no
+permission-qualified PCM corpus manifest is staged, so no dependency re-review, build or runtime evidence was
+possible in this iteration. **Owner action:** approve a provenance/licence-qualified PCM corpus and provision
+one pinned Rust runner containing `flac`/`metaflac`, so the issue can be implemented and tested without changing
+the historical baseline.
 
 ---
 
@@ -203,10 +211,11 @@ of a 30 MB track. Metadata removal is not a reason to support a format.
 
 ### 7.3 What happens to the work that was done
 
-The contract stays ([guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)). It cost nothing to
-write, it is correct, and if the calculus ever changes — an encoder with a materially better search, or a
-FLAC subset nobody has covered — the analysis does not have to start over. `docs/formats.md` records the
-format as **refused**, not as "research", because a queue that never shrinks is not a queue.
+The contract stays ([guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)). At the time of this
+audit the disposition was to refuse the format; the owner later superseded that decision with #79's opt-in
+implementation scope. The analysis and measured numbers remain historical context, not a veto on #79 and not
+current size/speed evidence. Until #79's independent runtime verification and acceptance evidence pass, the
+format remains unsupported in the binary.
 
 The queue that remains:
 
