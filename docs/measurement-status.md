@@ -1,12 +1,41 @@
 # PDF/FITS measurement acceptance status
 
-Date: 2026-10-27. Baseline: `5dd45b38412ffb762a1fc380bd291351c9e6601e`.
+Historical checklist date: 2026-10-27. Baseline: `5dd45b38412ffb762a1fc380bd291351c9e6601e`.
 This is a living management checklist, not a completed execution audit or a release approval.
+
+## PR #84 execution status — 2026-10-29
+
+No #57/#59 supplemental measurement, Rust build, or HEASARC validation has been run for this PR. The pinned
+image corpus was downloaded only to `/tmp` for #82 selection preflight: 698 corpus files (690 images and 8
+containers), with 62 JPEGs at or below 204,800 bytes totalling 1,399,119 bytes. No optimizer was run and no
+preflight manifest, corpus files or runtime result was retained as evidence. The current sandbox has no `cargo`, `rustc`, `qpdf`, `mutool`,
+`fitsverify` or `funpack` executable. The existing PDF/FITS results below and in their audits remain historical;
+they do not satisfy the newly required real-toolchain PDF sample or full-size survey FITS sample. No baseline,
+threshold or historical result was changed to fill that gap.
+
+- **#57 blocker:** there is no 20–50-file, pre-registered list of real-toolchain PDFs with per-file source
+  provenance and redistribution/permission basis. The audit itself records why its earlier three corpora did
+  not supply that sample. **Owner action:** provide or approve a source manifest for 20–50 redistributable
+  real-toolchain PDFs (source URL/revision, producer and permission/licence for each); then run the existing
+  measurement with qpdf and MuPDF on a provisioned runner.
+- **#59 blocker:** no full-size published survey FITS products with a qualified source/permission manifest or
+  pre-registered selection are present; the historical 178-file sample includes small cutouts. **Owner action:**
+  provide or approve the survey product source and pre-registered selection (URLs, product identifiers and
+  permission/licence), then run the existing two-tier measurement with `fitsverify`, `funpack` and the array /
+  header oracle on a provisioned runner.
+- **#79 blocker:** the non-default FLAC path is authorized, but this iteration could not re-review/build the
+  maintained encoder, add the independent runtime decoder, or run external checks: Rust/Cargo and `flac`/
+  `metaflac` are absent, and no permission-qualified PCM corpus manifest is staged. **Owner action:** approve a
+  provenance/licence-qualified PCM corpus and provision one pinned runner with Rust plus `flac`/`metaflac`; then
+  implement and measure the authorized full path without changing the historical baseline.
+- **#80 blocker:** it remains conditional on #57's new sample and disposition; no PDF handler or transform was
+  added. **Owner action:** provide the #57 qualified measurement and record its disposition before authorizing
+  implementation of the narrow `FlateDecode` path.
 
 ## Evidence and limits
 
 The manager inspected the issue bodies, repository documents and measurement script headers. No measurement,
-Rust build, corpus download or HEASARC validation was executed in this review. Historical execution details
+Rust build, corpus download or HEASARC validation was executed in that review. Historical execution details
 below are attributed to the outgoing manager's handover; they were not independently reproduced.
 
 The instruments are already linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
