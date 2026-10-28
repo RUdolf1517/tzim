@@ -1,6 +1,6 @@
 //! Small, testable yes/no interaction for the one confirmation-only path.
 
-use std::io::{self, BufRead, Write};
+use std::io::{BufRead, Write};
 use std::path::Path;
 
 /// Ask about the visible FITS IMAGE-to-BINTABLE transformation. Only an
@@ -28,7 +28,7 @@ pub fn ask_fits_tile<R: BufRead, W: Write>(path: &Path, input: &mut R, output: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Cursor, Read};
+    use std::io::{self, Cursor, Read};
 
     struct BrokenInput;
 

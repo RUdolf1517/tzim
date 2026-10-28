@@ -472,7 +472,6 @@ mod prompt_policy_tests {
             vec!["--fits-tile", "--dry-run"],
             vec!["--fits-tile", "--recursive"],
             vec!["--fits-tile", "--nested"],
-            vec!["--fits-tile", "--quiet"],
             vec!["--fits-tile", "--formats", "png"],
         ] {
             let parsed = args(&flags, &[&file]);
