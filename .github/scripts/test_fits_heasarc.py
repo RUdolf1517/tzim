@@ -308,7 +308,8 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                     "expected_status": "skipped",
                     "input_sha256": hash_a,
                     "candidate_sha256": hash_a,
-                    "original_fitsverify_exit": 0,
+                    "original_fitsverify_mode": "record_only",
+                    "original_fitsverify_exit": -11,
                     "tzim": {
                         "status": "skipped",
                         "note": "fits: NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
@@ -346,7 +347,9 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertIn("PR-head SHA `dddddddddddddddddddddddddddddddddddddddd`", diagnostics)
         self.assertIn("PR head is a recorded parent: `True`", diagnostics)
         self.assertIn("Source identity valid: **True**", diagnostics)
-        self.assertIn("| skipped | skipped | yes | 0 |", diagnostics)
+        self.assertIn("| skipped | skipped | yes | -11 (record_only) |", diagnostics)
+        self.assertIn("source diagnostics only", diagnostics)
+        self.assertIn("warning allowlist", diagnostics)
         self.assertIn(hash_a, diagnostics)
 
     def test_unparseable_tzim_candidate_is_a_recorded_refusal(self):
@@ -471,7 +474,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             self.assertEqual(case["expect"], "untouched")
             self.assertEqual(case["status"], "skipped")
             self.assertEqual(case["required_note"], note)
-            self.assertEqual(case["diagnostics"], "registered")
+            self.assertEqual(case["diagnostics"], "record_only")
         manifest = GATE.corpus_manifest(str(fixture_root), selected, "residual")
         manifest_names = {fixture["name"] for fixture in manifest["fixtures"]}
         self.assertEqual(manifest_names, names)
@@ -480,7 +483,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
             if fixture["name"] == "residual_bitpix16_naxis999_primary.fits"
         )
         self.assertEqual(manifest_high_rank["expectation"], "untouched")
-        self.assertEqual(manifest_high_rank["diagnostics"], "registered")
+        self.assertEqual(manifest_high_rank["diagnostics"], "record_only")
         self.assertEqual(
             manifest_high_rank["required_note"],
             "NAXIS = 999 exceeds this build's tile-rewrite limit of 6",
@@ -488,7 +491,7 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         self.assertFalse(manifest["prior_run"]["replayed"])
         self.assertFalse(manifest["external_astropy"]["included"])
 
-    def test_valid_rewrite_refusals_retain_original_fitsverify_logs(self):
+    def test_unsupported_refusals_retain_original_fitsverify_diagnostics(self):
         fixture_root = self.root / "fixtures"
         cases = GATE.build_fixtures(str(fixture_root))
         refusal_cases = [
@@ -505,13 +508,18 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
         for case in refusal_cases:
             with self.subTest(fixture=case["name"]):
                 note = case["required_note"]
+                verify_result = (
+                    (-11, "fitsverify terminated by signal 11\\n")
+                    if case["name"] == "residual_bitpix16_naxis999_primary.fits"
+                    else (0, "fitsverify clean\\n")
+                )
                 with mock.patch.object(
                     GATE,
                     "tzim_run",
                     return_value=(0, {"status": "skipped", "note": "fits: " + note}, ""),
                 ):
                     with mock.patch.object(
-                        GATE, "fitsverify", return_value=(0, "fitsverify clean\\n")
+                        GATE, "fitsverify", return_value=verify_result
                     ) as verify:
                         result = GATE.check_fixture(
                             "/tmp/tzim",
@@ -523,14 +531,14 @@ class ControlledCandidateRefusalTests(unittest.TestCase):
                 self.assertEqual(result["tzim_exit"], 0)
                 self.assertEqual(result["tzim"]["status"], "skipped")
                 self.assertEqual(result["candidate_sha256"], result["input_sha256"])
-                self.assertEqual(result["original_fitsverify_exit"], 0)
+                self.assertEqual(result["original_fitsverify_mode"], "record_only")
+                self.assertEqual(result["original_fitsverify_exit"], verify_result[0])
                 verify.assert_called_once()
-                self.assertTrue(
-                    (
-                        self.evidence_root
-                        / ("fitsverify-original-%s.txt" % case["name"])
-                    ).is_file()
+                evidence_log = (
+                    self.evidence_root
+                    / ("fitsverify-original-%s.txt" % case["name"])
                 )
+                self.assertEqual(evidence_log.read_text(), verify_result[1])
                 self.assertEqual(result["problems"], [])
 
     def test_residual_matrix_and_float_specials_parse_as_declared(self):

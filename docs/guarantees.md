@@ -1155,10 +1155,12 @@ CRC-32/ISIZE inflation and yields the original pixel-storage bytes, every non-ta
 the complete output is strictly smaller. Replacement follows successful verification; parse, verification or I/O
 failure leaves the original path intact. CI additionally applies `fitsverify` and independent CFITSIO `funpack -C`
 to every rewritten candidate in the selected fixture scope, comparing literal headers, pixel-storage bytes and
-non-target HDUs; explicit refusal rows are checked for their status and unchanged source bytes. That independent
-read-back is not run on every file a user may process. No full FITS admission or universal stability guarantee
-is claimed; FITS Tier 2 remains opt-in and non-default. Current run identities, retained-evidence limits and the
-remaining release decisions are tracked in [measurement status](measurement-status.md).
+non-target HDUs; explicit refusal rows are checked for their status and unchanged source bytes. The original
+`fitsverify` result on a valid-but-unsupported no-rewrite row is retained as a source diagnostic, not treated as
+candidate acceptance; every rewritten candidate (including THEAP controls) still requires exit 0, with no warning
+allowlist. That independent read-back is not run on every file a user may process. No full FITS admission or
+universal stability guarantee is claimed; FITS Tier 2 remains opt-in and non-default. Current run identities,
+retained-evidence limits and the remaining release decisions are tracked in [measurement status](measurement-status.md).
 
 **Refused (skipped, exit 0):** `ZCMPTYPE` of `RICE_1`, `PLIO_1`, `HCOMPRESS_1`, or any codec this build was
 not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GROUPS = T`; `BSCALE`/`BZERO`

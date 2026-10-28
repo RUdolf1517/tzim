@@ -17,7 +17,8 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   `BITPIX = 64` and `NAXIS` through 999, while rewrite eligibility is limited to `BITPIX` 8, 16, 32, −32 and
   −64 with rank at most 6; per-HDU mixed-file behavior is unchanged. The residual HEASARC matrix covers both
   PRIMARY and IMAGE roles, adds positive rank-4/rank-6 cases, and records byte-identical refusals for
-  `BITPIX = 64` and ranks 7, 99 and 999, with `fitsverify` evidence for the valid originals. The THEAP fixture
+  `BITPIX = 64` and ranks 7, 99 and 999, retaining source `fitsverify` observations without treating them as
+  candidate acceptance (rewritten candidates remain strict, with no warning allowlist). The THEAP fixture
   now uses a valid variable-length byte-array descriptor and heap. Run evidence records a PR-head SHA separately
   from the test-merge SHA and validates their parent relationship. Astropy's GZIP_1/GZIP_2 oracle is documented
   as its own reader path, distinct from CFITSIO `funpack`.

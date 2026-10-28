@@ -17,10 +17,11 @@ between two uncompressed FITS files.
 What it proves, and what it cannot
 ----------------------------------
 * `fitsverify -l` exits with **the number of errors plus warnings** (read from
-  `utilities/fitsverify.c`, which prints that sentence itself), so any non-zero
-  status is a failure. The allowlist of tolerated warnings is **empty**; a
-  warning that turns out to be intrinsic to the format is a contract question
-  for the owner, and the full output is in the evidence.
+  `utilities/fitsverify.c`, which prints that sentence itself). Every rewritten
+  candidate and every registered positive original must exit 0; the tolerated
+  warning allowlist is **empty**. For explicitly unsupported no-rewrite inputs,
+  the original's output and exit are retained as diagnostic evidence only: no
+  candidate is submitted for acceptance, and this does not relax candidate checks.
 * `funpack` is the reference *reader* of the compressed convention. If it can
   reconstruct the array and the header, a reader written by someone else
   understood the file.
@@ -1040,7 +1041,7 @@ def build_fixtures(root):
         }
         if name in refusal_notes:
             case["required_note"] = refusal_notes[name]
-            case["diagnostics"] = "registered"
+            case["diagnostics"] = "record_only"
         cases.append(case)
 
     for codec in ("PLIO_1", "HCOMPRESS_1"):
@@ -2229,18 +2230,17 @@ def check_fixture(binary, case, root, scratch, evidence):
         )
         return result
 
-    if case["expect"] == "untouched" and case.get("diagnostics") == "registered":
+    if case["expect"] == "untouched" and case.get("diagnostics") == "record_only":
+        # These inputs produce no candidate. Keep fitsverify's source diagnostic
+        # as raw evidence, but do not treat it as candidate acceptance or an
+        # allowlisted warning; the refusal contract is status plus exact bytes.
         verify_code, verify_output = fitsverify(kept, scratch)
+        result["original_fitsverify_mode"] = "record_only"
         result["original_fitsverify_exit"] = verify_code
         result["original_fitsverify_diagnostics"] = fitsverify_diagnostics(verify_output)
         evidence.write_text(
             "fitsverify-original-%s.txt" % case["name"], verify_output
         )
-        if verify_code != 0:
-            result["problems"].append(
-                "registered valid refusal fixture original fitsverify exit is %d, expected 0"
-                % verify_code
-            )
 
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
@@ -2760,10 +2760,21 @@ def render_diagnostics(summary, evidence):
                 }
             )
 
+        if any(
+            fixture.get("original_fitsverify_mode") == "record_only"
+            for fixture in summary["fixtures"]
+        ):
+            lines += [
+                "",
+                "For valid-but-unsupported no-rewrite fixtures, the original `fitsverify` output and exit are "
+                "recorded as source diagnostics only. No candidate is accepted on that basis: every rewritten "
+                "candidate, including THEAP controls, still requires `fitsverify` exit 0, with no warning allowlist.",
+            ]
+
         untouched = [fixture for fixture in summary["fixtures"] if fixture.get("expect") == "untouched"]
         if untouched:
             lines += ["", "### Expected untouched rows", ""]
-            lines.append("| fixture | expected status | actual status | byte-identical | original fitsverify exit | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
+            lines.append("| fixture | expected status | actual status | byte-identical | original fitsverify exit / mode | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
             lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
             for fixture in untouched:
                 record = fixture.get("tzim") or {}
@@ -2779,7 +2790,15 @@ def render_diagnostics(summary, evidence):
                         "expected": markdown_cell(fixture.get("expected_status")),
                         "actual": markdown_cell(record.get("status")),
                         "unchanged": unchanged,
-                        "original_fitsverify": fixture.get("original_fitsverify_exit", "not run"),
+                        "original_fitsverify": (
+                            "%s (%s)"
+                            % (
+                                fixture.get("original_fitsverify_exit", "not run"),
+                                fixture.get("original_fitsverify_mode"),
+                            )
+                            if fixture.get("original_fitsverify_mode")
+                            else fixture.get("original_fitsverify_exit", "not run")
+                        ),
                         "input_sha": input_sha or "not recorded",
                         "candidate_sha": candidate_sha or "not recorded",
                         "note": markdown_cell(record.get("note")),
@@ -4024,18 +4043,33 @@ def render_summary(summary):
     ]
     for fixture in summary["fixtures"]:
         problems = fixture.get("problems") or []
+        original_fitsverify = fixture.get("original_fitsverify_exit", "-")
+        if fixture.get("original_fitsverify_mode"):
+            original_fitsverify = "%s (%s)" % (
+                original_fitsverify, fixture["original_fitsverify_mode"]
+            )
         lines.append(
             "| %s | %s | %s | %s | %s | %s | %s |"
             % (
                 fixture.get("name"),
                 fixture.get("expect"),
                 fixture.get("tzim", {}).get("status") if isinstance(fixture.get("tzim"), dict) else "-",
-                fixture.get("original_fitsverify_exit", "-"),
+                original_fitsverify,
                 fixture.get("fitsverify_exit", "-"),
                 fixture.get("funpack_exit", "-"),
                 "; ".join(problems) if problems else "none",
             )
         )
+    if any(
+        fixture.get("original_fitsverify_mode") == "record_only"
+        for fixture in summary["fixtures"]
+    ):
+        lines += [
+            "",
+            "For valid-but-unsupported no-rewrite fixtures, original `fitsverify` output and exit are "
+            "recorded as source diagnostics only. Every rewritten candidate, including THEAP controls, "
+            "still requires `fitsverify` exit 0; the warning allowlist remains empty.",
+        ]
     matrix = summary.get("acceptance_matrix") or {}
     if matrix:
         lines += ["", "## Accepted-file matrix", ""]
