@@ -1633,7 +1633,9 @@ mod tests {
         assert_eq!(z_form_keyword("NAXIS100").as_deref(), Some("ZNAXIS100"));
         let card = parsed[0].header.get("NAXIS100").expect("NAXIS100 card");
         let error = renamed_card(card, "ZNAXIS100").expect_err("nine characters do not fit");
-        assert!(error.to_string().contains("ZNAXIS100 does not fit in eight columns"));
+        assert!(error
+            .to_string()
+            .contains("ZNAXIS100 does not fit in eight columns"));
     }
 
     #[test]
