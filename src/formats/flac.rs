@@ -371,7 +371,7 @@ fn encode_frames(
     let mut source = DecoderSource::new(input, info)?;
     let config = flacenc::config::Encoder::default()
         .into_verified()
-        .map_err(|error| refusal(format!("flacenc configuration failed: {error}")))?;
+        .map_err(|error| refusal(format!("flacenc configuration failed: {error:?}")))?;
     let block_size = config.block_size;
     if block_size < 16 || block_size > 65_535 {
         return Err(refusal(

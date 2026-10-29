@@ -741,7 +741,7 @@ fn parse_object_with_lengths(
                     .get(id)
                     .ok_or_else(|| refuse("indirect /Length is not a direct integer object"))?,
                 None,
-                Some(*id),
+                Some(id.clone()),
             ),
             _ => return Err(refuse("non-integer stream /Length")),
         };
