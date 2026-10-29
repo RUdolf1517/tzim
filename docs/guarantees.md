@@ -759,14 +759,16 @@ refusal with the reason, never a conversion.
 
 **Preserved:** the marker; every metadata block, byte for byte, in its original order — `PADDING`
 (including its length), `APPLICATION`, `VORBIS_COMMENT`, `CUESHEET` and `PICTURE`; the `STREAMINFO` fields
-that describe the audio: sample rate, channel count, bit depth, total samples, and the MD5 of the unencoded
-audio.
+that describe the audio: sample rate, channel count, bit depth, total samples, and any recorded nonzero MD5 of
+the unencoded audio. If the input MD5 is the legal all-zero "not computed" sentinel, the candidate records the
+MD5 independently computed from the exactly decoded PCM.
 
 **Allowed to change:** every frame; the frame headers' coded numbers and CRCs; `STREAMINFO`'s min/max block
-size and min/max frame size, which describe the frames and must be recomputed correctly; each `SEEKTABLE`
-point may be remapped to the new frame start at or before its original sample position, with that frame's byte
-offset and block length. If two distinct source points collapse onto one output frame, the file is refused rather
-than emitting duplicate seekpoints; the file length.
+size and min/max frame size, which describe the frames and must be recomputed correctly; a zero input MD5
+sentinel may be filled with the digest of the independently decoded PCM; each `SEEKTABLE` point may be remapped
+to the new frame start at or before its original sample position, with that frame's byte offset and block length.
+If two distinct source points collapse onto one output frame, the file is refused rather than emitting duplicate
+seekpoints; the file length.
 
 **Verification.** The candidate is decoded with a decoder that is not the encoder (`claxon`, against
 `flacenc`; see [§2.6](#26-verification-independence)), and:
@@ -779,8 +781,9 @@ than emitting duplicate seekpoints; the file length.
    carries the proof alone and the candidate's own MD5 must still be correct;
 4. every metadata block other than `STREAMINFO` and `SEEKTABLE` is byte-identical, and appears in the same
    order and at the same length;
-5. `STREAMINFO`'s sample rate, channel count, bit depth, total samples and MD5 are unchanged; its min/max
-   block size and min/max frame size match the frames actually written;
+5. `STREAMINFO`'s sample rate, channel count, bit depth and total samples are unchanged; a nonzero input MD5
+   is preserved, while an all-zero "not computed" sentinel is replaced by the digest of the decoded PCM; its
+   min/max block size and min/max frame size match the frames actually written;
 6. every rewritten `SEEKTABLE` point names a valid output frame start, with the frame's actual block length;
    distinct input points may not collapse to a duplicate output frame;
 7. the coded frame numbers cover the whole stream: no gap, no overlap, no frame beyond `total samples`;

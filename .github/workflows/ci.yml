@@ -15,7 +15,7 @@ env:
 jobs:
   # Two configurations, on every platform (#68): `default` is exactly what a
   # published binary ships with, including the independent JPEG V1 verifier;
-  # `all-features` additionally exercises optional handlers such as FITS.
+  # `all-features` additionally exercises FITS, FLAC and PDF.
   test:
     name: test (${{ matrix.os }}, ${{ matrix.features }})
     runs-on: ${{ matrix.os }}
@@ -74,6 +74,24 @@ jobs:
         if: steps.test.outcome == 'failure'
         shell: bash
         run: exit 1
+
+  # Exercise each newly admitted opt-in handler as its own feature on all three
+  # operating systems. `all-features` above catches interactions; this catches
+  # accidental reliance on an unrelated default or optional feature.
+  opt-in-format-matrix:
+    name: test (${{ matrix.os }}, ${{ matrix.format }} only)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        format: [flac, pdf]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and run the isolated format tests
+        shell: bash
+        run: cargo test --locked --no-default-features --features "${{ matrix.format }}" --lib
 
   # The smallest build that still has a handler (#68): `png` alone, with every
   # feature that is not PNG switched off. Nothing in this repository had ever
@@ -614,6 +632,8 @@ jobs:
           # release row is checked against the fixed 1,082,208-byte ceiling.
           for features in \
             "png" \
+            "flac" \
+            "pdf" \
             "png,gzip" \
             "png,gzip,zip" \
             "png,gzip,zip,ico" \

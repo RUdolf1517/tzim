@@ -469,9 +469,16 @@ fn encode_frames(
         return Ok(None);
     }
     stream_info.set_total_samples(source.total_samples);
-    // Keep the input's checksum field byte-for-byte. If it was zero (legal),
-    // do not silently turn verification into metadata editing.
-    stream_info.set_md5_digest(&original_md5);
+    // Preserve a recorded input MD5 exactly. An all-zero STREAMINFO field is
+    // the format's legal "not computed" sentinel, so write the independently
+    // computed PCM MD5 into the candidate rather than perpetuating an
+    // unverifiable checksum.
+    let candidate_md5 = if original_md5 == [0u8; 16] {
+        computed_md5
+    } else {
+        original_md5
+    };
+    stream_info.set_md5_digest(&candidate_md5);
 
     let mut info_sink = ByteSink::new();
     stream_info.write(&mut info_sink).map_err(|error| {
@@ -811,9 +818,15 @@ fn compare_pcm(original: &[u8], candidate: &[u8]) -> Result<()> {
         ));
     }
     let candidate_file = parse(candidate).map_err(|error| Error::verify(error.to_string()))?;
-    if streaminfo_md5(candidate, &candidate_file)? != stored {
+    let candidate_md5 = streaminfo_md5(candidate, &candidate_file)?;
+    if candidate_md5 != actual {
         return Err(Error::verify(
-            "candidate FLAC STREAMINFO MD5 was not preserved",
+            "candidate FLAC STREAMINFO MD5 disagrees with decoded PCM",
+        ));
+    }
+    if stored != [0u8; 16] && candidate_md5 != stored {
+        return Err(Error::verify(
+            "candidate FLAC STREAMINFO MD5 differs from the recorded input MD5",
         ));
     }
     Ok(())
@@ -844,10 +857,13 @@ fn compare_metadata(
         let y = &candidate[right.data_range()];
         match left.kind {
             0 => {
-                if x.len() != STREAMINFO_BYTES || y.len() != STREAMINFO_BYTES || x[10..] != y[10..]
+                if x.len() != STREAMINFO_BYTES
+                    || y.len() != STREAMINFO_BYTES
+                    || x[10..18] != y[10..18]
+                    || (x[18..34] != [0u8; 16] && x[18..34] != y[18..34])
                 {
                     return Err(Error::verify(
-                        "FLAC STREAMINFO sample identity or MD5 changed",
+                        "FLAC STREAMINFO sample identity or recorded MD5 changed",
                     ));
                 }
             }
@@ -1111,6 +1127,40 @@ mod tests {
             &candidate[after.blocks[2].data_range()],
             "seek offsets and frame samples are updated"
         );
+    }
+
+    #[test]
+    fn zero_input_md5_is_computed_for_candidate_and_checked_independently() {
+        let mut input = sample_flac(false, true);
+        let input_file = parse(&input).unwrap();
+        let md5_start = input_file.blocks[0].data_start + 18;
+        input[md5_start..md5_start + 16].fill(0);
+        let options = Options {
+            zopfli: false,
+            max_pixels: 1,
+            max_uncompressed: 1,
+            max_ratio: 1,
+            strip_metadata: false,
+            nested: false,
+            max_depth: 0,
+            depth: 0,
+            allow: crate::formats::Allow::default(),
+            fits_tile: false,
+        };
+
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&input, &mut candidate, &options).unwrap(),
+            Cand::Written(_)
+        ));
+        let candidate_file = parse(&candidate).unwrap();
+        assert_ne!(streaminfo_md5(&candidate, &candidate_file).unwrap(), [0u8; 16]);
+        verify(&input, &candidate, &options).unwrap();
+
+        let mut missing_candidate_md5 = candidate.clone();
+        let candidate_md5_start = candidate_file.blocks[0].data_start + 18;
+        missing_candidate_md5[candidate_md5_start..candidate_md5_start + 16].fill(0);
+        assert!(verify(&input, &missing_candidate_md5, &options).is_err());
     }
 
     #[test]

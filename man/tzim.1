@@ -58,8 +58,9 @@ Skip files larger than this (default: 2147483648).
 Skip images with more pixels than this (default: 100000000).
 .TP
 .B \-\-formats \fILIST\fR
-Only process these formats: png, gzip, zip, ico, jpeg, tiff, zlib, fits. This
-is an allowlist: naming a list narrows a run; for example, `--formats png`
+Only process these formats when compiled in: png, gzip, zip, ico, jpeg, tiff,
+zlib, fits, flac, pdf. This is an allowlist: naming a list narrows a run; for
+example, `--formats png`
 excludes JPEG. The release default includes baseline JPEG with independent V1
 verification. The FITS handler is compiled
 in only with the \fBfits\fR cargo feature, and it does nothing at all without

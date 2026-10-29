@@ -153,15 +153,19 @@ implementation pins the reviewed versions below behind `flac`; none is enabled i
 
 | Crate | Locked version | Licence | Role | Selected configuration and dependency effect |
 | --- | --- | --- | --- | --- |
-| `flacenc` | 0.5.1 | Apache-2.0 | frame encoder | `default-features = false`; no `log`, `serde`, or `crossbeam-channel`. Mandatory dependencies are `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro`; its `built` build dependency emits compile-time package metadata only. |
-| `claxon` | 0.4.3 | Apache-2.0 | independent decoder and PCM verifier | Different implementation/author from the writer; no runtime dependencies of its own. |
+| `flacenc` | 0.5.1 ([tag commit](https://github.com/yotarok/flacenc-rs/tree/a040b004497346132d9a8a8f144f7ecf6fd9d4d8)) | Apache-2.0 | frame encoder | `default-features = false`; excludes optional `log`, `serde`, and `crossbeam-channel` (`par`). Mandatory dependencies are `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro`; its `built` build dependency runs a Rust build script to embed compile-time package metadata. |
+| `claxon` | 0.4.3 ([tag commit](https://github.com/ruuda/claxon/tree/2f053855d581cfe3b9e7cef67fed5b0b0ccc45aa)) | Apache-2.0 | independent decoder and PCM verifier | Different implementation/author from the writer; no runtime dependencies of its own. |
 | `md-5` | 0.10.6 | MIT OR Apache-2.0 | STREAMINFO MD5 over decoded PCM | Also required by `flacenc`; shared rather than duplicated in the dependency graph. |
 
 `flacenc` can decode as well, but its decoder is not used for verification: the writer must not confirm
-itself. The independent Claxon path compares decoded PCM and checks a nonzero input STREAMINFO MD5; the
-handler also validates frame sequence/statistics and retained metadata. The features and lock graph are present
-in the branch, but no local Rust compiler is available, so Cargo has not validated the lockfile or built the
-code yet. CI must verify compilation/tests and `cargo deny` before these dependencies are accepted.
+itself. The independent Claxon path compares decoded PCM and checks a nonzero input STREAMINFO MD5; if the
+input carries FLAC's legal all-zero "not computed" sentinel, the candidate receives the MD5 computed from the
+exact decoded PCM and the verifier requires it to match. The handler also validates frame sequence/statistics
+and retained metadata. Both upstream crates contain internal `unsafe` blocks (`flacenc`'s SIMD slice views and
+Claxon's checked/initialized-buffer paths), so this is not a no-unsafe dependency set; neither requires a native
+codec or C compiler. `flacenc`'s Rust build script uses `built` for compile-time package metadata. Exact
+transitive dependencies and licenses are in `Cargo.lock` and the table above; Cargo CI must verify compilation,
+tests and `cargo deny` before these dependencies are accepted.
 
 Binary cost and current size/speed/gain are unmeasured; the historical estimate is not a result. The feature
 matrix in [size-budget §3](size-budget.md#3-feature-matrix) is where a measured number will appear.

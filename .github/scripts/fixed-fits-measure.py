@@ -498,7 +498,10 @@ def main() -> int:
             "min": min(tzim_gains) if tzim_gains else None, "max": max(tzim_gains) if tzim_gains else None,
         },
         "fitsverify_candidate_nonzero": sum(1 for row in rows if row.get("tier2_tzim", {}).get("status") == "optimized" and row.get("external_checks", {}).get("fitsverify_candidate", {}).get("returncode") != 0),
+        "array_header_roundtrip_passes": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is True),
         "array_header_roundtrip_failures": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is False),
+        "funpack_roundtrip_passes": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("ok") is True),
+        "funpack_roundtrip_not_applicable": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("status") == "not_applicable"),
         "funpack_failures": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("ok") is False),
         "measurement_script": ".github/scripts/fixed-fits-measure.py",
         "existing_two_tier_script": ".github/scripts/fits-measure.py",
@@ -517,11 +520,50 @@ def main() -> int:
         f"- Astropy Tier 2 median: {aggregate['existing_fits_measure_tier2_gain_pct']['median']}",
         f"- Existing tile Tier 1 comparator median: {aggregate['existing_tile_tier1_comparator_gain_pct']['median']}",
         f"- Tzim Tier 2 median among strictly smaller candidates: {aggregate['tzim_tier2_gain_pct']['median']}",
-        f"- Array/header round-trip failures: {aggregate['array_header_roundtrip_failures']}",
-        f"- funpack array/header round-trip failures: {aggregate['funpack_failures']}",
+        f"- Direct array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
+        f"- funpack array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed, {aggregate['funpack_roundtrip_not_applicable']} not applicable for unchanged non-optimized rows.",
         "",
         "All 14 source rows remain in `raw-rows.jsonl`. The Tier 1 outputs are comparators derived from the corresponding source product and are not additional inputs. No source bytes, candidates, or ROSAT data are included in this evidence directory.",
+        "",
+        "## All fixed product rows — identity and round-trip disposition",
+        "",
+        "No row is dropped based on outcome. Hashes and check statuses are reported; FITS and ROSAT data bytes are not included.",
+        "",
+        "| Fixed product | Input bytes / SHA-256 | Tzim status; candidate bytes / SHA-256 | Direct HDU/content comparison | funpack round trip | fitsverify candidate |",
+        "| --- | ---: | --- | --- | --- | --- |",
     ]
+    for row in rows:
+        tzim = row.get("tier2_tzim") or {}
+        direct = row.get("array_header_roundtrip") or {}
+        funpack_roundtrip = row.get("funpack_array_header_roundtrip") or {}
+        checks = row.get("external_checks") or {}
+        candidate_fitsverify = checks.get("fitsverify_candidate") or {}
+        if direct.get("ok") is True:
+            direct_status = "PASS"
+        elif direct.get("ok") is False:
+            direct_status = "FAIL"
+        else:
+            direct_status = "not measured"
+        if funpack_roundtrip.get("status") == "not_applicable":
+            funpack_status = "not applicable (unchanged non-optimized row)"
+        elif funpack_roundtrip.get("ok") is True:
+            funpack_status = "pass"
+        elif funpack_roundtrip.get("ok") is False:
+            funpack_status = "FAIL"
+        else:
+            funpack_status = "not run"
+        if candidate_fitsverify.get("returncode") is None and candidate_fitsverify.get("error"):
+            fitsverify_status = f"error: {candidate_fitsverify['error']}"
+        elif tzim.get("unchanged_nonoptimized"):
+            fitsverify_status = f"exit {candidate_fitsverify.get('returncode')} (unchanged source diagnostic)"
+        else:
+            fitsverify_status = f"exit {candidate_fitsverify.get('returncode')}"
+        summary.append(
+            f"| `{row.get('product_id', 'unknown')}` | {row.get('input_bytes', '—')} / "
+            f"`{row.get('input_sha256', '—')}` | {tzim.get('status', 'not-run')}; "
+            f"{tzim.get('candidate_bytes', '—')} / `{tzim.get('candidate_sha256', '—')}` | "
+            f"{direct_status} | {funpack_status} | {fitsverify_status} |"
+        )
 
     def diagnostic_excerpt(value: object, limit: int = 600) -> str:
         text = str(value or "").strip()

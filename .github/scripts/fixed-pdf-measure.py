@@ -479,7 +479,41 @@ def main() -> int:
         "",
         "`raw-rows.jsonl` and `qpdf-and-tzim-tool-output.jsonl` retain every result and command. "
         "The source manifest was fixed before any gain was computed. The forbidden repack output is a comparator only; it is not an optimization proposal.",
+        "",
+        "## Pre-registered per-document identities and checks",
+        "",
+        "The table is a compact review view; full commands, manifests, render hashes and independent recomputation remain in the evidence artifact.",
+        "",
+        "| Fixed ID | Input bytes / SHA-256 | Classification | Tzim status; output bytes / SHA-256 | qpdf candidate check | MuPDF first/middle/last |",
+        "| --- | ---: | --- | --- | --- | --- |",
     ]
+    for row in rows:
+        tzim = row.get("tzim") or {}
+        qpdf_check = row.get("tzim_qpdf_check") or {}
+        original_qpdf = row.get("original_qpdf_check") or {}
+        if qpdf_check.get("returncode") is not None:
+            qpdf_status = f"exit {qpdf_check['returncode']}"
+        elif qpdf_check.get("not_run"):
+            qpdf_status = f"unchanged; source exit {original_qpdf.get('returncode')}"
+        else:
+            qpdf_status = "not run"
+        tzim_render = next(
+            (comparison for comparison in row.get("render_comparisons", []) if comparison.get("candidate") == "tzim"),
+            None,
+        )
+        if tzim_render is not None:
+            render_status = "identical" if tzim_render.get("identical") else "DIFFERENT"
+        elif row.get("render_error"):
+            render_status = f"error: {row['render_error']}"
+        elif tzim.get("status") and tzim.get("sha256") == row.get("sha256"):
+            render_status = "unchanged; no candidate render"
+        else:
+            render_status = "not run"
+        markdown.append(
+            f"| `{row.get('id', 'unknown')}` | {row.get('bytes', '—')} / `{row.get('sha256', '—')}` "
+            f"| {row.get('classification', 'missing')} | {tzim.get('status', 'not-run')}; "
+            f"{tzim.get('bytes', '—')} / `{tzim.get('sha256', '—')}` | {qpdf_status} | {render_status} |"
+        )
 
     def diagnostic_excerpt(value: object, limit: int = 600) -> str:
         text = str(value or "").strip()

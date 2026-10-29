@@ -2999,6 +2999,89 @@ mod tests {
     }
 
     #[test]
+    fn registered_negative_controls_fail_closed_without_emitting_a_candidate() {
+        let original = fixture();
+        let options = options();
+        let parsed = parse(&original).unwrap();
+
+        let mut damaged_stream = original.clone();
+        let stream = parsed
+            .objects
+            .iter()
+            .find_map(|object| object.stream.as_ref())
+            .unwrap();
+        damaged_stream[stream.data_range.end - 1] ^= 1; // invalidate the zlib Adler-32
+        let mut output = Vec::new();
+        assert!(optimize(&damaged_stream, &mut output, &options).is_err());
+        assert!(
+            output.is_empty(),
+            "a damaged source must not produce output"
+        );
+
+        let mut signed = original.clone();
+        let catalog_pages = signed
+            .windows(b"/Pages 2 0 R".len())
+            .position(|window| window == b"/Pages 2 0 R")
+            .unwrap();
+        signed.splice(
+            catalog_pages..catalog_pages,
+            b"/ByteRange [0 10 20 30] ".iter().copied(),
+        );
+        let error = parse(&signed).unwrap_err();
+        assert!(
+            matches!(&error, Error::Refused(_)),
+            "unexpected error: {error}"
+        );
+        assert!(error.to_string().contains("signed PDFs"));
+
+        for (key, expected_reason) in [
+            (b"/Prev 123 ".as_slice(), "incremental-update trailer /Prev"),
+            (b"/Encrypt 4 0 R ".as_slice(), "encrypted PDFs"),
+        ] {
+            let mut controlled = original.clone();
+            let root = controlled
+                .windows(b"/Root 1 0 R".len())
+                .position(|window| window == b"/Root 1 0 R")
+                .unwrap();
+            controlled.splice(root..root, key.iter().copied());
+            let error = parse(&controlled).unwrap_err();
+            assert!(
+                matches!(&error, Error::Refused(_)),
+                "unexpected error: {error}"
+            );
+            assert!(
+                error.to_string().contains(expected_reason),
+                "unexpected error: {error}"
+            );
+        }
+
+        let object_one = parsed
+            .objects
+            .iter()
+            .find(|object| object.id.number == 1)
+            .unwrap();
+        let object_two = parsed
+            .objects
+            .iter()
+            .find(|object| object.id.number == 2)
+            .unwrap();
+        let before_entry = format!("{:010} 00000 n \n", object_one.start);
+        let replacement_entry = format!("{:010} 00000 n \n", object_two.start);
+        let mut wrong_identity = original.clone();
+        let entry_start = wrong_identity
+            .windows(before_entry.len())
+            .position(|window| window == before_entry.as_bytes())
+            .unwrap();
+        wrong_identity.splice(
+            entry_start..entry_start + before_entry.len(),
+            replacement_entry.bytes(),
+        );
+        let mut output = Vec::new();
+        assert!(optimize(&wrong_identity, &mut output, &options).is_err());
+        assert!(output.is_empty(), "a broken xref identity must not produce output");
+    }
+
+    #[test]
     fn verifier_rejects_changed_inflated_bytes_and_non_flate_changes() {
         let original = fixture();
         let mut candidate = Vec::new();

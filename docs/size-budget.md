@@ -152,6 +152,8 @@ jpeg-v1 = ["jpeg", "dep:jpeg-decoder", "dep:crc32fast"]   # independent verifier
 tiff    = ["dep:flate2"]
 zlib    = ["dep:flate2"]
 fits    = ["dep:flate2", "dep:crc32fast"]   # tile compression; off by default, see guarantees §4.12
+flac    = ["dep:claxon", "dep:flacenc", "dep:md-5"]  # exact PCM, independent decoder; opt-in
+pdf     = ["zlib"]                 # single-FlateDecode streams only; opt-in
 zopfli  = ["dep:zopfli"]
 fuzz-api = []          # never in a release: it only exposes the parsers to fuzz/
 ```

@@ -25,7 +25,7 @@ _tzim() {
         '--memory-budget[skip files whose worst case exceeds this]:bytes:' \
         '--nested[also optimize files inside archives]' \
         '--max-depth[nesting depth limit]:depth:' \
-        '--formats[only these formats]:formats:(png gzip zip ico jpeg tiff zlib fits)' \
+        '--formats[only these formats]:formats:(png gzip zip ico jpeg tiff zlib fits flac pdf)' \
         '--fits-tile[FITS: tile-compress an image HDU; interactive single-file runs ask after verification (default No)]' \
         '--zopfli[use the slower, stronger encoder]' \
         '--strip-metadata[remove the documented metadata list]' \
