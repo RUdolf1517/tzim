@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -229,6 +230,32 @@ def main() -> int:
         scratch_dir.mkdir(exist_ok=True)
         qpdf_check = run([qpdf, "--check", str(source_path)], tool_log)
         row["original_qpdf_check"] = {"returncode": qpdf_check.returncode, "stdout": qpdf_check.stdout, "stderr": qpdf_check.stderr}
+        if qpdf_check.returncode != 0:
+            xref = run([qpdf, "--show-xref", str(source_path)], tool_log, timeout=60)
+            row["qpdf_xref_diagnostic"] = {
+                "returncode": xref.returncode,
+                "stdout": xref.stdout,
+                "stderr": xref.stderr,
+            }
+            zero_offset_objects = sorted({
+                (int(object_number), int(generation))
+                for object_number, generation in re.findall(
+                    r"\(object (\d+) (\d+)\): object has offset 0", qpdf_check.stderr
+                )
+            })
+            object_diagnostics = {}
+            for object_number, generation in zero_offset_objects:
+                object_output = run(
+                    [qpdf, f"--show-object={object_number},{generation}", str(source_path)],
+                    tool_log,
+                    timeout=60,
+                )
+                object_diagnostics[f"{object_number} {generation}"] = {
+                    "returncode": object_output.returncode,
+                    "stdout": object_output.stdout,
+                    "stderr": object_output.stderr,
+                }
+            row["qpdf_zero_offset_objects"] = object_diagnostics
         if pdf_audit is None:
             status, reason, info = (
                 "measurement_dependency_failed",
@@ -451,6 +478,18 @@ def main() -> int:
             text = diagnostic_excerpt(check.get(label))
             if text != "(empty)":
                 qpdf_diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
+        xref = row.get("qpdf_xref_diagnostic") or {}
+        xref_text = diagnostic_excerpt(xref.get("stdout"), limit=1800)
+        if xref_text != "(empty)":
+            qpdf_diagnostics.extend(["- qpdf `--show-xref`:", "", "```text", xref_text, "```"])
+        for object_id, object_output in (row.get("qpdf_zero_offset_objects") or {}).items():
+            object_text = diagnostic_excerpt(object_output.get("stdout"), limit=1200)
+            object_error = diagnostic_excerpt(object_output.get("stderr"), limit=500)
+            qpdf_diagnostics.extend([
+                f"- qpdf `--show-object={object_id}`:", "", "```text",
+                object_text if object_error == "(empty)" else f"{object_text}\n{object_error}",
+                "```",
+            ])
         qpdf_diagnostics.append("")
 
     if diagnostics:
