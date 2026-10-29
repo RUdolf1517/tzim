@@ -3018,32 +3018,33 @@ mod tests {
             "a damaged source must not produce output"
         );
 
-        let mut signed = original.clone();
-        let catalog_pages = signed
-            .windows(b"/Pages 2 0 R".len())
-            .position(|window| window == b"/Pages 2 0 R")
-            .unwrap();
-        signed.splice(
-            catalog_pages..catalog_pages,
-            b"/ByteRange [0 10 20 30] ".iter().copied(),
-        );
+        fn with_trailer_entry(mut input: Vec<u8>, entry: &[u8]) -> Vec<u8> {
+            let trailer_open = b"trailer\n<<";
+            let insertion = input
+                .windows(trailer_open.len())
+                .rposition(|window| window == trailer_open)
+                .unwrap()
+                + trailer_open.len();
+            input.splice(insertion..insertion, entry.iter().copied());
+            input
+        }
+
+        let signed = with_trailer_entry(original.clone(), b" /ByteRange [0 10 20 30]");
         let error = parse(&signed).unwrap_err();
         assert!(
             matches!(&error, Error::Refused(_)),
             "unexpected error: {error}"
         );
         assert!(error.to_string().contains("signed PDFs"));
+        let mut output = Vec::new();
+        assert!(optimize(&signed, &mut output, &options).is_err());
+        assert!(output.is_empty(), "a signed PDF must not produce output");
 
-        for (key, expected_reason) in [
-            (b"/Prev 123 ".as_slice(), "incremental-update trailer /Prev"),
-            (b"/Encrypt 4 0 R ".as_slice(), "encrypted PDFs"),
+        for (entry, expected_reason) in [
+            (b" /Prev 123".as_slice(), "incremental-update trailer /Prev"),
+            (b" /Encrypt 4 0 R".as_slice(), "encrypted PDFs"),
         ] {
-            let mut controlled = original.clone();
-            let root = controlled
-                .windows(b"/Root 1 0 R".len())
-                .position(|window| window == b"/Root 1 0 R")
-                .unwrap();
-            controlled.splice(root..root, key.iter().copied());
+            let controlled = with_trailer_entry(original.clone(), entry);
             let error = parse(&controlled).unwrap_err();
             assert!(
                 matches!(&error, Error::Refused(_)),
@@ -3053,6 +3054,9 @@ mod tests {
                 error.to_string().contains(expected_reason),
                 "unexpected error: {error}"
             );
+            let mut output = Vec::new();
+            assert!(optimize(&controlled, &mut output, &options).is_err());
+            assert!(output.is_empty(), "a refused trailer must not produce output");
         }
 
         let object_one = parsed

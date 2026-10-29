@@ -105,7 +105,18 @@ jobs:
             if [[ -f "${RUNNER_TEMP}/flac-evidence/summary.md" ]]; then
               cat "${RUNNER_TEMP}/flac-evidence/summary.md"
             else
-              echo "No summary was produced; inspect the runner log, retained rows and exact fetch/tool errors."
+              echo "No summary was produced; the bounded runner diagnostics below are included because hosted artifact downloads are not always available."
+              echo
+              echo "- Measurement step outcome: \`${{ steps.measure.outcome }}\`; recomputation step outcome: \`${{ steps.recompute.outcome }}\`."
+              for log in "${RUNNER_TEMP}/flac-runner.log" "${RUNNER_TEMP}/flac-recompute.log"; do
+                if [[ -f "$log" ]]; then
+                  echo
+                  echo "### $(basename "$log") (last 40 lines)"
+                  echo '```text'
+                  tail -n 40 "$log" | cut -c1-1200
+                  echo '```'
+                fi
+              done
             fi
           } > "$report"
           bash .github/scripts/ci-report.sh "$report" flac-corpus report full
