@@ -5,13 +5,15 @@ This is a living management checklist, not a completed execution audit or a rele
 
 ## PR #84 execution status — 2026-10-29
 
-No #57/#59 supplemental measurement, Rust build, or HEASARC validation has been run for this PR. The pinned
-image corpus was downloaded only to `/tmp` for #82 selection preflight: 698 corpus files (690 images and 8
-containers), with 62 JPEGs at or below 204,800 bytes totalling 1,399,119 bytes. No optimizer was run and no
-preflight manifest, corpus files or runtime result was retained as evidence. The current sandbox has no `cargo`, `rustc`, `qpdf`, `mutool`,
-`fitsverify` or `funpack` executable. The existing PDF/FITS results below and in their audits remain historical;
-they do not satisfy the newly required real-toolchain PDF sample or full-size survey FITS sample. No baseline,
-threshold or historical result was changed to fill that gap.
+No supplemental #57 PDF or #59 survey-FITS measurement has been run for this PR. The #82 JPEG runtime
+measurement was run in CI: it uses a deterministic 62-file selection (1,399,119 input bytes), and the exact-SHA
+report, selection manifest and raw per-run results are retained in the `jpeg-runtime-<source SHA>` artifact.
+That JPEG result is not PDF or FITS evidence. The #59 `fitsverify` CI gate exercises the existing fixtures; it is
+not validation of the missing full-size survey sample. No qualified survey manifest or HEASARC validation for
+that sample is present. The local sandbox has no `cargo`, `rustc`, `qpdf`, `mutool`, `fitsverify` or `funpack`
+executable; Rust builds/tests and the available fixture gates ran in CI. The existing PDF/FITS results below and
+in their audits remain historical; they do not satisfy the newly required real-toolchain PDF sample or full-size
+survey FITS sample. No baseline, threshold or historical result was changed to fill that gap.
 
 - **#57 blocker:** there is no 20–50-file, pre-registered list of real-toolchain PDFs with per-file source
   provenance and redistribution/permission basis. The audit itself records why its earlier three corpora did
@@ -34,9 +36,9 @@ threshold or historical result was changed to fill that gap.
 
 ## Evidence and limits
 
-The manager inspected the issue bodies, repository documents and measurement script headers. No measurement,
-Rust build, corpus download or HEASARC validation was executed in that review. Historical execution details
-below are attributed to the outgoing manager's handover; they were not independently reproduced.
+The issue bodies, repository documents and measurement script headers were reviewed. The historical PDF/FITS
+execution details below are attributed to the earlier handover; they were not independently reproduced in this
+iteration. The CI JPEG benchmark and ordinary fixture gates are separate evidence and do not close #57 or #59.
 
 The instruments are already linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
 [FITS §8.1](fits-audit.md#81-what-was-actually-run-and-with-what):
