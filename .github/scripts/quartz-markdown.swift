@@ -34,6 +34,19 @@ do {
         attributed.addAttribute(.font, value: NSFont.systemFont(ofSize: 10), range: range)
     }
 
+    var localLinkRanges: [NSRange] = []
+    attributed.enumerateAttribute(.link, in: NSRange(location: 0, length: attributed.length)) { value, range, _ in
+        let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
+        if url?.isFileURL == true {
+            localLinkRanges.append(range)
+        }
+    }
+    // Checkout-local paths are not useful links in a standalone PDF. Keep their
+    // visible Markdown text, while leaving web URLs clickable and portable.
+    for range in localLinkRanges {
+        attributed.removeAttribute(.link, range: range)
+    }
+
     let page = CGRect(x: 0, y: 0, width: 612, height: 792)
     let content = CGRect(x: 54, y: 54, width: 504, height: 684)
     let temporaryURL = FileManager.default.temporaryDirectory
@@ -99,6 +112,7 @@ do {
     try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
 
     print("title=\(title)")
+    print("local_links_rendered_as_text=\(localLinkRanges.count)")
     print("producer=AppKit NSTextView + NSPrintOperation.pdfOperation with native Quartz PDF output")
     print("creator=AppKit/Quartz native Markdown PDF operation")
     print("pages_written_with=AppKit NSPrintOperation.pdfOperation")
