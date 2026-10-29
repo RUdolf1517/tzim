@@ -19,7 +19,7 @@ let title = CommandLine.arguments[3]
 
 do {
     let markdown = try String(contentsOf: inputURL, encoding: .utf8)
-    let parsing = NSAttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
+    let parsing = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
     let parsed = try NSAttributedString(
         markdown: markdown,
         options: parsing,

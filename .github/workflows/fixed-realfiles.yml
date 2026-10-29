@@ -91,6 +91,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pandoc texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended lmodern librsvg2-bin \
             libreoffice-writer fonts-dejavu-core fonts-liberation
           {
             pandoc --version
@@ -98,6 +99,7 @@ jobs:
             soffice --version
             dpkg-query -W -f='${binary:Package}=${Version}\n' \
               pandoc texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+              texlive-fonts-recommended lmodern librsvg2-bin \
               libreoffice-writer fonts-dejavu-core fonts-liberation
           } | tee "$RUNNER_TEMP/fixed-pdf-ubuntu/producer-versions.txt"
 
@@ -130,10 +132,9 @@ jobs:
               cp "$root/$name" "$staging/$name"
             fi
           done
-          shopt -s nullglob
-          for file in "$root"/outputs/*.pdf "$root"/outputs/generation-commands.json; do
-            cp "$file" "$staging/outputs/"
-          done
+          if [[ -d "$root/outputs" ]]; then
+            cp -a "$root/outputs/." "$staging/outputs/"
+          fi
 
       - name: Retain generation manifest, PDFs and tool output for the measurement job
         if: always()
@@ -207,10 +208,9 @@ jobs:
               cp "$root/$name" "$staging/$name"
             fi
           done
-          shopt -s nullglob
-          for file in "$root"/outputs/*.pdf "$root"/outputs/generation-commands.json; do
-            cp "$file" "$staging/outputs/"
-          done
+          if [[ -d "$root/outputs" ]]; then
+            cp -a "$root/outputs/." "$staging/outputs/"
+          fi
 
       - name: Retain generation manifest, PDFs and tool output for the measurement job
         if: always()

@@ -526,9 +526,11 @@ def main() -> int:
         for label in ("array_header_roundtrip", "funpack_array_header_roundtrip"):
             check = row.get(label) or {}
             if check.get("ok") is False:
+                details = json.dumps(check, sort_keys=True, ensure_ascii=False)
                 diagnostics.extend([
                     f"### Oracle failure: {product_id} / {label}",
                     f"- Reason: {diagnostic_excerpt(check.get('reason'))}",
+                    f"- Oracle details: `{diagnostic_excerpt(details)}`",
                     "",
                 ])
 

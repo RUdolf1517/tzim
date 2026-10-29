@@ -92,7 +92,8 @@ def checked_command(argv: list[str], log: list[dict], cwd: Path | None = None) -
     result = command_record(argv, log, cwd)
     if result.returncode:
         raise RuntimeError(
-            f"command exited {result.returncode}: {argv!r}; stderr: {result.stderr[-2000:]}"
+            f"command exited {result.returncode}: {argv!r}; "
+            f"stdout: {result.stdout[-1000:]}; stderr: {result.stderr[-1000:]}"
         )
     return result
 
@@ -399,7 +400,8 @@ def render_manifest(args: argparse.Namespace) -> dict:
     if args.kind == "ubuntu":
         packages = [
             "pandoc", "texlive-latex-base", "texlive-latex-recommended",
-            "texlive-latex-extra", "libreoffice-writer",
+            "texlive-latex-extra", "texlive-fonts-recommended", "lmodern",
+            "librsvg2-bin", "libreoffice-writer", "fonts-dejavu-core", "fonts-liberation",
         ]
         package_versions = command_record(
             ["dpkg-query", "-W", "-f=${binary:Package}=${Version}\\n", *packages],
