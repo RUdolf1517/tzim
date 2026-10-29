@@ -3056,7 +3056,10 @@ mod tests {
             );
             let mut output = Vec::new();
             assert!(optimize(&controlled, &mut output, &options).is_err());
-            assert!(output.is_empty(), "a refused trailer must not produce output");
+            assert!(
+                output.is_empty(),
+                "a refused trailer must not produce output"
+            );
         }
 
         let object_one = parsed
