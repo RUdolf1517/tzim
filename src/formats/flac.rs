@@ -1154,7 +1154,10 @@ mod tests {
             Cand::Written(_)
         ));
         let candidate_file = parse(&candidate).unwrap();
-        assert_ne!(streaminfo_md5(&candidate, &candidate_file).unwrap(), [0u8; 16]);
+        assert_ne!(
+            streaminfo_md5(&candidate, &candidate_file).unwrap(),
+            [0u8; 16]
+        );
         verify(&input, &candidate, &options).unwrap();
 
         let mut missing_candidate_md5 = candidate.clone();

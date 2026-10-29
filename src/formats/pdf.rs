@@ -3078,7 +3078,10 @@ mod tests {
         );
         let mut output = Vec::new();
         assert!(optimize(&wrong_identity, &mut output, &options).is_err());
-        assert!(output.is_empty(), "a broken xref identity must not produce output");
+        assert!(
+            output.is_empty(),
+            "a broken xref identity must not produce output"
+        );
     }
 
     #[test]
