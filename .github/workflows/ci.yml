@@ -737,6 +737,13 @@ jobs:
             cat "$report" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Publish runtime summary
+        if: steps.measure.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-jpeg-runtime/summary.md" jpeg-runtime report full
+
       - name: Publish runtime failure log
         if: steps.measure.outcome == 'failure'
         shell: bash
