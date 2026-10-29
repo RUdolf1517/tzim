@@ -508,9 +508,10 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ "${{ steps.freeze.outcome }}" != "success" \
+          set -euo pipefail
+          if [[ "${{ steps.freeze.outcome }}" != "success" \
             || "${{ steps.measure.outcome }}" != "success" \
-            || "${{ steps.recompute.outcome }}" != "success" ]; then
+            || "${{ steps.recompute.outcome }}" != "success" ]]; then
             exit 1
           fi
 
@@ -728,10 +729,11 @@ jobs:
         if: always()
         shell: bash
         run: |
-          if [ "${{ steps.fetch.outcome }}" != "success" \
+          set -euo pipefail
+          if [[ "${{ steps.fetch.outcome }}" != "success" \
             || "${{ steps.audit.outcome }}" != "success" \
             || "${{ steps.measure.outcome }}" != "success" \
-            || "${{ steps.recompute.outcome }}" != "success" ]; then
+            || "${{ steps.recompute.outcome }}" != "success" ]]; then
             exit 1
           fi
 
