@@ -61,6 +61,9 @@ struct Spool {
     file: File,
 }
 
+type EncodedFrames = (Spool, Vec<FrameStart>, Vec<u8>);
+type RewrittenFlac = (Spool, FlacFile, Vec<FrameStart>, Vec<u8>);
+
 impl Spool {
     fn create() -> Result<Self> {
         let dir = std::env::temp_dir();
@@ -256,7 +259,7 @@ impl<'a> DecoderSource<'a> {
         })?;
         if let Some(block) = &block {
             if block.channels() as usize != self.channels
-                || u64::from(block.time()) != self.next_block_sample
+                || block.time() != self.next_block_sample
                 || block.duration() == 0
             {
                 return Err(flacenc::error::SourceError::by_reason(
@@ -367,13 +370,13 @@ fn encode_frames(
     info: claxon::metadata::StreamInfo,
     original_md5: [u8; 16],
     frame_limit: u64,
-) -> Result<Option<(Spool, Vec<FrameStart>, Vec<u8>)>> {
+) -> Result<Option<EncodedFrames>> {
     let mut source = DecoderSource::new(input, info)?;
     let config = flacenc::config::Encoder::default()
         .into_verified()
         .map_err(|error| refusal(format!("flacenc configuration failed: {error:?}")))?;
     let block_size = config.block_size;
-    if block_size < 16 || block_size > 65_535 {
+    if !(16..=65_535).contains(&block_size) {
         return Err(refusal(
             "flacenc block size is outside the FLAC frame range",
         ));
@@ -497,7 +500,7 @@ fn map_seek_table(
     let mut last_mapped_sample = None;
     let mut last_mapped_offset = None;
     let mut placeholders = false;
-    for point in input.chunks_exact(18) {
+    for point in input.as_chunks::<18>().0 {
         let sample = u64::from_be_bytes(point[0..8].try_into().unwrap());
         let offset = u64::from_be_bytes(point[8..16].try_into().unwrap());
         let frame_samples = u16::from_be_bytes(point[16..18].try_into().unwrap());
@@ -689,7 +692,7 @@ fn seektable_valid(data: &[u8], file: &FlacFile, total: u64, max_block_size: u16
     let mut last_sample = None;
     let mut last_offset = None;
     let mut placeholders = false;
-    for point in bytes.chunks_exact(18) {
+    for point in bytes.as_chunks::<18>().0 {
         let sample = u64::from_be_bytes(point[0..8].try_into().unwrap());
         let offset = u64::from_be_bytes(point[8..16].try_into().unwrap());
         let count = u16::from_be_bytes(point[16..18].try_into().unwrap());
@@ -867,10 +870,7 @@ fn removable_metadata(kind: u8) -> bool {
     matches!(kind, 1 | 4 | 6) // PADDING, VORBIS_COMMENT, PICTURE
 }
 
-fn rewrite(
-    input: &[u8],
-    strip_metadata: bool,
-) -> Result<Option<(Spool, FlacFile, Vec<FrameStart>, Vec<u8>)>> {
+fn rewrite(input: &[u8], strip_metadata: bool) -> Result<Option<RewrittenFlac>> {
     let file = parse(input)?;
     let info = decode_info(input)?;
     let total = info.samples.unwrap_or(0);

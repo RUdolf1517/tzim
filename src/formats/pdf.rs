@@ -1149,7 +1149,7 @@ fn parse_xref_stream(
         )],
         Some(Value::Array(values)) if values.len().is_multiple_of(2) => {
             let mut ranges = Vec::with_capacity(values.len() / 2);
-            for pair in values.chunks_exact(2) {
+            for pair in values.as_chunks::<2>().0 {
                 let (Value::Number(first), Value::Number(count)) = (&pair[0], &pair[1]) else {
                     return Err(refuse("xref stream /Index contains a non-integer"));
                 };
@@ -1785,13 +1785,15 @@ fn parse(data: &[u8]) -> Result<PdfDoc> {
             .and_then(|index| objects.get(*index))
             .filter(|object| object.id.generation == 0)
             .ok_or_else(|| refuse("compressed object points to a missing object stream"))?;
-        if !object_stream_members.contains_key(&stream_number) {
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            object_stream_members.entry(stream_number)
+        {
             let node_limit = MAX_PDF_VALUE_NODES
                 .saturating_sub(value_nodes.saturating_add(object_stream_value_nodes));
             let (members, parsed_nodes) =
                 object_stream_member_ids(data, stream_object, node_limit)?;
             object_stream_value_nodes = object_stream_value_nodes.saturating_add(parsed_nodes);
-            object_stream_members.insert(stream_number, members);
+            entry.insert(members);
         }
         let members = object_stream_members.get(&stream_number).unwrap();
         let index = object_stream_xref_index(entry, members)?;
@@ -1813,12 +1815,14 @@ fn parse(data: &[u8]) -> Result<PdfDoc> {
             if object.id.generation != 0 {
                 return Err(refuse("object stream generation is not zero"));
             }
-            if !object_stream_members.contains_key(&object.id.number) {
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                object_stream_members.entry(object.id.number)
+            {
                 let node_limit = MAX_PDF_VALUE_NODES
                     .saturating_sub(value_nodes.saturating_add(object_stream_value_nodes));
                 let (members, parsed_nodes) = object_stream_member_ids(data, object, node_limit)?;
                 object_stream_value_nodes = object_stream_value_nodes.saturating_add(parsed_nodes);
-                object_stream_members.insert(object.id.number, members);
+                entry.insert(members);
             }
             let count = object_stream_members[&object.id.number].len();
             let indexed = member_indexes.get(&object.id.number);
@@ -2576,7 +2580,7 @@ mod tests {
         encoder.write_all(&payload).unwrap();
         encoder.finish().unwrap();
         let mut out = b"%PDF-1.4\n".to_vec();
-        let mut offsets = vec![0usize; 5];
+        let mut offsets = [0usize; 5];
         offsets[1] = out.len();
         out.extend(number(1, 0, b"<< /Type /Catalog /Pages 2 0 R >>"));
         offsets[2] = out.len();
@@ -2654,7 +2658,7 @@ mod tests {
         let xref_offset = out.len();
         offsets[xref_number] = Some(xref_offset);
         let mut rows = Vec::with_capacity(size * 7);
-        for object_number in 0..size {
+        for (object_number, offset) in offsets.iter().enumerate() {
             if object_number == 0 {
                 rows.push(0);
                 rows.extend_from_slice(&0u32.to_be_bytes());
@@ -2669,14 +2673,14 @@ mod tests {
                 rows.extend_from_slice(&1u16.to_be_bytes());
             } else {
                 rows.push(1);
-                rows.extend_from_slice(&(offsets[object_number].unwrap() as u32).to_be_bytes());
+                rows.extend_from_slice(&((*offset).unwrap() as u32).to_be_bytes());
                 rows.extend_from_slice(&0u16.to_be_bytes());
             }
         }
         let encoded_rows = if png_predictor {
             let mut encoded = Vec::with_capacity(rows.len() + size);
             let mut previous = [0u8; 7];
-            for row in rows.chunks_exact(7) {
+            for row in rows.as_chunks::<7>().0 {
                 encoded.push(2); // PNG Up filter for fixed Predictor 12.
                 for (index, byte) in row.iter().enumerate() {
                     encoded.push(byte.wrapping_sub(previous[index]));
