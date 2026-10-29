@@ -1,6 +1,4 @@
 import AppKit
-import CoreGraphics
-import CoreText
 import Darwin
 import Foundation
 
@@ -38,58 +36,71 @@ do {
 
     let page = CGRect(x: 0, y: 0, width: 612, height: 792)
     let content = CGRect(x: 54, y: 54, width: 504, height: 684)
-    let auxiliary: [CFString: Any] = [
-        kCGPDFContextTitle: title,
-        kCGPDFContextAuthor: "tzim fixed #57 measurement",
-        kCGPDFContextCreator: "AppKit/Quartz native Markdown print-to-PDF",
-    ]
-    // Use a URL-backed PDF context so Quartz finalizes its cross-reference offsets
-    // against the exact file that is later measured.
     let temporaryURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("tzim-fixed-quartz-\(UUID().uuidString).pdf")
-    do {
-        var mediaBox = page
-        guard let context = CGContext(
-            temporaryURL as CFURL,
-            mediaBox: &mediaBox,
-            auxiliary as CFDictionary
-        ) else {
-            fail("Quartz could not create a PDF context")
-        }
 
-        let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
-        var location = 0
-        while location < attributed.length {
-            context.beginPDFPage(nil)
-            let path = CGPath(rect: content, transform: nil)
-            let frame = CTFramesetterCreateFrame(
-                framesetter,
-                CFRange(location: location, length: 0),
-                path,
-                nil
-            )
-            CTFrameDraw(frame, context)
-            let visible = CTFrameGetVisibleStringRange(frame)
-            if visible.length <= 0 {
-                context.endPDFPage()
-                fail("Quartz rendered no text on a page; refusing an incomplete PDF")
-            }
-            location += visible.length
-            context.endPDFPage()
-        }
-        if attributed.length == 0 {
-            context.beginPDFPage(nil)
-            context.endPDFPage()
-        }
-        context.closePDF()
+    let application = NSApplication.shared
+    _ = application.setActivationPolicy(.prohibited)
+
+    let textView = NSTextView(
+        frame: NSRect(x: 0, y: 0, width: content.width, height: content.height)
+    )
+    textView.isEditable = false
+    textView.isSelectable = false
+    textView.drawsBackground = false
+    textView.isHorizontallyResizable = false
+    textView.isVerticallyResizable = true
+    textView.textContainerInset = .zero
+    textView.textContainer?.containerSize = NSSize(
+        width: content.width,
+        height: CGFloat.greatestFiniteMagnitude
+    )
+    textView.textContainer?.widthTracksTextView = false
+    textView.textStorage?.setAttributedString(attributed)
+
+    guard let textContainer = textView.textContainer,
+          let layoutManager = textView.layoutManager else {
+        fail("AppKit could not create a Markdown text layout")
+    }
+    layoutManager.ensureLayout(for: textContainer)
+    let usedRect = layoutManager.usedRect(for: textContainer)
+    let documentHeight = max(content.height, ceil(usedRect.maxY + 12))
+    textView.setFrameSize(NSSize(width: content.width, height: documentHeight))
+
+    let printOptions: [NSPrintInfo.AttributeKey: Any] = [
+        .jobDisposition: NSPrintInfo.JobDisposition.save,
+        .jobSavingURL: temporaryURL,
+    ]
+    let printInfo = NSPrintInfo(dictionary: printOptions)
+    printInfo.paperSize = page.size
+    printInfo.leftMargin = content.minX
+    printInfo.rightMargin = page.width - content.maxX
+    printInfo.topMargin = content.minY
+    printInfo.bottomMargin = page.height - content.maxY
+    printInfo.horizontalPagination = .fit
+    printInfo.verticalPagination = .automatic
+    printInfo.isHorizontallyCentered = false
+    printInfo.isVerticallyCentered = false
+
+    let operation = NSPrintOperation(view: textView, printInfo: printInfo)
+    operation.showsPrintPanel = false
+    operation.showsProgressPanel = false
+    guard operation.run() else {
+        fail("AppKit/Quartz print operation did not produce a PDF")
+    }
+
+    guard FileManager.default.fileExists(atPath: temporaryURL.path) else {
+        fail("AppKit/Quartz print operation returned success but produced no PDF")
     }
     if FileManager.default.fileExists(atPath: outputURL.path) {
         try FileManager.default.removeItem(at: outputURL)
     }
     try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
-    print("producer=AppKit NSAttributedString(markdown:) + Quartz CGContext PDFContext")
+
+    print("title=\(title)")
+    print("producer=AppKit NSTextView + NSPrintOperation with native Quartz PDF output")
     print("creator=AppKit/Quartz native Markdown print-to-PDF")
-    print("pages_written_with=CoreText CTFramesetter / Quartz PDFContext")
+    print("pages_written_with=NSTextView paginated by NSPrintOperation")
 } catch {
     fail("Quartz Markdown rendering failed: \(error)")
 }
