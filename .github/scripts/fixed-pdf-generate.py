@@ -204,7 +204,7 @@ def render_manifest(args: argparse.Namespace) -> dict:
                 "path": output_rel,
                 "status": "failed",
                 "source": source_rec,
-                "producer": "AppKit NSTextView + NSPrintOperation with native Quartz PDF output" if category == "quartz" else (
+                "producer": "AppKit NSFont + CoreText CTFramesetter + native Quartz PDFContext" if category == "quartz" else (
                     "Pandoc + pdflatex" if category == "latex" else "Pandoc Markdown-to-DOCX + headless LibreOffice"
                 ),
                 "commands": [],
