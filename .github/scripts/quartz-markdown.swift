@@ -47,40 +47,42 @@ do {
     // against the exact file that is later measured.
     let temporaryURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("tzim-fixed-quartz-\(UUID().uuidString).pdf")
-    var mediaBox = page
-    guard let context = CGContext(
-        temporaryURL as CFURL,
-        mediaBox: &mediaBox,
-        auxiliary as CFDictionary
-    ) else {
-        fail("Quartz could not create a PDF context")
-    }
-
-    let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
-    var location = 0
-    while location < attributed.length {
-        context.beginPDFPage(nil)
-        let path = CGPath(rect: content, transform: nil)
-        let frame = CTFramesetterCreateFrame(
-            framesetter,
-            CFRange(location: location, length: 0),
-            path,
-            nil
-        )
-        CTFrameDraw(frame, context)
-        let visible = CTFrameGetVisibleStringRange(frame)
-        if visible.length <= 0 {
-            context.endPDFPage()
-            fail("Quartz rendered no text on a page; refusing an incomplete PDF")
+    do {
+        var mediaBox = page
+        guard let context = CGContext(
+            temporaryURL as CFURL,
+            mediaBox: &mediaBox,
+            auxiliary as CFDictionary
+        ) else {
+            fail("Quartz could not create a PDF context")
         }
-        location += visible.length
-        context.endPDFPage()
+
+        let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
+        var location = 0
+        while location < attributed.length {
+            context.beginPDFPage(nil)
+            let path = CGPath(rect: content, transform: nil)
+            let frame = CTFramesetterCreateFrame(
+                framesetter,
+                CFRange(location: location, length: 0),
+                path,
+                nil
+            )
+            CTFrameDraw(frame, context)
+            let visible = CTFrameGetVisibleStringRange(frame)
+            if visible.length <= 0 {
+                context.endPDFPage()
+                fail("Quartz rendered no text on a page; refusing an incomplete PDF")
+            }
+            location += visible.length
+            context.endPDFPage()
+        }
+        if attributed.length == 0 {
+            context.beginPDFPage(nil)
+            context.endPDFPage()
+        }
+        context.closePDF()
     }
-    if attributed.length == 0 {
-        context.beginPDFPage(nil)
-        context.endPDFPage()
-    }
-    context.closePDF()
     if FileManager.default.fileExists(atPath: outputURL.path) {
         try FileManager.default.removeItem(at: outputURL)
     }
