@@ -72,6 +72,7 @@ def recompute(rows: list[dict], expanded: dict) -> dict:
     before = sum(int(row.get("before_bytes") or 0) for row in rows)
     after = sum(int(row.get("after_bytes") or row.get("before_bytes") or 0) for row in rows)
     optimized = [row for row in rows if row.get("status") == "optimized"]
+    candidate_checks = [row.get("candidate_checks") or {} for row in rows]
     gains = [100.0 * row["saved_bytes"] / row["before_bytes"] for row in optimized if row.get("before_bytes")]
     times = [float(row["tzim_duration_ms"]) for row in rows if row.get("tzim_duration_ms") is not None]
     blockers = [
@@ -95,22 +96,22 @@ def recompute(rows: list[dict], expanded: dict) -> dict:
         "tzim_total_seconds": round(sum(times) / 1000, 3),
         "tzim_median_ms": round(statistics.median(times), 3) if times else None,
         "external_flac_source_passes": sum(row.get("reference_flac_test", {}).get("return_code") == 0 for row in rows),
-        "external_flac_candidate_passes": sum(row.get("candidate_checks", {}).get("flac_test", {}).get("return_code") == 0 for row in rows),
+        "external_flac_candidate_passes": sum((checks.get("flac_test") or {}).get("return_code") == 0 for checks in candidate_checks),
         "external_metaflac_source_passes": sum(row.get("reference_metaflac", {}).get("return_code") == 0 for row in rows),
-        "external_metaflac_candidate_passes": sum(row.get("candidate_checks", {}).get("metaflac", {}).get("return_code") == 0 for row in rows),
+        "external_metaflac_candidate_passes": sum((checks.get("metaflac") or {}).get("return_code") == 0 for checks in candidate_checks),
         "external_pcm_pairs_equal": sum(
-            bool(row.get("candidate_checks", {}).get("external_pcm", {}).get("source", {}).get("sha256"))
-            and row.get("candidate_checks", {}).get("external_pcm", {}).get("source", {}).get("sha256")
-            == row.get("candidate_checks", {}).get("external_pcm", {}).get("candidate", {}).get("sha256")
-            for row in rows
+            bool(((checks.get("external_pcm") or {}).get("source") or {}).get("sha256"))
+            and ((checks.get("external_pcm") or {}).get("source") or {}).get("sha256")
+            == ((checks.get("external_pcm") or {}).get("candidate") or {}).get("sha256")
+            for checks in candidate_checks
         ),
         "external_streaminfo_md5_checks_passed": sum(
-            row.get("candidate_checks", {}).get("streaminfo_md5", {}).get("ok") is True
-            for row in rows
+            (checks.get("streaminfo_md5") or {}).get("ok") is True
+            for checks in candidate_checks
         ),
         "external_streaminfo_md5_checks_run": sum(
-            "streaminfo_md5" in row.get("candidate_checks", {})
-            for row in rows
+            "streaminfo_md5" in checks
+            for checks in candidate_checks
         ),
         "blockers": blockers,
     }

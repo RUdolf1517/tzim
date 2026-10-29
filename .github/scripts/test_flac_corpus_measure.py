@@ -65,6 +65,30 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
                 self.assertFalse(check(zero, zero, actual)["ok"])
                 self.assertFalse(check(zero, actual, "f" * 32)["ok"])
 
+    def test_aggregate_handles_nonoptimized_rows_without_candidate_checks(self) -> None:
+        rows = [
+            {
+                "id": "pre-registered-skip",
+                "status": "skipped",
+                "before_bytes": 100,
+                "after_bytes": 100,
+                "saved_bytes": 0,
+                "tzim_duration_ms": 1.0,
+                "reference_flac_test": {"return_code": 0},
+                "reference_metaflac": {"return_code": 0},
+                "candidate_checks": None,
+                "blockers": [],
+            }
+        ]
+        expanded = {
+            "inputs": [{"id": "pre-registered-skip", "fetch_status": "fetched"}],
+            "derived_inputs": [],
+        }
+        self.assertEqual(
+            MEASURE.aggregate_rows(rows, expanded),
+            RECOMPUTE.recompute(rows, expanded),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
