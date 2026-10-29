@@ -316,7 +316,7 @@ def main() -> int:
         tzim_record.update(bytes=after_size, sha256=after_sha)
         if tzim_run.returncode != 0 or file_row is None:
             tzim_record["status"] = "failed"
-            tzim_record["error"] = "tzim returned non-zero or emitted no file row"
+            tzim_record["error"] = tzim_run.stderr.strip() or "tzim returned non-zero or emitted no file row"
         else:
             tzim_record["status"] = file_row.get("status", "unknown")
             if after_sha != before_sha and (after_size >= before_size or tzim_record["status"] != "optimized"):
@@ -411,6 +411,34 @@ def main() -> int:
         "`raw-rows.jsonl` and `qpdf-and-tzim-tool-output.jsonl` retain every result and command. "
         "The source manifest was fixed before any gain was computed. The forbidden repack output is a comparator only; it is not an optimization proposal.",
     ]
+
+    def diagnostic_excerpt(value: object, limit: int = 600) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "(empty)"
+        if len(text) > limit:
+            return text[:limit] + "\n...[truncated]"
+        return text
+
+    diagnostics = []
+    for row in rows:
+        tzim = row.get("tzim") or {}
+        if tzim.get("status") != "failed" and not tzim.get("error"):
+            continue
+        diagnostics.extend([
+            f"### Tzim handler failure: {row.get('id', row.get('path', 'unknown-input'))}",
+            f"- Fixed source path: `{row.get('path')}`",
+            f"- Error: {diagnostic_excerpt(tzim.get('error'))}",
+            f"- Return code: `{tzim.get('returncode')}`",
+            f"- Command: `{json.dumps(tzim.get('argv', []), ensure_ascii=False)}`",
+        ])
+        for label in ("stderr", "stdout"):
+            text = diagnostic_excerpt(tzim.get(label))
+            if text != "(empty)":
+                diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
+        diagnostics.append("")
+    if diagnostics:
+        markdown.extend(["", "## Per-input handler diagnostics", "", *diagnostics])
     (out / "summary.md").write_text("\n".join(markdown) + "\n", encoding="utf-8")
 
     failures = []

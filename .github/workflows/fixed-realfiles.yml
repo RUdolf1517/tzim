@@ -245,15 +245,30 @@ jobs:
           set -o pipefail
           cargo test --all-features --locked 2>&1 | tee "$RUNNER_TEMP/fixed-all-features-tests.log"
 
+      - name: Stage the actual Tzim binary and test evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/fixed-tzim-binary"
+          mkdir -p "$staging"
+          if [[ -f target/release/tzim ]]; then
+            install -m 0755 target/release/tzim "$staging/tzim"
+            (cd "$staging" && sha256sum tzim > tzim.sha256)
+          fi
+          if [[ -f "$RUNNER_TEMP/tzim-binary.sha256" ]]; then
+            cp "$RUNNER_TEMP/tzim-binary.sha256" "$staging/build-sha256.txt"
+          fi
+          if [[ -f "$RUNNER_TEMP/fixed-all-features-tests.log" ]]; then
+            cp "$RUNNER_TEMP/fixed-all-features-tests.log" "$staging/fixed-all-features-tests.log"
+          fi
+
       - name: Upload the actual Tzim binary and test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fixed-tzim-binary
-          path: |
-            target/release/tzim
-            ${{ runner.temp }}/tzim-binary.sha256
-            ${{ runner.temp }}/fixed-all-features-tests.log
+          path: ${{ runner.temp }}/fixed-tzim-binary/
           retention-days: 1
           if-no-files-found: error
 
@@ -297,6 +312,18 @@ jobs:
         with:
           name: fixed-tzim-binary
           path: ${{ runner.temp }}/tzim-artifact
+
+      - name: Restore and verify the downloaded Tzim binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          tzim="$RUNNER_TEMP/tzim-artifact/tzim"
+          test -f "$tzim"
+          expected="$(awk 'NR == 1 {print $1}' "$RUNNER_TEMP/tzim-artifact/tzim.sha256")"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "$tzim" | sha256sum --check --status
+          chmod 0755 "$tzim"
+          test -x "$tzim"
 
       - uses: actions/setup-python@v6
         continue-on-error: true
@@ -522,6 +549,18 @@ jobs:
         with:
           name: fixed-tzim-binary
           path: ${{ runner.temp }}/tzim-artifact
+
+      - name: Restore and verify the downloaded Tzim binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          tzim="$RUNNER_TEMP/tzim-artifact/tzim"
+          test -f "$tzim"
+          expected="$(awk 'NR == 1 {print $1}' "$RUNNER_TEMP/tzim-artifact/tzim.sha256")"
+          test -n "$expected"
+          printf '%s  %s\n' "$expected" "$tzim" | sha256sum --check --status
+          chmod 0755 "$tzim"
+          test -x "$tzim"
 
       - uses: actions/setup-python@v6
         continue-on-error: true

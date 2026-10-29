@@ -355,7 +355,9 @@ def main() -> int:
             "candidate_sha256": after_sha,
             "status": file_row.get("status") if file_row else "failed",
         }
-        if tzim_result.get("returncode") != 0 or file_row is None:
+        if tzim_result.get("error"):
+            tzim_record["error"] = tzim_result["error"]
+        elif tzim_result.get("returncode") != 0 or file_row is None:
             tzim_record["error"] = "tzim returned non-zero or emitted no file row"
         elif after_sha != before_sha and (after_size >= before_size or file_row.get("status") != "optimized"):
             tzim_record["error"] = "tzim changed bytes without a strictly smaller optimized result"
@@ -472,6 +474,66 @@ def main() -> int:
         "",
         "All 14 source rows remain in `raw-rows.jsonl`. The Tier 1 outputs are comparators derived from the corresponding source product and are not additional inputs. No source bytes, candidates, or ROSAT data are included in this evidence directory.",
     ]
+
+    def diagnostic_excerpt(value: object, limit: int = 600) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "(empty)"
+        if len(text) > limit:
+            return text[:limit] + "\n...[truncated]"
+        return text
+
+    diagnostics = []
+    for row in rows:
+        product_id = row.get("product_id", "unknown-product")
+        if row.get("fetch_status") != "downloaded":
+            diagnostics.extend([
+                f"### Fetch failure: {product_id}",
+                f"- Source identity: `{row.get('source_uri')}`",
+                f"- Exact requested URL: `{row.get('requested_url')}`",
+                f"- Error: {diagnostic_excerpt(row.get('fetch_error'))}",
+                f"- Needed owner action: {row.get('needed_owner_action') or 'not recorded'}",
+                "",
+            ])
+        tzim = row.get("tier2_tzim") or {}
+        if tzim.get("error") or tzim.get("returncode") not in (None, 0) or tzim.get("status") == "failed":
+            diagnostics.extend([
+                f"### Tzim Tier 2 failure: {product_id}",
+                f"- Source identity: `{row.get('source_uri')}`",
+                f"- Exact requested URL: `{row.get('requested_url')}`",
+                f"- Error: {diagnostic_excerpt(tzim.get('error'))}",
+                f"- Return code: `{tzim.get('returncode')}`",
+                f"- Command: `{json.dumps(tzim.get('argv', []), ensure_ascii=False)}`",
+            ])
+            for label in ("stderr", "stdout"):
+                text = diagnostic_excerpt(tzim.get(label))
+                if text != "(empty)":
+                    diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
+            diagnostics.append("")
+        for name, check in (row.get("external_checks") or {}).items():
+            if not isinstance(check, dict) or (not check.get("error") and check.get("returncode") in (None, 0)):
+                continue
+            diagnostics.extend([
+                f"### External check failure: {product_id} / {name}",
+                f"- Error: {diagnostic_excerpt(check.get('error'))}",
+                f"- Return code: `{check.get('returncode')}`",
+            ])
+            for label in ("stderr", "stdout"):
+                text = diagnostic_excerpt(check.get(label))
+                if text != "(empty)":
+                    diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
+            diagnostics.append("")
+        for label in ("array_header_roundtrip", "funpack_array_header_roundtrip"):
+            check = row.get(label) or {}
+            if check.get("ok") is False:
+                diagnostics.extend([
+                    f"### Oracle failure: {product_id} / {label}",
+                    f"- Reason: {diagnostic_excerpt(check.get('reason'))}",
+                    "",
+                ])
+
+    if diagnostics:
+        summary.extend(["", "## Per-product failure diagnostics", "", *diagnostics])
     (out / "summary.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
 
     failures = []
@@ -493,7 +555,8 @@ def main() -> int:
         for name in ("fitsverify_source", "fitsverify_candidate", "funpack_source", "funpack_candidate"):
             check = row.get("external_checks", {}).get(name)
             if check is not None and (check.get("error") or check.get("returncode") not in (None, 0)):
-                failures.append(f"{row['product_id']}: {name} failed: {check.get('error') or check.get('stderr') or check.get('returncode')}")
+                detail = check.get("error") or check.get("stderr") or check.get("stdout") or check.get("returncode")
+                failures.append(f"{row['product_id']}: {name} failed: {diagnostic_excerpt(detail)}")
         if row.get("tier1_error"):
             failures.append(f"{row['product_id']}: existing tile Tier 1 comparator failed ({row['tier1_error']})")
         if row.get("temporary_cleanup_errors"):
