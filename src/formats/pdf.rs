@@ -2942,19 +2942,19 @@ mod tests {
         // Linearized first-page xref sections can refer to objects physically
         // placed after the first xref table. They must be refused as linearized,
         // not reported as corrupt offsets by the non-linearized parser.
-        linearized.extend_from_slice(
-            format!("{:010} 00000 n \n", xref + 100).as_bytes(),
-        );
+        linearized.extend_from_slice(format!("{:010} 00000 n \n", xref + 100).as_bytes());
         linearized.extend_from_slice(b"0000000000 00000 f \n");
-        linearized.extend_from_slice(
-            format!("{linearization_dictionary:010} 00000 n \n").as_bytes(),
-        );
+        linearized
+            .extend_from_slice(format!("{linearization_dictionary:010} 00000 n \n").as_bytes());
         linearized.extend_from_slice(b"trailer\n<< /Size 4 /Root 1 0 R /Prev 999 >>\nstartxref\n");
         linearized.extend_from_slice(xref.to_string().as_bytes());
         linearized.extend_from_slice(b"\n%%EOF\n");
 
         let error = parse(&linearized).unwrap_err();
-        assert!(matches!(&error, Error::Refused(_)), "unexpected error: {error}");
+        assert!(
+            matches!(&error, Error::Refused(_)),
+            "unexpected error: {error}"
+        );
         assert!(error.to_string().contains("linearized PDFs"));
     }
 
