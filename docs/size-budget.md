@@ -6,10 +6,11 @@ A small binary is a project requirement, not a nice-to-have. But "small" is only
 measured, so this document defines the budget, the build profile, and the exact procedure used to check it.
 
 > **Current #82 status:** the release default includes `jpeg-v1`; the owner-authorized stripped
-> `x86_64-unknown-linux-musl` ceiling is fixed at **1,082,208 bytes**. The final-head CI size job records the
-> actual byte count and feature matrix; historical `979,808`-byte measurements below are the pre-#82 default
-> and are not acceptance evidence for this build. The profile is in §2; current per-feature sizes are in §3,
-> and the measured JPEG runtime/RSS comparison is in §5 after the final CI run.
+> `x86_64-unknown-linux-musl` ceiling is fixed at **1,082,208 bytes**. For each source SHA, the CI `binary size`
+> report and `size-<source SHA>` artifact retain the exact binary byte count/hash and full feature matrix; the
+> `JPEG default runtime cost` report and artifact retain per-file rows, refusals, tool identities, raw timing/RSS
+> and recomputed aggregates. The historical `979,808`-byte measurements below are pre-#82 only and are not
+> acceptance evidence for this build. Evidence is head-specific and must not be carried forward after a change.
 > The #82 limit is a ceiling, not a target: no verification is weakened and no measurement is rounded.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
@@ -45,8 +46,9 @@ release's measurement instead of a ceiling that leaves 150 KiB of room underneat
 
 The table below preserves the **pre-#82 measurements** for the v0.14.0 feature matrix. They establish the
 previous default at `cb312fd`, but they are not current-head results. The #82 release gate remains a separate,
-owner-authorized ceiling of **1,082,208 bytes**; final-head CI must measure the actual binary below that value.
-Current feature-matrix measurements are listed in §3 once run on the final commit.
+owner-authorized ceiling of **1,082,208 bytes**; final-head CI must measure the actual binary at or below that
+value. The exact current feature matrix, binary SHA-256 and size are in the source-SHA-specific CI report and
+`size-<source SHA>` artifact; no value from an earlier head is substituted.
 
 | Profile | Features | Measured | vs v0.12.1 |
 | --- | --- | --- | --- |
@@ -190,8 +192,9 @@ measurement is 36 864 bytes, and the guess is recorded here rather than quietly 
 
 In this historical matrix, rows above `default` were the narrowing path and rows below it were the widening
 path (`jpeg-v1`, `fits`, and both together). #82 moves `jpeg-v1` into the current default; only `fits` remains
-an optional feature and a run-time opt-in. The current CI matrix and measured deltas belong in the table
-reported for the final SHA, not in these pre-#82 values.
+an optional feature and a run-time opt-in. The current CI matrix and measured deltas are retained in the
+source-SHA-specific `binary size` report and `size-<source SHA>` artifact, not inferred from these historical
+values.
 
 The historical deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile
 change made visible inside each handler, because the codecs are already compiled for speed.

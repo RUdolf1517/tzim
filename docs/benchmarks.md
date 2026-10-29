@@ -30,9 +30,13 @@ release profile. The subsequent dependency-specific `opt-level = "s"` measuremen
 #82 ceiling are recorded in [size-budget §1](size-budget.md#1-budget). The old `1 049 440` condition and the
 old 979 808-byte gate are historical, not current.
 
-**Current #82 evidence:** the final-SHA static-musl size, complete feature matrix, and the raw JPEG runtime/RSS
-comparison are recorded below after their corresponding CI runs. The static size gate is fixed at **1,082,208
-bytes**; a final measurement above it fails, with no threshold adjustment.
+**Current #82 evidence:** the `binary size` and `JPEG default runtime cost` jobs publish a report for each source
+SHA and retain 90-day artifacts. The size report includes the stripped-binary byte count/hash and complete feature
+matrix; the runtime report includes the pre-registered input-manifest hash, environment and binary identities,
+per-file rows/refusals, raw per-run timing/RSS, and independently recomputed aggregates. Artifacts are named
+`size-<source SHA>` and `jpeg-runtime-<source SHA>`. Evidence is head-specific: after any source change, use only
+the reports and artifacts for that exact SHA. The fixed size ceiling remains **1,082,208 bytes**; no threshold
+adjustment is permitted.
 
 The historical measured build was the release default at that time. `--all-features` includes a `fuzz-api`
 feature that exists only to expose parsers to the fuzz targets, and compiling it into a published binary would

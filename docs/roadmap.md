@@ -338,8 +338,8 @@ v0.13/v0.14 decisions above:
 | --- | --- | --- |
 | #57 — PDF measurement | pending | Need 20–50 provenance- and permission-qualified real-toolchain PDFs, per-file hashes/refusals, qpdf checks, render comparisons and independent aggregates; no supplemental qualified sample or current run is retained here. |
 | #59 — FITS measurement | pending | Need pre-registered, permission-qualified full-size survey products and separate Tier 1/Tier 2 raw results; historical cutouts do not satisfy the selection. |
-| #82 — default JPEG V1 | implementation and docs in progress | Final-SHA stripped-musl size, three-OS/default/all-features checks, corpus/fuzz/third-party results, and retained runtime/RSS evidence are still required. The ceiling is the unchanged **1,082,208 bytes**. |
-| #83 — FITS confirmation | implementation and docs in progress | Compile and run the prompt-policy, pipeline, default-No, refusal, EOF and cleanup tests on the final head; the prompt remains limited to one direct TTY `--fits-tile` run. |
+| #82 — default JPEG V1 | implemented; evidence is recorded per source SHA | The fixed stripped-musl ceiling is **1,082,208 bytes**. Use only the exact-head size report and `size-<source SHA>` / `jpeg-runtime-<source SHA>` artifacts; never carry evidence to a later head. |
+| #83 — FITS confirmation | implemented; tests are part of the cross-platform CI matrix | The prompt is limited to one direct TTY `--fits-tile` run; the candidate is fully verified before default-No confirmation and only Yes reaches atomic install. |
 | #79 — FLAC re-encoding | not implemented | Full path requires an approved maintained encoder and independent decoder, exact PCM/metadata/seektable checks, external tools, negative controls, corpus/fuzz, and actual feature size/speed/gain measurements. |
 | #80 — narrow PDF FlateDecode | blocked on #57 | Do not implement until the required PDF measurement and disposition exist; no PDF handler is admitted by this status row. |
 
