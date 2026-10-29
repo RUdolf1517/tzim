@@ -1655,9 +1655,10 @@ fn parse(data: &[u8]) -> Result<PdfDoc> {
                 0 => {
                     if entry.id.number == 0 {
                         if entry.id.generation != u16::MAX {
-                            return Err(Error::parse(
-                                "pdf: xref object zero does not have generation 65535",
-                            ));
+                            return Err(refuse(format!(
+                                "xref object zero has generation {}; expected 65535",
+                                entry.id.generation
+                            )));
                         }
                         zero_entry = true;
                     }
@@ -1753,9 +1754,10 @@ fn parse(data: &[u8]) -> Result<PdfDoc> {
     let mut prior_end = header_end;
     for (id, offset) in active {
         if offset < prior_end {
-            return Err(Error::parse(
-                "pdf: xref object offsets overlap or precede the header",
-            ));
+            return Err(Error::parse(format!(
+                "pdf: xref offset {offset} for object {} {} overlaps or precedes byte {prior_end}",
+                id.number, id.generation
+            )));
         }
         if !valid_gap(data, prior_end..offset) {
             return Err(refuse("non-object data occurs between indexed objects"));
@@ -2975,6 +2977,18 @@ mod tests {
         ] {
             assert!(parse(&bad).is_err());
         }
+        let mut nonstandard_object_zero = base.clone();
+        let zero_entry = nonstandard_object_zero
+            .windows(19)
+            .position(|window| window == b"0000000000 65535 f ")
+            .unwrap();
+        nonstandard_object_zero.splice(zero_entry + 11..zero_entry + 16, b"00000".iter().copied());
+        let error = parse(&nonstandard_object_zero).unwrap_err();
+        assert!(
+            matches!(&error, Error::Refused(_)),
+            "unexpected error: {error}"
+        );
+
         let mut bad = base.clone();
         let insertion = bad
             .windows(8)

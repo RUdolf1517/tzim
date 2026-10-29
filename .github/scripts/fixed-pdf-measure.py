@@ -437,8 +437,26 @@ def main() -> int:
             if text != "(empty)":
                 diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
         diagnostics.append("")
+    qpdf_diagnostics = []
+    for row in rows:
+        check = row.get("original_qpdf_check") or {}
+        if check.get("returncode") in (None, 0):
+            continue
+        qpdf_diagnostics.extend([
+            f"### qpdf original check: {row.get('id', row.get('path', 'unknown-input'))}",
+            f"- Fixed source path: `{row.get('path')}`",
+            f"- Return code: `{check.get('returncode')}`",
+        ])
+        for label in ("stdout", "stderr"):
+            text = diagnostic_excerpt(check.get(label))
+            if text != "(empty)":
+                qpdf_diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
+        qpdf_diagnostics.append("")
+
     if diagnostics:
         markdown.extend(["", "## Per-input handler diagnostics", "", *diagnostics])
+    if qpdf_diagnostics:
+        markdown.extend(["", "## Independent qpdf diagnostics", "", *qpdf_diagnostics])
     (out / "summary.md").write_text("\n".join(markdown) + "\n", encoding="utf-8")
 
     failures = []
