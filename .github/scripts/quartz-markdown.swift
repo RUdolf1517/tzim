@@ -43,13 +43,13 @@ do {
         kCGPDFContextAuthor: "tzim fixed #57 measurement",
         kCGPDFContextCreator: "AppKit/Quartz native Markdown print-to-PDF",
     ]
-    let storage = NSMutableData()
-    guard let consumer = CGDataConsumer(data: storage as CFMutableData) else {
-        fail("Quartz could not create a PDF data consumer")
-    }
+    // Use a URL-backed PDF context so Quartz finalizes its cross-reference offsets
+    // against the exact file that is later measured.
+    let temporaryURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("tzim-fixed-quartz-\(UUID().uuidString).pdf")
     var mediaBox = page
     guard let context = CGContext(
-        consumer: consumer,
+        temporaryURL as CFURL,
         mediaBox: &mediaBox,
         auxiliary as CFDictionary
     ) else {
@@ -81,7 +81,10 @@ do {
         context.endPDFPage()
     }
     context.closePDF()
-    try storage.write(to: outputURL, options: .atomic)
+    if FileManager.default.fileExists(atPath: outputURL.path) {
+        try FileManager.default.removeItem(at: outputURL)
+    }
+    try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
     print("producer=AppKit NSAttributedString(markdown:) + Quartz CGContext PDFContext")
     print("creator=AppKit/Quartz native Markdown print-to-PDF")
     print("pages_written_with=CoreText CTFramesetter / Quartz PDFContext")

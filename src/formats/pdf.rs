@@ -1457,6 +1457,40 @@ fn name_is(value: Option<&Value>, name: &[u8]) -> bool {
     matches!(value, Some(Value::Name(actual)) if actual.as_slice() == name)
 }
 
+fn first_object_has_linearized_dictionary(data: &[u8], offset: usize) -> bool {
+    let mut parser = Parser::new(data, offset);
+    parser.skip_space_comments();
+    let Ok(number) = parser.atom() else {
+        return false;
+    };
+    if std::str::from_utf8(&number)
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .is_none()
+    {
+        return false;
+    }
+    parser.skip_space_comments();
+    let Ok(generation) = parser.atom() else {
+        return false;
+    };
+    if std::str::from_utf8(&generation)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .is_none()
+    {
+        return false;
+    }
+    parser.skip_space_comments();
+    if !parser.keyword(b"obj") {
+        return false;
+    }
+    parser.skip_space_comments();
+    parser
+        .parse_value(0)
+        .is_ok_and(|value| contains_key(&value, b"Linearized"))
+}
+
 fn parse(data: &[u8]) -> Result<PdfDoc> {
     let limit = data.len().min(MAX_HEADER_BYTES);
     let header_start = data[..limit]
@@ -1485,6 +1519,14 @@ fn parse(data: &[u8]) -> Result<PdfDoc> {
         }
     } else if data.get(header_end) == Some(&b'\n') {
         header_end += 1;
+    }
+
+    // Linearized files put their first-page objects before the final xref table,
+    // so an ordinary xref-offset check can reject them as malformed before the
+    // parser reaches the existing linearization refusal. Identify the mandatory
+    // first-object dictionary first and leave the file untouched.
+    if first_object_has_linearized_dictionary(data, header_end) {
+        return Err(refuse("linearized PDFs"));
     }
 
     let startxref_start = data
@@ -2884,6 +2926,36 @@ mod tests {
             .any(|entry| {
                 entry.kind == 2 && entry.id.number == 1 && entry.field1 == 3 && entry.field2 == 0
             }));
+    }
+
+    #[test]
+    fn refuses_linearized_pdf_before_first_page_xref_offsets_are_treated_as_malformed() {
+        let mut linearized = b"%PDF-1.3\n".to_vec();
+        let linearization_dictionary = linearized.len();
+        linearized.extend(number(
+            3,
+            0,
+            b"<< /Linearized 1 /L 1000 /H [500 100] /O 1 /E 900 /N 1 /T 700 >>",
+        ));
+        let xref = linearized.len();
+        linearized.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        // Linearized first-page xref sections can refer to objects physically
+        // placed after the first xref table. They must be refused as linearized,
+        // not reported as corrupt offsets by the non-linearized parser.
+        linearized.extend_from_slice(
+            format!("{:010} 00000 n \n", xref + 100).as_bytes(),
+        );
+        linearized.extend_from_slice(b"0000000000 00000 f \n");
+        linearized.extend_from_slice(
+            format!("{linearization_dictionary:010} 00000 n \n").as_bytes(),
+        );
+        linearized.extend_from_slice(b"trailer\n<< /Size 4 /Root 1 0 R /Prev 999 >>\nstartxref\n");
+        linearized.extend_from_slice(xref.to_string().as_bytes());
+        linearized.extend_from_slice(b"\n%%EOF\n");
+
+        let error = parse(&linearized).unwrap_err();
+        assert!(matches!(&error, Error::Refused(_)), "unexpected error: {error}");
+        assert!(error.to_string().contains("linearized PDFs"));
     }
 
     #[test]
