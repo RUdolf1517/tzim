@@ -16,6 +16,7 @@ on:
       - ".github/scripts/fixed-*.py"
       - ".github/scripts/merge-fixed-pdf-manifests.py"
       - ".github/scripts/test_merge_fixed_pdf_manifests.py"
+      - ".github/scripts/test_fixed_pdf_measure.py"
       - ".github/scripts/test_fixed_fits_measure.py"
       - ".github/scripts/pdflatex-unicode-header.tex"
       - ".github/scripts/quartz-markdown.swift"
@@ -247,9 +248,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Test fixed PDF manifest merging and retained failure rows
+      - name: Test fixed PDF manifest merging, retained failures and gain recomputation
         shell: bash
-        run: python3 .github/scripts/test_merge_fixed_pdf_manifests.py
+        run: |
+          python3 .github/scripts/test_merge_fixed_pdf_manifests.py
+          python3 .github/scripts/test_fixed_pdf_measure.py
 
       - name: Build the actual all-format measurement binary
         id: release-build

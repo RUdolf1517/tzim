@@ -102,6 +102,14 @@ def optional_version(module_name: str, attribute: str) -> str:
 def aggregate(rows: list[dict]) -> dict:
     accepted = [row for row in rows if row.get("classification") == "accepted"]
     optimized = [row for row in rows if row.get("tzim", {}).get("status") == "optimized"]
+    gain_rows = [
+        row for row in optimized
+        if isinstance(row.get("bytes"), int) and isinstance(row.get("tzim", {}).get("bytes"), int)
+    ]
+    gains = [row["tzim"]["gain_pct"] for row in optimized if isinstance(row.get("tzim", {}).get("gain_pct"), (int, float))]
+    optimized_source_bytes = sum(row["bytes"] for row in gain_rows)
+    optimized_candidate_bytes = sum(row["tzim"]["bytes"] for row in gain_rows)
+    tzim_saved_bytes = optimized_source_bytes - optimized_candidate_bytes
     def stats(key: str) -> dict:
         values = [row[key] for row in accepted if isinstance(row.get(key), (int, float))]
         return {
@@ -120,9 +128,16 @@ def aggregate(rows: list[dict]) -> dict:
         "qpdf_allowed_pct": stats("qpdf_pct"),
         "forbidden_repack_pct": stats("repack_pct"),
         "tzim_gain_pct": {
-            "n": len([row for row in optimized if isinstance(row.get("tzim", {}).get("gain_pct"), (int, float))]),
-            "median": statistics.median([row["tzim"]["gain_pct"] for row in optimized if isinstance(row.get("tzim", {}).get("gain_pct"), (int, float))]) if optimized else None,
+            "n": len(gains),
+            "median": statistics.median(gains) if gains else None,
+            "mean": statistics.fmean(gains) if gains else None,
         },
+        "tzim_optimized_source_bytes": optimized_source_bytes,
+        "tzim_optimized_candidate_bytes": optimized_candidate_bytes,
+        "tzim_saved_bytes": tzim_saved_bytes,
+        "tzim_weighted_gain_pct": (
+            100.0 * tzim_saved_bytes / optimized_source_bytes if optimized_source_bytes else None
+        ),
         "render_differences": sum(
             1 for row in rows for comparison in row.get("render_comparisons", [])
             if comparison.get("compared") and not comparison.get("identical")
@@ -473,7 +488,12 @@ def main() -> int:
         f"- Rows: {len(rows)} (all 21 pre-registered outputs are retained)",
         f"- Classification counts: `{json.dumps(aggregate_result['statuses'], sort_keys=True)}`",
         f"- Narrow-slice accepted: {aggregate_result['accepted_n']}",
-        f"- Tzim optimized: {aggregate_result['tzim_optimized_n']}",
+        f"- Tzim optimized: {aggregate_result['tzim_optimized_n']}/{len(rows)} rows; "
+        f"actual savings {aggregate_result['tzim_saved_bytes']:,} bytes from "
+        f"{aggregate_result['tzim_optimized_source_bytes']:,} optimized-input bytes "
+        f"({aggregate_result['tzim_weighted_gain_pct']}% weighted).",
+        f"- Per-file gain among optimized rows: median {aggregate_result['tzim_gain_pct']['median']}%, "
+        f"mean {aggregate_result['tzim_gain_pct']['mean']}%.",
         f"- Render differences: {aggregate_result['render_differences']}",
         f"- qpdf candidate check failures: {aggregate_result['qpdf_candidate_check_failures']}",
         "",
@@ -484,8 +504,8 @@ def main() -> int:
         "",
         "The table is a compact review view; full commands, manifests, render hashes and independent recomputation remain in the evidence artifact.",
         "",
-        "| Fixed ID | Input bytes / SHA-256 | Classification | Tzim status; output bytes / SHA-256 | qpdf candidate check | MuPDF first/middle/last |",
-        "| --- | ---: | --- | --- | --- | --- |",
+        "| Fixed ID | Input bytes / SHA-256 | Classification | Tzim status; output bytes / SHA-256 | Tzim gain | qpdf candidate check | MuPDF first/middle/last |",
+        "| --- | ---: | --- | --- | ---: | --- | --- |",
     ]
     for row in rows:
         tzim = row.get("tzim") or {}
@@ -509,10 +529,13 @@ def main() -> int:
             render_status = "unchanged; no candidate render"
         else:
             render_status = "not run"
+        gain_pct = tzim.get("gain_pct")
+        gain_status = f"{gain_pct:.6f}%" if isinstance(gain_pct, (int, float)) else "—"
         markdown.append(
             f"| `{row.get('id', 'unknown')}` | {row.get('bytes', '—')} / `{row.get('sha256', '—')}` "
             f"| {row.get('classification', 'missing')} | {tzim.get('status', 'not-run')}; "
-            f"{tzim.get('bytes', '—')} / `{tzim.get('sha256', '—')}` | {qpdf_status} | {render_status} |"
+            f"{tzim.get('bytes', '—')} / `{tzim.get('sha256', '—')}` | {gain_status} | "
+            f"{qpdf_status} | {render_status} |"
         )
 
     def diagnostic_excerpt(value: object, limit: int = 600) -> str:

@@ -25,6 +25,13 @@ def main():
     published = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
     accepted = [row for row in rows if row.get("classification") == "accepted"]
     optimized = [row for row in rows if row.get("tzim", {}).get("status") == "optimized"]
+    gain_rows = [
+        row for row in optimized
+        if isinstance(row.get("bytes"), int) and isinstance(row.get("tzim", {}).get("bytes"), int)
+    ]
+    gains = [row["tzim"]["gain_pct"] for row in optimized if isinstance(row.get("tzim", {}).get("gain_pct"), (int, float))]
+    optimized_source_bytes = sum(row["bytes"] for row in gain_rows)
+    optimized_candidate_bytes = sum(row["tzim"]["bytes"] for row in gain_rows)
 
     def instrument(key):
         values = [row[key] for row in accepted if isinstance(row.get(key), (int, float))]
@@ -36,7 +43,6 @@ def main():
             "share_positive": sum(value > 0 for value in values) / len(values) if values else None,
         }
 
-    gains = [row["tzim"]["gain_pct"] for row in optimized if isinstance(row.get("tzim", {}).get("gain_pct"), (int, float))]
     recomputed = {
         "row_count": len(rows),
         "statuses": dict(sorted(Counter(row.get("classification", "missing") for row in rows).items())),
@@ -45,7 +51,19 @@ def main():
         "faithful_pct": instrument("faithful_pct"),
         "qpdf_allowed_pct": instrument("qpdf_pct"),
         "forbidden_repack_pct": instrument("repack_pct"),
-        "tzim_gain_pct": {"n": len(gains), "median": statistics.median(gains) if gains else None},
+        "tzim_gain_pct": {
+            "n": len(gains),
+            "median": statistics.median(gains) if gains else None,
+            "mean": statistics.fmean(gains) if gains else None,
+        },
+        "tzim_optimized_source_bytes": optimized_source_bytes,
+        "tzim_optimized_candidate_bytes": optimized_candidate_bytes,
+        "tzim_saved_bytes": optimized_source_bytes - optimized_candidate_bytes,
+        "tzim_weighted_gain_pct": (
+            100.0 * (optimized_source_bytes - optimized_candidate_bytes) / optimized_source_bytes
+            if optimized_source_bytes
+            else None
+        ),
         "render_differences": sum(
             1 for row in rows for item in row.get("render_comparisons", [])
             if item.get("compared") and not item.get("identical")
