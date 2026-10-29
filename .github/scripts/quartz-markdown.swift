@@ -67,11 +67,7 @@ do {
     let documentHeight = max(content.height, ceil(usedRect.maxY + 12))
     textView.setFrameSize(NSSize(width: content.width, height: documentHeight))
 
-    let printOptions: [NSPrintInfo.AttributeKey: Any] = [
-        .jobDisposition: NSPrintInfo.JobDisposition.save,
-        .jobSavingURL: temporaryURL,
-    ]
-    let printInfo = NSPrintInfo(dictionary: printOptions)
+    let printInfo = NSPrintInfo()
     printInfo.paperSize = page.size
     printInfo.leftMargin = content.minX
     printInfo.rightMargin = page.width - content.maxX
@@ -82,15 +78,20 @@ do {
     printInfo.isHorizontallyCentered = false
     printInfo.isVerticallyCentered = false
 
-    let operation = NSPrintOperation(view: textView, printInfo: printInfo)
+    let operation = NSPrintOperation.pdfOperation(
+        with: textView,
+        inside: textView.bounds,
+        toPath: temporaryURL.path,
+        printInfo: printInfo
+    )
     operation.showsPrintPanel = false
     operation.showsProgressPanel = false
     guard operation.run() else {
-        fail("AppKit/Quartz print operation did not produce a PDF")
+        fail("AppKit/Quartz PDF operation did not produce a PDF")
     }
 
     guard FileManager.default.fileExists(atPath: temporaryURL.path) else {
-        fail("AppKit/Quartz print operation returned success but produced no PDF")
+        fail("AppKit/Quartz PDF operation returned success but produced no PDF")
     }
     if FileManager.default.fileExists(atPath: outputURL.path) {
         try FileManager.default.removeItem(at: outputURL)
@@ -98,9 +99,9 @@ do {
     try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
 
     print("title=\(title)")
-    print("producer=AppKit NSTextView + NSPrintOperation with native Quartz PDF output")
-    print("creator=AppKit/Quartz native Markdown print-to-PDF")
-    print("pages_written_with=NSTextView paginated by NSPrintOperation")
+    print("producer=AppKit NSTextView + NSPrintOperation.pdfOperation with native Quartz PDF output")
+    print("creator=AppKit/Quartz native Markdown PDF operation")
+    print("pages_written_with=AppKit NSPrintOperation.pdfOperation")
 } catch {
     fail("Quartz Markdown rendering failed: \(error)")
 }
