@@ -51,7 +51,7 @@ do {
     guard let context = CGContext(
         consumer: consumer,
         mediaBox: &mediaBox,
-        auxiliaryInfo: auxiliary as CFDictionary
+        auxiliary as CFDictionary
     ) else {
         fail("Quartz could not create a PDF context")
     }

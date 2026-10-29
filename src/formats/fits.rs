@@ -53,7 +53,10 @@
 //! `CHECKSUM`/`DATASUM`** — a stale checksum is a corrupted file by the format's
 //! own definition, and this build does not recompute them yet (fits-audit §9,
 //! question 3). Such an HDU is copied verbatim; the rest of the file is still
-//! rewritten.
+//! rewritten. If any image would be rewritten, a file containing `EPOCH` or
+//! `BLOCKED` is kept byte-identical: the pinned HEASARC `fitsverify` warns on the
+//! deprecated `EPOCH` card and rejects `BLOCKED` in a compressed extension, and
+//! this handler does not normalize source headers.
 //!
 //! `--strip-metadata` removes nothing here: every FITS card is either structure
 //! or a record of the observation, and the convention has no decorative field.
@@ -1073,6 +1076,23 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
         // rule, applied here first so that nothing is written for nothing.
         return Ok(Cand::NoGain);
     }
+    let legacy_card = hdus.iter().enumerate().find_map(|(index, hdu)| {
+        ["BLOCKED", "EPOCH"]
+            .into_iter()
+            .find(|keyword| hdu.header.has(keyword))
+            .map(|keyword| (index, keyword))
+    });
+    if let Some((index, keyword)) = legacy_card {
+        let detail = match keyword {
+            "BLOCKED" => "is not allowed in a compressed image extension",
+            "EPOCH" => "is deprecated and causes the pinned fitsverify gate to warn",
+            _ => unreachable!("only checked legacy keywords are returned"),
+        };
+        return Err(Error::refused(format!(
+            "fits: HDU {index} contains {keyword}, which {detail}; \
+             preserving the original file unchanged"
+        )));
+    }
     dst.write_all(&out)?;
     Ok(Cand::Written(out.len() as u64))
 }
@@ -1713,6 +1733,19 @@ mod tests {
         let err = optimize(&original, &mut candidate, &opts)
             .expect_err("a checksum this build cannot recompute is a refusal");
         assert!(err.to_string().contains("CHECKSUM"), "{err}");
+    }
+
+    #[test]
+    fn deprecated_or_primary_only_validation_cards_refuse_the_whole_rewrite() {
+        let data = sample(16, 100, 200);
+        for (keyword, value) in [("EPOCH", "2000"), ("BLOCKED", "T")] {
+            let original = image_hdu(16, &[200, 100], &data, &[(keyword, value)]);
+            let mut candidate = Vec::new();
+            let error = optimize(&original, &mut candidate, &options(true))
+                .expect_err("legacy validation cards must not be moved into a compressed table");
+            assert!(error.to_string().contains(keyword), "{error}");
+            assert!(candidate.is_empty(), "the source must remain untouched");
+        }
     }
 
     #[test]

@@ -16,6 +16,8 @@ on:
       - ".github/scripts/fixed-*.py"
       - ".github/scripts/merge-fixed-pdf-manifests.py"
       - ".github/scripts/test_merge_fixed_pdf_manifests.py"
+      - ".github/scripts/test_fixed_fits_measure.py"
+      - ".github/scripts/pdflatex-unicode-header.tex"
       - ".github/scripts/quartz-markdown.swift"
       - ".github/scripts/fits-measure.py"
       - ".github/scripts/pdf-measure.py"
@@ -607,6 +609,10 @@ jobs:
           python3 -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
             -r .github/scripts/measure-requirements.txt
           python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-measurement-environment.txt"
+
+      - name: Test the compressed-primary FITS measurement oracle
+        shell: bash
+        run: python3 .github/scripts/test_fixed_fits_measure.py
 
       - name: Fetch and freeze all exact FITS source rows before measurement
         id: fetch

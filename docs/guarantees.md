@@ -1190,7 +1190,10 @@ not asked to write; a tile payload that is not a gzip member; `SIMPLE = F`; `GRO
 that are not the identity; an HDU carrying `CHECKSUM`/`DATASUM`; an axis of length zero; valid `BITPIX = 64`
 or image rank above 6 (including ranks 7, 99 and 999), which are outside this writer's current rewrite subset;
 an `XTENSION` that is neither `IMAGE` nor `BINTABLE` (copied verbatim); the run not asking for it (`--fits-tile`);
-a candidate that is not strictly smaller, which is reported as `already_optimal`.
+a candidate that is not strictly smaller, which is reported as `already_optimal`. If any image would otherwise
+be rewritten, a file containing `EPOCH` or `BLOCKED` anywhere is also refused as a whole and kept byte-identical:
+the pinned HEASARC `fitsverify` warns on deprecated `EPOCH` and rejects `BLOCKED` in the compressed extension,
+and this implementation does not normalize either source card.
 
 **Corrupt (failed, exit 1):** a data length that disagrees with `NAXIS`/`BITPIX`; a header record that runs
 past the end of the file; bytes after the `END` card in a record; bytes after the last HDU; a second primary

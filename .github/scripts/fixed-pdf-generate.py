@@ -213,8 +213,18 @@ def render_manifest(args: argparse.Namespace) -> dict:
             }
             try:
                 if category == "latex":
+                    header = root / ".github/scripts/pdflatex-unicode-header.tex"
+                    header_size, header_sha256 = digest(header)
+                    row["generation_support_files"] = [
+                        {
+                            "path": header.relative_to(root).as_posix(),
+                            "bytes": header_size,
+                            "sha256": header_sha256,
+                        }
+                    ]
                     argv = [
                         "pandoc", "--from=gfm", "--standalone", "--pdf-engine=pdflatex",
+                        "--verbose", "--include-in-header", str(header),
                         "-V", "geometry:margin=1in", "--output", str(output), str(source),
                     ]
                     checked_command(argv, generation_log)

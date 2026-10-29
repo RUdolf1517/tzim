@@ -128,6 +128,16 @@ def raw_data(path: Path, hdu) -> bytes:
         return stream.read(padded)
 
 
+def is_compressed_image_hdu(hdu) -> bool:
+    """Recognize Astropy's logical CompImageHDU view as well as raw ZIMAGE tables.
+
+    Astropy projects a compressed binary table into the original image-header
+    view by default, so `hdu.header.get("ZIMAGE")` is absent even though the raw
+    table has `ZIMAGE = T`. The class identity is the reliable signal here.
+    """
+    return isinstance(hdu, fits.CompImageHDU) or bool(hdu.header.get("ZIMAGE", False))
+
+
 def compare_fits(
     original: Path,
     candidate: Path,
@@ -137,15 +147,26 @@ def compare_fits(
     with fits.open(original, memmap=False, do_not_scale_image_data=True, uint=False) as before, \
          fits.open(candidate, memmap=False, do_not_scale_image_data=True, uint=False) as after:
         offset = 0
+        offset_probe = None
         if len(before) and len(after) == len(before) + 1 and len(after) >= 2:
             first = after[0]
             second = after[1]
-            primary_eligible = bool(fits_measure.eligible(before[0]) and not before[0].header.get("ZIMAGE"))
+            primary_eligible = bool(fits_measure.eligible(before[0]) and not is_compressed_image_hdu(before[0]))
             has_filler = first.header.get("NAXIS", 0) == 0 and first.data is None
-            if primary_eligible and has_filler and (second.header.get("ZIMAGE") or allow_primary_filler):
+            second_is_compressed = is_compressed_image_hdu(second)
+            offset_probe = {
+                "primary_eligible": primary_eligible,
+                "empty_primary_filler": has_filler,
+                "second_hdu_is_compressed_image": second_is_compressed,
+                "second_hdu_type": type(second).__name__,
+            }
+            if primary_eligible and has_filler and (second_is_compressed or allow_primary_filler):
                 offset = 1
         if len(after) != len(before) + offset:
-            return {"ok": False, "reason": "hdu_count", "before_hdus": len(before), "after_hdus": len(after), "offset": offset}
+            result = {"ok": False, "reason": "hdu_count", "before_hdus": len(before), "after_hdus": len(after), "offset": offset}
+            if offset_probe is not None:
+                result["primary_offset_probe"] = offset_probe
+            return result
         if offset:
             filler = after[0]
             if filler.header.get("SIMPLE") is not True or filler.header.get("NAXIS", 0) != 0 or filler.data is not None:
@@ -155,8 +176,8 @@ def compare_fits(
         for index, original_hdu in enumerate(before):
             candidate_index = index + offset
             candidate_hdu = after[candidate_index]
-            original_zimage = bool(original_hdu.header.get("ZIMAGE", False))
-            candidate_zimage = bool(candidate_hdu.header.get("ZIMAGE", False))
+            original_zimage = is_compressed_image_hdu(original_hdu)
+            candidate_zimage = is_compressed_image_hdu(candidate_hdu)
             original_eligible = bool(
                 fits_measure.eligible(original_hdu)
                 and not original_zimage
@@ -353,6 +374,7 @@ def main() -> int:
             "file_row": file_row,
             "candidate_bytes": after_size,
             "candidate_sha256": after_sha,
+            "candidate_changed": after_sha != before_sha,
             "status": file_row.get("status") if file_row else "failed",
         }
         if tzim_result.get("error"):
@@ -361,8 +383,16 @@ def main() -> int:
             tzim_record["error"] = "tzim returned non-zero or emitted no file row"
         elif after_sha != before_sha and (after_size >= before_size or file_row.get("status") != "optimized"):
             tzim_record["error"] = "tzim changed bytes without a strictly smaller optimized result"
+        elif after_sha == before_sha and file_row.get("status") == "optimized":
+            tzim_record["error"] = "tzim reported optimized without changing the candidate bytes"
         elif after_sha != before_sha:
             tzim_record["gain_pct"] = 100.0 * (before_size - after_size) / before_size if before_size else 0.0
+        tzim_record["unchanged_nonoptimized"] = (
+            after_sha == before_sha
+            and file_row is not None
+            and file_row.get("status") != "optimized"
+            and not tzim_record.get("error")
+        )
         row["tier2_tzim"] = tzim_record
         if measurement_dependency_error:
             row["measurement_status"] = "measurement_dependency_failed"
@@ -379,22 +409,40 @@ def main() -> int:
         unpack_candidate = work / f"{order:02d}-{product['id']}.candidate-unpacked.fits"
         funpack_source_argv = [str(Path(args.funpack).resolve()), "-O", str(unpack_source), str(source)]
         funpack_candidate_argv = [str(Path(args.funpack).resolve()), "-O", str(unpack_candidate), str(candidate)]
-        funpack_source = run(funpack_source_argv, logs)
-        funpack_candidate = run(funpack_candidate_argv, logs)
+        if tzim_record.get("unchanged_nonoptimized"):
+            funpack_source = {
+                "status": "not_applicable",
+                "argv": funpack_source_argv,
+                "reason": "unchanged non-optimized row; verified by Tzim status and byte identity",
+            }
+            funpack_candidate = {
+                "status": "not_applicable",
+                "argv": funpack_candidate_argv,
+                "reason": "unchanged non-optimized row; verified by Tzim status and byte identity",
+            }
+        else:
+            funpack_source = run(funpack_source_argv, logs)
+            funpack_candidate = run(funpack_candidate_argv, logs)
+            if funpack_source.get("returncode") == 0 and unpack_source.is_file():
+                row["external_checks"]["funpack_source_output"] = {"bytes": digest(unpack_source)[0], "sha256": digest(unpack_source)[1]}
+            if funpack_candidate.get("returncode") == 0 and unpack_candidate.is_file():
+                row["external_checks"]["funpack_candidate_output"] = {"bytes": digest(unpack_candidate)[0], "sha256": digest(unpack_candidate)[1]}
         row["external_checks"]["funpack_source"] = funpack_source
         row["external_checks"]["funpack_candidate"] = funpack_candidate
         row["external_checks"]["funpack_checksum_mode"] = "default checksum behavior; -C not used; fpack checksum behavior is comparator documentation only"
-        if funpack_source.get("returncode") == 0 and unpack_source.is_file():
-            row["external_checks"]["funpack_source_output"] = {"bytes": digest(unpack_source)[0], "sha256": digest(unpack_source)[1]}
-        if funpack_candidate.get("returncode") == 0 and unpack_candidate.is_file():
-            row["external_checks"]["funpack_candidate_output"] = {"bytes": digest(unpack_candidate)[0], "sha256": digest(unpack_candidate)[1]}
 
         try:
             direct = compare_fits(source, candidate)
             row["array_header_roundtrip"] = direct
         except Exception as error:
             row["array_header_roundtrip"] = {"ok": False, "reason": f"{type(error).__name__}: {error}"}
-        if unpack_source.is_file() and unpack_candidate.is_file():
+        if tzim_record.get("unchanged_nonoptimized"):
+            row["funpack_array_header_roundtrip"] = {
+                "ok": None,
+                "status": "not_applicable",
+                "reason": "unchanged non-optimized rows are verified by Tzim status and source/candidate byte identity",
+            }
+        elif unpack_source.is_file() and unpack_candidate.is_file():
             try:
                 unpacked = compare_fits(
                     unpack_source, unpack_candidate, compare_untransformed_raw=False, allow_primary_filler=True
@@ -513,8 +561,14 @@ def main() -> int:
         for name, check in (row.get("external_checks") or {}).items():
             if not isinstance(check, dict) or (not check.get("error") and check.get("returncode") in (None, 0)):
                 continue
+            if name.endswith("_source"):
+                heading = f"### External source diagnostic: {product_id} / {name}"
+            elif (row.get("tier2_tzim") or {}).get("unchanged_nonoptimized"):
+                heading = f"### Inherited external diagnostic (unchanged source): {product_id} / {name}"
+            else:
+                heading = f"### External check failure: {product_id} / {name}"
             diagnostics.extend([
-                f"### External check failure: {product_id} / {name}",
+                heading,
                 f"- Error: {diagnostic_excerpt(check.get('error'))}",
                 f"- Return code: `{check.get('returncode')}`",
             ])
@@ -535,7 +589,7 @@ def main() -> int:
                 ])
 
     if diagnostics:
-        summary.extend(["", "## Per-product failure diagnostics", "", *diagnostics])
+        summary.extend(["", "## Per-product diagnostics", "", *diagnostics])
     (out / "summary.md").write_text("\n".join(summary) + "\n", encoding="utf-8")
 
     failures = []
@@ -554,11 +608,18 @@ def main() -> int:
             failures.append(f"{row['product_id']}: reconstructed array/header mismatch: {row['array_header_roundtrip'].get('reason')}")
         if row.get("funpack_array_header_roundtrip", {}).get("ok") is False:
             failures.append(f"{row['product_id']}: funpack array/header mismatch: {row['funpack_array_header_roundtrip'].get('reason')}")
+        unchanged_nonoptimized = bool(row.get("tier2_tzim", {}).get("unchanged_nonoptimized"))
         for name in ("fitsverify_source", "fitsverify_candidate", "funpack_source", "funpack_candidate"):
             check = row.get("external_checks", {}).get(name)
-            if check is not None and (check.get("error") or check.get("returncode") not in (None, 0)):
-                detail = check.get("error") or check.get("stderr") or check.get("stdout") or check.get("returncode")
-                failures.append(f"{row['product_id']}: {name} failed: {diagnostic_excerpt(detail)}")
+            if check is None or (not check.get("error") and check.get("returncode") in (None, 0)):
+                continue
+            # Source diagnostics establish provenance, not candidate validity. A
+            # refused/no-gain row is judged by its Tzim status and byte identity;
+            # per the FITS contract it is not required to pass external readers.
+            if name == "fitsverify_source" or unchanged_nonoptimized:
+                continue
+            detail = check.get("error") or check.get("stderr") or check.get("stdout") or check.get("returncode")
+            failures.append(f"{row['product_id']}: {name} failed: {diagnostic_excerpt(detail)}")
         if row.get("tier1_error"):
             failures.append(f"{row['product_id']}: existing tile Tier 1 comparator failed ({row['tier1_error']})")
         if row.get("temporary_cleanup_errors"):
