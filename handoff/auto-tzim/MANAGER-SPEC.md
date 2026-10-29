@@ -1,9 +1,10 @@
 # ТЗ для AI/project-менеджера `auto-tzim`
 
-**Статус:** организационное ТЗ для нового отдельного проекта  
-**Дата:** 2026-10-29  
-**Основной документ:** `handoff/auto-tzim/SPEC.md`  
-**Роль:** менеджер проекта, reviewer и release gatekeeper; не coder и не модуль приложения
+- **Статус:** организационное ТЗ для нового отдельного проекта
+- **Дата:** 2026-10-29
+- **Версия ТЗ:** 0.2; учтены P-01/P-02/P-03
+- **Основной документ:** `handoff/auto-tzim/SPEC.md`
+- **Роль:** менеджер проекта, reviewer и release gatekeeper; не coder и не модуль приложения
 
 ## 1. Назначение роли
 
@@ -54,7 +55,7 @@
 3. Создан отдельный репозиторий и известны его точный URL/owner.
 4. `SPEC.md` скопирован в новый репозиторий как документ с зафиксированной версией.
 5. Начальный scope ограничен **MVP / v0.1** из §17 технического ТЗ.
-6. Изменения в репозитории `tzim` не входят в scope. Если не хватает machine interface, создаётся отдельный issue и предлагается fail-closed adapter; несанкционированных core changes нет.
+6. Изменения в репозитории `tzim` не входят в scope. Отсутствие machine-readable capabilities не блокирует restricted MVP: default policy делегируется без `--formats`, `transforms` запрещён, human output/`note` не парсится. Отдельный upstream issue описывает будущий capabilities/structured-reasons API; несанкционированных core changes нет.
 
 Менеджер не должен создавать второй репозиторий или менять GitHub settings при отсутствии прав; в таком случае он даёт владельцу одно точное действие.
 
@@ -69,7 +70,7 @@
 | AT-01 | Repository/package bootstrap | Python package, базовые docs, CI на macOS/Linux |
 | AT-02 | Config и atomic storage | Schema validation, profiles, permissions, atomic writes |
 | AT-03 | Safe discovery и stability | Roots, symlinks, special files, hard links, stability checks |
-| AT-04 | Capabilities, policy и planner | Binary identity, deterministic dry-run, format/transform policy |
+| AT-04 | Restricted adapter, policy и planner | Binary identity, deterministic read-only candidate plan без file-processing `tzim`, запрет transforms в MVP |
 | AT-05 | JSON runner и state/history | Subprocess, stdin EOF, statuses, SQLite, locks, cancellation |
 | AT-06 | CLI | Все команды MVP, JSON output и exit codes |
 | AT-07 | Update-check | Только официальный источник и notification, без замены binary |
@@ -102,7 +103,7 @@ Issues следующего этапа можно исследовать и оп
 Менеджер обязан вернуть любую реализацию, нарушающую хотя бы один пункт:
 
 1. Нет обработки до явного добавления пользователем конкретной папки.
-2. Первый запуск новой папки — dry-run only.
+2. До первого apply новой папки обязателен read-only candidate plan; `auto-tzim` dry-run не запускает file-processing `tzim`, не передаёт `--dry-run` и не пишет в target root. Допустим только `tzim --version` без target paths.
 3. Нет root/sudo requirement и скрытого background запуска.
 4. Нет shell invocation; arbitrary filenames остаются данными argv.
 5. Нет следования symlink и обработки специальных файлов.
@@ -111,13 +112,15 @@ Issues следующего этапа можно исследовать и оп
 8. `auto-tzim` не реализует codecs и не заменяет файлы собственным installer.
 9. Все eligibility/refusal/verification/install решения остаются за `tzim`.
 10. Unknown/unsupported/refused/failed не направляются в другой handler.
-11. Confirmation-required transformations требуют отдельного предварительного opt-in.
-12. Scheduler/non-TTY/JSON режимы никогда не ждут prompt.
+11. В MVP `transforms` обязан быть пустым; confirmation-required transformations не запускаются. Их будущая поддержка потребует отдельного предварительного opt-in и machine-readable контракта.
+12. Scheduler/non-TTY/JSON режимы никогда не ждут prompt и не выделяют PTY.
 13. `failed` не попадает в бесконечный automatic retry.
 14. Update-check в MVP не скачивает и не заменяет binary.
 15. Нет telemetry и незадокументированных сетевых запросов.
 16. Нет ложного обещания undo.
 17. UI не дублирует core discovery/runner/updater logic.
+18. Default-enabled set и refusal reasons не восстанавливаются из human output, расширений или свободного `note`; неизвестный контракт даёт fail-closed `incompatible_tzim`.
+19. `auto-tzim` не пробрасывает raw exit code `tzim`; first-run/pause/resource refusals имеют собственный код 6, а внутренние ошибки и сигналы — документированные коды и precedence.
 
 Любое предложение ослабить эти пункты — отдельное продуктовое решение владельца, а не обычный review finding.
 
@@ -142,7 +145,7 @@ Issues следующего этапа можно исследовать и оп
 - Указанные jobs не skipped и не заменены placeholder success.
 - Количество raw rows совпадает с заявленным corpus/cases.
 - Aggregates независимо пересчитываются из raw rows.
-- Dry-run и skipped/failed cases действительно не меняют bytes.
+- Scan/dry-run действительно не запускает file-processing `tzim`, не передаёт target paths/`--dry-run` и не создаёт writes/temporary files в target roots; skipped/failed apply cases не меняют bytes оригиналов.
 - Negative controls обнаруживают ложный success, malformed JSON и mutation.
 - Retry/state transitions не зависят от одного благоприятного сценария.
 - Документация соответствует фактическим CLI/defaults/ограничениям.
@@ -185,9 +188,10 @@ Issues следующего этапа можно исследовать и оп
 
 ### 8.4 CLI/update-check
 
-- Dry-run не имеет side effects обработки.
+- Scan/dry-run не запускает file-processing `tzim`, не передаёт target paths/`--dry-run`, не требует write access к target root и не создаёт там candidate/temp files; candidate plan не назван гарантией eligibility/gain.
+- Первый apply без подходящего plan ID/hash возвращает 6; pause и min_free_bytes preflight также возвращают 6.
 - JSON stdout не смешан с human diagnostics.
-- Exit codes проверены реальными командами.
+- Собственные exit codes, включая 6/7/8/130/143, fixed preflight order и precedence проверены реальными командами; raw `tzim` code остаётся только в history.
 - Update-check использует только официальный источник и ничего не изменяет.
 
 ### 8.5 Следующие этапы
@@ -201,7 +205,7 @@ Issues следующего этапа можно исследовать и оп
 ### Critical — немедленный stop merge/Release
 
 - Возможность изменить файл вне approved root.
-- Изменение оригинала при dry-run, refusal, failure или verification error.
+- Любой write/candidate/temp file в target root при `auto-tzim` scan/dry-run; изменение оригинала при refusal, failure или verification error.
 - Shell/path injection.
 - Скрытая автоматическая обработка или замена binary.
 - Потеря/повреждение пользовательских данных.
@@ -211,8 +215,9 @@ Issues следующего этапа можно исследовать и оп
 
 - Неправильный retry loop, race/state recovery или overlapping run.
 - Prompt/deadlock в non-TTY.
-- Несовместимый `tzim` используется без fail-closed поведения.
+- Несовместимый `tzim` используется без fail-closed поведения или capabilities/reasons выводятся из human output/`note`.
 - Нарушение opt-in или приватности.
+- Preflight refusal ошибочно возвращает 0/1/2, raw `tzim` exit code пробрасывается либо precedence не определён/не проверен.
 - Отсутствует значимая часть final-SHA tests.
 
 ### Medium/Low
@@ -287,8 +292,11 @@ Merge/Release performed by coder: no
 | Файл меняется во время обработки | Critical | Stability checks, race tests, safe diagnostics |
 | Hard-link siblings | High/Critical | Default skip |
 | Повторная обработка/retry storm | High | State invalidation и manual retry после failure |
-| Несовместимый `tzim` JSON/CLI | High | Version adapter и fail-closed behavior |
-| Prompt в scheduler | High | DEVNULL/non-TTY tests |
+| Несовместимый `tzim` JSON/CLI | High | Restricted version adapter и fail-closed behavior |
+| Выдуманные capabilities/refusal reasons | High | Никакого human output/`note` parsing; generic `skipped_by_tzim` |
+| Ошибочный вызов пишущего `tzim --dry-run` | High | Read-only local planner и invocation-counter tests |
+| Ложный success/коллизия exit codes | High | Собственный контракт, code 6 preflight, precedence tests |
+| Prompt в scheduler | High | DEVNULL/no-PTY/non-TTY tests |
 | Silent/unsafe update | Critical | MVP notify-only, позже explicit controlled update |
 | Cloud-sync конфликт | High | Default disallow и явное предупреждение |
 | Утечка путей через logs/telemetry | High | Local-only logs, retention, no telemetry |
@@ -332,10 +340,24 @@ Merge/Release performed by coder: no
 
 1. Перенести `SPEC.md` и этот документ в новый репозиторий без изменения технических решений.
 2. Создать issues AT-01…AT-09 с фактическими GitHub номерами и acceptance criteria.
-3. Назначить coder только MVP / v0.1, используя §12 технического ТЗ и шаблон §11 этого документа.
+3. Назначить coder только MVP / v0.1, используя §17 технического ТЗ и шаблон §11 этого документа.
 4. Установить обязательные final-head evidence и safety gates до начала implementation.
 5. Подготовить initial risk register и review checklist.
 6. Не назначать scheduler, TUI, controlled update или Qt до принятия соответствующих предыдущих этапов.
 7. Не писать product code и не вносить изменения в `tzim`.
 
 Первый управленческий результат — не «проект начат», а комплект конкретных issues, одно полное задание coder и проверяемый план приёмки MVP.
+
+## 17. Решения по findings P-01…P-03
+
+### P-01 — нет полного machine capabilities/reasons API
+
+Finding принят как ограничение текущего `tzim`, но **не как implementation blocker restricted MVP**. Default mode делегируется бинарнику без `--formats`; состав default set не отображается; `transforms` в MVP запрещён; human `--info`/`--list-formats`/`note` не парсится; unknown version/JSON contract даёт `incompatible_tzim`; `skipped_by_tzim` остаётся generic. Менеджер создаёт отдельный upstream issue для будущего capabilities и structured reason codes API, не включая его в текущий `tzim` PR.
+
+### P-02 — `tzim --dry-run` создаёт temporary candidate
+
+Finding принят. `auto-tzim` scan/dry-run переопределён как локальный read-only candidate planner, который не запускает file-processing `tzim`, не передаёт target paths/`--dry-run` и не пишет в target root. Для adapter допустим только `tzim --version`. Вызов `tzim --dry-run` запрещён в MVP. Candidate plan не обещает eligibility/gain. Apply требует предварительного plan ID/hash; temporary writes реального apply и возможные crash orphans документируются без утверждения, что `tzim --dry-run` read-only.
+
+### P-03 — неполный/неоднозначный exit contract
+
+Finding принят. Добавлены code 6 для preflight/policy refusal, 7 для internal error, 8 для lock, 130/143 для SIGINT/SIGTERM. Code 4 не используется `auto-tzim`; raw `tzim` codes только сохраняются в history. Зафиксированы preflight order и precedence `130/143 > 7 > 2 > 8 > 3 > 6 > 5 > 1 > 0`. Менеджер обязан потребовать behavioral tests каждого кода и отсутствие ложного 0 при first-run gate, pause или insufficient free space.
