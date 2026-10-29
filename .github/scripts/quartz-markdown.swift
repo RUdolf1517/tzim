@@ -16,36 +16,11 @@ let outputURL = URL(fileURLWithPath: CommandLine.arguments[2])
 let title = CommandLine.arguments[3]
 
 do {
+    // Print the registered Markdown source verbatim. Keeping the source syntax
+    // visible avoids dropping or fetching any image, link, or HTML content.
     let markdown = try String(contentsOf: inputURL, encoding: .utf8)
-    let parsing = AttributedString.MarkdownParsingOptions(interpretedSyntax: .full)
-    let parsed = try NSAttributedString(
-        markdown: markdown,
-        options: parsing,
-        baseURL: inputURL.deletingLastPathComponent()
-    )
-    let attributed = NSMutableAttributedString(attributedString: parsed)
-    var missingFontRanges: [NSRange] = []
-    attributed.enumerateAttribute(.font, in: NSRange(location: 0, length: attributed.length)) { value, range, _ in
-        if value == nil {
-            missingFontRanges.append(range)
-        }
-    }
-    for range in missingFontRanges {
-        attributed.addAttribute(.font, value: NSFont.systemFont(ofSize: 10), range: range)
-    }
-
-    var localLinkRanges: [NSRange] = []
-    attributed.enumerateAttribute(.link, in: NSRange(location: 0, length: attributed.length)) { value, range, _ in
-        let url = (value as? URL) ?? (value as? String).flatMap(URL.init(string:))
-        if url?.isFileURL == true {
-            localLinkRanges.append(range)
-        }
-    }
-    // Checkout-local paths are not useful links in a standalone PDF. Keep their
-    // visible Markdown text, while leaving web URLs clickable and portable.
-    for range in localLinkRanges {
-        attributed.removeAttribute(.link, range: range)
-    }
+    let font = NSFont.monospacedSystemFont(ofSize: 9, weight: .regular)
+    let attributed = NSAttributedString(string: markdown, attributes: [.font: font])
 
     let page = CGRect(x: 0, y: 0, width: 612, height: 792)
     let content = CGRect(x: 54, y: 54, width: 504, height: 684)
@@ -73,14 +48,18 @@ do {
 
     guard let textContainer = textView.textContainer,
           let layoutManager = textView.layoutManager else {
-        fail("AppKit could not create a Markdown text layout")
+        fail("AppKit could not create a Markdown source text layout")
     }
     layoutManager.ensureLayout(for: textContainer)
     let usedRect = layoutManager.usedRect(for: textContainer)
     let documentHeight = max(content.height, ceil(usedRect.maxY + 12))
     textView.setFrameSize(NSSize(width: content.width, height: documentHeight))
 
-    let printInfo = NSPrintInfo()
+    let printOptions: [NSPrintInfo.AttributeKey: Any] = [
+        .jobDisposition: NSPrintInfo.JobDisposition.save,
+        .jobSavingURL: temporaryURL,
+    ]
+    let printInfo = NSPrintInfo(dictionary: printOptions)
     printInfo.paperSize = page.size
     printInfo.leftMargin = content.minX
     printInfo.rightMargin = page.width - content.maxX
@@ -91,20 +70,15 @@ do {
     printInfo.isHorizontallyCentered = false
     printInfo.isVerticallyCentered = false
 
-    let operation = NSPrintOperation.pdfOperation(
-        with: textView,
-        inside: textView.bounds,
-        toPath: temporaryURL.path,
-        printInfo: printInfo
-    )
+    let operation = NSPrintOperation(view: textView, printInfo: printInfo)
     operation.showsPrintPanel = false
     operation.showsProgressPanel = false
     guard operation.run() else {
-        fail("AppKit/Quartz PDF operation did not produce a PDF")
+        fail("AppKit/Quartz print operation did not produce a PDF")
     }
 
     guard FileManager.default.fileExists(atPath: temporaryURL.path) else {
-        fail("AppKit/Quartz PDF operation returned success but produced no PDF")
+        fail("AppKit/Quartz print operation returned success but produced no PDF")
     }
     if FileManager.default.fileExists(atPath: outputURL.path) {
         try FileManager.default.removeItem(at: outputURL)
@@ -112,10 +86,10 @@ do {
     try FileManager.default.moveItem(at: temporaryURL, to: outputURL)
 
     print("title=\(title)")
-    print("local_links_rendered_as_text=\(localLinkRanges.count)")
-    print("producer=AppKit NSTextView + NSPrintOperation.pdfOperation with native Quartz PDF output")
-    print("creator=AppKit/Quartz native Markdown PDF operation")
-    print("pages_written_with=AppKit NSPrintOperation.pdfOperation")
+    print("source_representation=verbatim Markdown, monospaced 9pt")
+    print("producer=AppKit NSTextView + NSPrintOperation with native Quartz PDF output")
+    print("creator=AppKit/Quartz native Markdown source print-to-PDF")
+    print("pages_written_with=AppKit NSTextView pagination")
 } catch {
     fail("Quartz Markdown rendering failed: \(error)")
 }
