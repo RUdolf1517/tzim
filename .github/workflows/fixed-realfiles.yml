@@ -117,19 +117,30 @@ jobs:
             --manifest "$RUNNER_TEMP/fixed-pdf-ubuntu/generation.json" \
             2>&1 | tee "$RUNNER_TEMP/fixed-pdf-ubuntu/generation.log"
 
+      - name: Stage Ubuntu PDF generation evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/fixed-pdf-ubuntu"
+          staging="$RUNNER_TEMP/fixed-pdf-ubuntu-artifact"
+          mkdir -p "$staging/outputs"
+          for name in source-identity.txt measurement-environment.txt producer-versions.txt generation.json generation.log; do
+            if [[ -f "$root/$name" ]]; then
+              cp "$root/$name" "$staging/$name"
+            fi
+          done
+          shopt -s nullglob
+          for file in "$root"/outputs/*.pdf "$root"/outputs/generation-commands.json; do
+            cp "$file" "$staging/outputs/"
+          done
+
       - name: Retain generation manifest, PDFs and tool output for the measurement job
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fixed-pdf-ubuntu
-          path: |
-            ${{ runner.temp }}/fixed-pdf-ubuntu/source-identity.txt
-            ${{ runner.temp }}/fixed-pdf-ubuntu/measurement-environment.txt
-            ${{ runner.temp }}/fixed-pdf-ubuntu/producer-versions.txt
-            ${{ runner.temp }}/fixed-pdf-ubuntu/generation.json
-            ${{ runner.temp }}/fixed-pdf-ubuntu/generation.log
-            ${{ runner.temp }}/fixed-pdf-ubuntu/outputs/*.pdf
-            ${{ runner.temp }}/fixed-pdf-ubuntu/outputs/generation-commands.json
+          path: ${{ runner.temp }}/fixed-pdf-ubuntu-artifact/
           retention-days: 1
           if-no-files-found: error
 
@@ -183,18 +194,30 @@ jobs:
             --manifest "$RUNNER_TEMP/fixed-pdf-quartz/generation.json" \
             2>&1 | tee "$RUNNER_TEMP/fixed-pdf-quartz/generation.log"
 
+      - name: Stage Quartz PDF generation evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/fixed-pdf-quartz"
+          staging="$RUNNER_TEMP/fixed-pdf-quartz-artifact"
+          mkdir -p "$staging/outputs"
+          for name in source-identity.txt toolchain.txt generation.json generation.log; do
+            if [[ -f "$root/$name" ]]; then
+              cp "$root/$name" "$staging/$name"
+            fi
+          done
+          shopt -s nullglob
+          for file in "$root"/outputs/*.pdf "$root"/outputs/generation-commands.json; do
+            cp "$file" "$staging/outputs/"
+          done
+
       - name: Retain generation manifest, PDFs and tool output for the measurement job
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fixed-pdf-quartz
-          path: |
-            ${{ runner.temp }}/fixed-pdf-quartz/source-identity.txt
-            ${{ runner.temp }}/fixed-pdf-quartz/toolchain.txt
-            ${{ runner.temp }}/fixed-pdf-quartz/generation.json
-            ${{ runner.temp }}/fixed-pdf-quartz/generation.log
-            ${{ runner.temp }}/fixed-pdf-quartz/outputs/*.pdf
-            ${{ runner.temp }}/fixed-pdf-quartz/outputs/generation-commands.json
+          path: ${{ runner.temp }}/fixed-pdf-quartz-artifact/
           retention-days: 1
           if-no-files-found: error
 
@@ -299,13 +322,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Download generated PDFs and Tzim binary
+      - name: Download the fixed Ubuntu PDF generation evidence
         continue-on-error: true
         uses: actions/download-artifact@v5
         with:
-          pattern: fixed-pdf-*
-          path: ${{ runner.temp }}/pdf-artifacts
-          merge-multiple: false
+          name: fixed-pdf-ubuntu
+          path: ${{ runner.temp }}/pdf-artifacts/fixed-pdf-ubuntu
+
+      - name: Download the fixed Quartz PDF generation evidence
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          name: fixed-pdf-quartz
+          path: ${{ runner.temp }}/pdf-artifacts/fixed-pdf-quartz
 
       - name: Download the actual Tzim binary
         uses: actions/download-artifact@v5
