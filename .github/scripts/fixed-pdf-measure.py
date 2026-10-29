@@ -256,6 +256,48 @@ def main() -> int:
                     "stderr": object_output.stderr,
                 }
             row["qpdf_zero_offset_objects"] = object_diagnostics
+            try:
+                import pymupdf
+
+                document = pymupdf.open(source_path)
+                try:
+                    references = []
+                    reference_patterns = {
+                        f"{object_number} {generation}": re.compile(
+                            rf"(?<!\d){object_number}\s+{generation}\s+R(?!\d)"
+                        )
+                        for object_number, generation in zero_offset_objects
+                    }
+                    for referencing_xref in range(1, document.xref_length()):
+                        try:
+                            object_text = document.xref_object(referencing_xref, compressed=False)
+                        except Exception:
+                            continue
+                        targets = [
+                            object_id for object_id, pattern in reference_patterns.items()
+                            if pattern.search(object_text)
+                        ]
+                        if targets:
+                            references.append({
+                                "referencing_object": referencing_xref,
+                                "targets": targets,
+                                "object": object_text,
+                            })
+                    row["pymupdf_zero_offset_reference_diagnostic"] = {
+                        "page_count": len(document),
+                        "xref_length": document.xref_length(),
+                        "zero_offset_objects": {
+                            object_id: document.xref_object(int(object_id.split()[0]), compressed=False)
+                            for object_id in object_diagnostics
+                        },
+                        "references": references,
+                    }
+                finally:
+                    document.close()
+            except Exception as error:
+                row["pymupdf_zero_offset_reference_diagnostic"] = {
+                    "error": f"{type(error).__name__}: {error}"
+                }
         if pdf_audit is None:
             status, reason, info = (
                 "measurement_dependency_failed",
@@ -490,6 +532,10 @@ def main() -> int:
                 object_text if object_error == "(empty)" else f"{object_text}\n{object_error}",
                 "```",
             ])
+        pymupdf_xrefs = row.get("pymupdf_zero_offset_reference_diagnostic")
+        if pymupdf_xrefs:
+            xref_text = diagnostic_excerpt(json.dumps(pymupdf_xrefs, indent=2, ensure_ascii=False), limit=5000)
+            qpdf_diagnostics.extend(["- PyMuPDF references to zero-offset objects:", "", "```json", xref_text, "```"])
         qpdf_diagnostics.append("")
 
     if diagnostics:
