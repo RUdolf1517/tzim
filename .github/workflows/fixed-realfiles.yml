@@ -32,6 +32,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: fixed-realfiles-${{ github.event.pull_request.head.sha || github.sha }}
@@ -457,6 +458,42 @@ jobs:
             exit 1
           fi
 
+      - name: Publish fixed PDF measurement summary on the pull request
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/fixed-pdf-evidence"
+          report="$RUNNER_TEMP/fixed-pdf-report.md"
+          {
+            echo "# Fixed #57 PDF measurement"
+            echo
+            echo "- Source SHA: \`${{ needs.build-tzim.outputs.source_sha }}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Raw rows and independently recomputed aggregate: artifact \`fixed-pdf-evidence\`."
+            echo "- This summary reports the fixed-input workflow output; it is not an acceptance claim based only on a green job."
+            echo
+            if [ -f "$evidence/run/summary.md" ]; then
+              cat "$evidence/run/summary.md"
+            else
+              echo "Measurement summary was not produced; see the raw logs and evidence artifact."
+            fi
+            echo
+            echo "## Registered generation failures and measurement blockers"
+            found=0
+            for log in "$evidence/freeze.log" "$evidence/measurement.log"; do
+              if [ -f "$log" ] && grep -E '^(FAILED |BLOCKER:)' "$log"; then
+                found=1
+              fi
+            done
+            if [ "$found" -eq 0 ]; then
+              echo "No registered generation failure or measurement blocker was reported."
+            fi
+          } > "$report"
+          bash .github/scripts/ci-report.sh "$report" fixed-pdf report full
+
   fits-measurement:
     name: measure the frozen 14-survey FITS set
     runs-on: ubuntu-24.04
@@ -629,3 +666,55 @@ jobs:
             || "${{ steps.recompute.outcome }}" != "success" ]; then
             exit 1
           fi
+
+      - name: Publish fixed FITS measurement summary and fetch owner actions
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/fixed-fits-evidence"
+          report="$RUNNER_TEMP/fixed-fits-report.md"
+          {
+            echo "# Fixed #59 FITS measurement"
+            echo
+            echo "- Source SHA: \`${{ needs.build-tzim.outputs.source_sha }}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Raw rows and independently recomputed aggregate: artifact \`fixed-fits-evidence\`."
+            echo "- This summary reports the fixed-input workflow output; it is not an acceptance claim based only on a green job."
+            echo
+            if [ -f "$evidence/run/summary.md" ]; then
+              cat "$evidence/run/summary.md"
+            else
+              echo "Measurement summary was not produced; see the raw logs and evidence artifact."
+            fi
+            echo
+            echo "## Fixed-product fetch failures and required owner actions"
+            if [ -f "$evidence/run/raw-rows.jsonl" ]; then
+              python3 - "$evidence/run/raw-rows.jsonl" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          rows = [json.loads(line) for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() if line.strip()]
+          failures = [row for row in rows if row.get("fetch_status") != "downloaded"]
+          if not failures:
+              print("No fixed FITS product fetch failures were recorded.")
+          for row in failures:
+              print(f"- Product: `{row.get('product_id')}`")
+              print(f"  - Source identity: `{row.get('source_uri')}`")
+              print(f"  - Exact requested URL: `{row.get('requested_url')}`")
+              print(f"  - Error: {row.get('fetch_error')}")
+              print(f"  - Needed owner action: {row.get('needed_owner_action') or 'not recorded'}")
+          PY
+            else
+              echo "Raw FITS rows are unavailable; inspect the retained fetch log and source manifest."
+            fi
+            echo
+            if [ -s "$evidence/run/blockers.txt" ]; then
+              echo "## Measurement blockers"
+              cat "$evidence/run/blockers.txt"
+            fi
+          } > "$report"
+          bash .github/scripts/ci-report.sh "$report" fixed-fits report full
