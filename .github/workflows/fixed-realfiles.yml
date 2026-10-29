@@ -22,6 +22,7 @@ on:
       - ".github/scripts/build-requirements.txt"
       - ".github/scripts/measure-requirements.txt"
       - ".github/workflows/fixed-realfiles.yml"
+      - ".github/workflows/measure-repro.yml"
       - "README.md"
       - "CHANGELOG.md"
       - "docs/guarantees.md"

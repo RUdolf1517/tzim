@@ -149,7 +149,7 @@ fn parse(data: &[u8]) -> Result<FlacFile> {
             if seektable_index.replace(blocks.len()).is_some() {
                 return Err(refusal("more than one SEEKTABLE block"));
             }
-            if len % 18 != 0 {
+            if !len.is_multiple_of(18) {
                 return Err(refusal("SEEKTABLE length is not a multiple of 18 bytes"));
             }
         }

@@ -146,18 +146,22 @@ jobs:
         # numbers were recorded with cannot slip in. The versions this installs
         # are written to the evidence below.
         run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check --require-hashes \
-            setuptools==75.8.0 \
-            --hash=sha256:e3982f444617239225d675215d51f6ba05f845d4eec313da4418fdbb56fb27e3 \
-            wheel==0.45.1 \
-            --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
-          python -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
-            -r .github/scripts/measure-requirements.txt
+          set -o pipefail
           {
-            python -VV
-            python -m pip freeze
-          } | tee evidence/environment.txt
+            set -euo pipefail
+            python -m pip --version
+            python -m pip install --disable-pip-version-check --require-hashes \
+              setuptools==75.8.0 \
+              --hash=sha256:e3982f444617239225d675215d51f6ba05f845d4eec313da4418fdbb56fb27e3 \
+              wheel==0.45.1 \
+              --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+            python -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
+              -r .github/scripts/measure-requirements.txt
+            {
+              python -VV
+              python -m pip freeze
+            } | tee evidence/environment.txt
+          } 2>&1 | tee "${RUNNER_TEMP}/measure-repro.log"
 
       - name: Verify corpus selection and measurement guard tests
         # Runs before the corpus is touched, so a broken guard is not buried
