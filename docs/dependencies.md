@@ -3,10 +3,10 @@
 Related: [size budget](size-budget.md) · [formats](formats.md)
 
 Tzim exists partly as a reaction to file optimizers with enormous dependency trees. Every dependency is
-therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. Two
-exceptions have been granted and both are on this page: `indicatif`, added in v0.10 for the progress line and
-**removed again in v0.13** (§2.9), and `jpeg-decoder`, added in v0.13 to put a decoder that shares no code
-with this repository on the far side of the JPEG comparison (§2.10).
+therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. `indicatif`,
+added in v0.10 for the progress line, was **removed in v0.13** (§2.9). `jpeg-decoder` is the independent JPEG
+verifier (§2.10). The owner later authorized the non-default #79 FLAC feature, which adds `flacenc`,
+`claxon`, and `md-5`; these optional dependencies are present only when that feature is selected.
 
 The project targets **Rust 1.88** (edition 2021). The floor is set by the optional Zopfli encoder; the PNG
 decoder requires 1.81 and `flate2` requires 1.67. Keeping the floor at 1.88 means one toolchain for
@@ -97,6 +97,9 @@ Additional requirements:
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
 | `jpeg-decoder` | yes | `jpeg-v1` (included in `default` under #82) | independent pixel verification of JPEG candidates | release default and `jpeg-v1` builds |
+| `flacenc` | yes | non-default feature `flac` | FLAC frame encoder | only with `flac` |
+| `claxon` | yes | non-default feature `flac` | independent FLAC decoder/PCM verifier | only with `flac` |
+| `md-5` | yes | non-default feature `flac` | STREAMINFO MD5 over decoded PCM | only with `flac` |
 
 Every direct dependency remains behind a feature: a build with
 `--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
@@ -104,12 +107,12 @@ unconditional crate any more — the progress line, which used to be one (§2.9)
 `src/progress.rs` again. Under #82 the release default includes `jpeg-v1`; only deliberately narrowed builds
 without that feature omit the independent JPEG verifier.
 
-The JPEG, ICO, TIFF, zlib and FITS handlers add code, not crates. **v0.4, v0.6, v0.7, v0.9 and v0.14 added
-none**: §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a
-codec that was already in the tree. FITS (§2.11) needs a gzip member and its inflater, both of which `flate2`
-already provides, so it is the first format since v0.9 that went through §1 and was granted nothing. **v0.10 added one** for the progress line and **v0.13 removed it** (§2.9);
+The JPEG, ICO, TIFF, zlib, PDF and FITS handlers add no format-specific dependency; PDF uses the existing
+`flate2` zlib path, and FITS uses `flate2` plus `crc32fast`. Historically, **v0.4, v0.6, v0.7, v0.9 and
+v0.14 added none**. The unreleased #84 FLAC follow-up adds the three crates in §2.7, all behind `flac` and
+outside `default`. **v0.10 added `indicatif`** for the progress line and **v0.13 removed it** (§2.9);
 **v0.13 added `jpeg-decoder`** for the `jpeg-v1` feature after the argument in §2.10. Each grant is argued on
-its own, and the next candidate still has to answer every question in §1.
+its own, and no new dependency is enabled in the default build.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 
@@ -140,27 +143,28 @@ instead of using a vetted crate.
   therefore used for *verification*, never for the transformation — the distinction the first bullet above
   turns on, and the reason v0.4 needed no crate even though v0.13 uses one.
 
-### 2.7 FLAC: the crates it would have needed
+### 2.7 FLAC: the opt-in dependency set authorized by #79
 
-**Historical FLAC refusal; #79 now authorizes a non-default opt-in implementation.** The audit measured 0.4 %
-on musical material and 0 % on files already written at `flac -8`, while the encoder and independent decoder
-were estimated to add 150–300 KiB ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)).
-Those figures are retained as history, not current size/speed evidence. The table records the earlier candidate
-review; #79 must re-review maintained versions, licences, unsafe/build requirements and transitive dependencies
-before adding them.
+The historical audit measured 0.4 % on musical material and 0 % on files already written at `flac -8`, while
+the encoder and independent decoder were estimated to add 150–300 KiB
+([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)). Those values remain
+historical, not current size/speed evidence. The owner authorized #79 despite that result. The unreleased #84
+implementation pins the reviewed versions below behind `flac`; none is enabled in `default`.
 
-| Crate | Version at audit | Licence | Size | Role | Why it is the right one |
-| --- | --- | --- | --- | --- | --- |
-| `flacenc` | 0.5.1 | Apache-2.0 | ~10 k lines | encoder | the only maintained pure-Rust FLAC encoder; no C, no `build.rs` beyond `built`; with `default-features = false` the `log`, `serde` and `crossbeam-channel` features are dropped, which leaves `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro` |
-| `claxon` | 0.4.3 | Apache-2.0 | ~2.2 k lines | verification decoder | a different implementation by a different author, with no dependencies of its own — the independence requirement of [guarantees §2.6](guarantees.md#26-verification-independence) |
-| `md-5` | 0.10.6 | MIT OR Apache-2.0 | ~400 lines | stream MD5 | RustCrypto; already a dependency of `flacenc`, so it adds no crate to the tree |
+| Crate | Locked version | Licence | Role | Selected configuration and dependency effect |
+| --- | --- | --- | --- | --- |
+| `flacenc` | 0.5.1 | Apache-2.0 | frame encoder | `default-features = false`; no `log`, `serde`, or `crossbeam-channel`. Mandatory dependencies are `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro`; its `built` build dependency emits compile-time package metadata only. |
+| `claxon` | 0.4.3 | Apache-2.0 | independent decoder and PCM verifier | Different implementation/author from the writer; no runtime dependencies of its own. |
+| `md-5` | 0.10.6 | MIT OR Apache-2.0 | STREAMINFO MD5 over decoded PCM | Also required by `flacenc`; shared rather than duplicated in the dependency graph. |
 
-`flacenc` can decode as well, and using its own decoder for verification is explicitly rejected: the encoder
-would be confirming itself, which is the failure mode the independence rule exists to prevent. The same
-reasoning rejects `flacenc`'s `decode` feature even as a convenience.
+`flacenc` can decode as well, but its decoder is not used for verification: the writer must not confirm
+itself. The independent Claxon path compares decoded PCM and checks a nonzero input STREAMINFO MD5; the
+handler also validates frame sequence/statistics and retained metadata. The features and lock graph are present
+in the branch, but no local Rust compiler is available, so Cargo has not validated the lockfile or built the
+code yet. CI must verify compilation/tests and `cargo deny` before these dependencies are accepted.
 
-Binary cost is unmeasured, and the budget will not be raised in advance: the feature matrix in
-[size-budget §3](size-budget.md#3-feature-matrix) is where the number will appear.
+Binary cost and current size/speed/gain are unmeasured; the historical estimate is not a result. The feature
+matrix in [size-budget §3](size-budget.md#3-feature-matrix) is where a measured number will appear.
 
 ---
 

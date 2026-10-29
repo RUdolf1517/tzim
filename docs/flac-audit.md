@@ -1,6 +1,6 @@
 # FLAC: the audit behind the contract
 
-Related: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) · [formats](formats.md) ·
+Related: [guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FLAC — the audit that a contract is allowed to follow. It exists because the format
@@ -211,7 +211,7 @@ of a 30 MB track. Metadata removal is not a reason to support a format.
 
 ### 7.3 What happens to the work that was done
 
-The contract stays ([guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)). At the time of this
+The contract stays ([guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in)). At the time of this
 audit the disposition was to refuse the format; the owner later superseded that decision with #79's opt-in
 implementation scope. The analysis and measured numbers remain historical context, not a veto on #79 and not
 current size/speed evidence. Until #79's independent runtime verification and acceptance evidence pass, the

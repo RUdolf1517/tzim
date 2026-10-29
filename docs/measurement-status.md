@@ -5,34 +5,44 @@ This is a living management checklist, not a completed execution audit or a rele
 
 ## PR #84 execution status — 2026-10-29
 
-No supplemental #57 PDF or #59 survey-FITS measurement has been run for this PR. The #82 JPEG runtime
-measurement was run in CI: it uses a deterministic 62-file selection (1,399,119 input bytes), and the exact-SHA
-report, selection manifest and raw per-run results are retained in the `jpeg-runtime-<source SHA>` artifact.
-That JPEG result is not PDF or FITS evidence. The #59 `fitsverify` CI gate exercises the existing fixtures; it is
-not validation of the missing full-size survey sample. No qualified survey manifest or HEASARC validation for
-that sample is present. The local sandbox has no `cargo`, `rustc`, `qpdf`, `mutool`, `fitsverify` or `funpack`
-executable; Rust builds/tests and the available fixture gates ran in CI. The existing PDF/FITS results below and
-in their audits remain historical; they do not satisfy the newly required real-toolchain PDF sample or full-size
-survey FITS sample. No baseline, threshold or historical result was changed to fill that gap.
+The owner has fixed the #57/#59 source identities and protocol in PR comment
+[6498702204](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204). The exact 21-output PDF set and
+14-product FITS set are now implemented as fixed-manifest workflows in
+[`.github/workflows/fixed-realfiles.yml`](../.github/workflows/fixed-realfiles.yml); no input is selected, dropped,
+or substituted based on size or gain. **Neither workflow has run for this source revision yet**, so this is not
+measurement evidence. The existing #82 JPEG runtime artifact and #59 fixture gate are separate evidence and do
+not satisfy #57 or #59. No threshold, baseline, old aggregate, #78 policy, or #82/#83 behavior was changed.
 
-- **#57 blocker:** there is no 20–50-file, pre-registered list of real-toolchain PDFs with per-file source
-  provenance and redistribution/permission basis. The audit itself records why its earlier three corpora did
-  not supply that sample. **Owner action:** provide or approve a source manifest for 20–50 redistributable
-  real-toolchain PDFs (source URL/revision, producer and permission/licence for each); then run the existing
-  measurement with qpdf and MuPDF on a provisioned runner.
-- **#59 blocker:** no full-size published survey FITS products with a qualified source/permission manifest or
-  pre-registered selection are present; the historical 178-file sample includes small cutouts. **Owner action:**
-  provide or approve the survey product source and pre-registered selection (URLs, product identifiers and
-  permission/licence), then run the existing two-tier measurement with `fitsverify`, `funpack` and the array /
-  header oracle on a provisioned runner.
-- **#79 blocker:** the non-default FLAC path is authorized, but this iteration could not re-review/build the
-  maintained encoder, add the independent runtime decoder, or run external checks: Rust/Cargo and `flac`/
-  `metaflac` are absent, and no permission-qualified PCM corpus manifest is staged. **Owner action:** approve a
-  provenance/licence-qualified PCM corpus and provision one pinned runner with Rust plus `flac`/`metaflac`; then
-  implement and measure the authorized full path without changing the historical baseline.
-- **#80 blocker:** it remains conditional on #57's new sample and disposition; no PDF handler or transform was
-  added. **Owner action:** provide the #57 qualified measurement and record its disposition before authorizing
-  implementation of the narrow `FlateDecode` path.
+- **#57 — pending execution, not a source-manifest blocker.** The frozen set is 21 outputs: six fixed Markdown
+  documents, each produced by Pandoc/pdflatex, Markdown→DOCX→LibreOffice, and native AppKit/Quartz, plus three
+  scan-derived PDFs from the pinned OCRmyPDF source. The workflow must finish generation before freezing the
+  expanded manifest and measuring. This sandbox lacks Pandoc, pdflatex, LibreOffice, Swift/Quartz, PyMuPDF,
+  qpdf, and Rust/Cargo; the earlier local probe produced 0/15 Ubuntu PDFs because its producer/decoder tools
+  were absent. The pinned scan archive and three source-image hashes were checked, but no measurement PDFs or
+  qpdf/MuPDF results exist. The workflow must retain all 21 rows and their exact failures if a producer fails.
+- **#59 — pending execution, not a source-manifest blocker.** The frozen set is the exact 14 TESS, GALEX and
+  ROSAT products in comment `6498702204`, including full products only. No substitutes, cutouts, or repairs are
+  allowed. A local HTTPS HEAD probe for TESS/GALEX/ROSAT ended in TLS EOF; this is not a completed GET and does
+  not establish that a fixed source is unavailable on the pinned runner. The workflow performs exact GETs,
+  records redirects/headers/hashes and retains a failed row plus one exact owner action for any failed product.
+  The local sandbox lacks Astropy, NumPy, CFITSIO `fitsverify`/`funpack`, and Rust/Cargo; no fixed-set FITS
+  measurements have been run.
+- **#79 — implementation present; validation pending.** The FLAC handler is behind the non-default `flac`
+  feature, uses flacenc plus independent Claxon PCM decoding/STREAMINFO checks, remaps seekpoints, and refuses
+  distinct source seekpoints that collapse to one output frame. Reserved sample-size codes 3 and 7 have a
+  regression test. No Rust compilation, test, external `flac`/`metaflac`, fuzz, corpus, or actual feature-size/
+  speed/gain result is available in this sandbox. The lockfile was hand-edited because Cargo is absent here;
+  CI's branch lockfile job must regenerate it with `cargo generate-lockfile`, and the all-features locked build
+  and tests must validate the resulting graph.
+- **#80 — implementation present; validation and #57 measurement pending independently.** The non-default
+  `pdf` feature supports the narrow classic-xref and supported xref-stream paths, preserves existing `/ObjStm`
+  bytes, validates type-2 xref member mappings and bounds decoded object streams at 8 MiB. It does **not** wait
+  for #57 to be implemented. No Rust build/test or qpdf/MuPDF run is available locally; the frozen #57 run is
+  still required for acceptance evidence.
+
+The sandbox has no local Cargo/Rust toolchain, so none of the newly edited Rust code, lockfile graph, or Rust
+regressions has been compiled or tested here. CI must provide that evidence. A green build/test result alone
+will not be described as proof of #57/#59 measurements or rendered/decoded equivalence.
 
 ## Evidence and limits
 
@@ -128,16 +138,15 @@ separately, and the final release inventory must name the actual release SHA.
 
 ## Acceptance matrix
 
-| Issue / requirement | Available evidence | Open gap / disposition |
+| Issue / requirement | Available evidence in this iteration | Open gap / disposition |
 | --- | --- | --- |
-| #57: PDF distribution and refusal decision | PDF audit §9, retained rows, and complete published reports | Owner selected 3A: investigate the four result-table differences before full PDF acceptance; baselines stay unchanged. The general opt-in release makes no resolved-acceptance claim |
-| #57: corpus provenance and real-toolchain sample | Three full-SHA repository revisions, archive/file hashes, and a producer breakdown | Owner selected 5C: the separate 20–50 document sample remains required for full admission, not for the general opt-in release |
-| #59: FITS distribution | FITS result-table cells reproduce; full-SHA input comparison is explicit | Owner selected 2C/3A: historical results are not release claims, and the five input-byte differences remain under investigation before full FITS acceptance |
-| #59: survey sample and archive checksums | Full-SHA repository/archive/file hashes; small-image sample | Owner selected 5C: the survey sample remains required for full admission, not for the general opt-in release |
-| #59: stop on any mismatch | Two failures and post-hoc exclusions disclosed in §8.2 | Owner selected 2C: the historical run is not used for acceptance or release/performance claims and is not retroactively called a revised pre-registration |
-| #59 / FITS release: HEASARC checks | #71/#72 accepted at `9de2b706`; #74 accepted in assigned scope; later candidate checks are reviewed separately | Owner selected a general opt-in release, not full admission. F-06 standard/arithmetic/unit/CI evidence is sufficient for that scope under 7A; full-admission gaps remain open |
-| #70: implementation | PR #69 merged; feature off by default | Owner selected 1A: #70 tracks implementation. It is not full format admission or a stability claim, and any closure is a separate owner action |
-| #41: audit tracker | Existing historical audit and linked work | Remains open pending constituent acceptance; this review does not verify every original finding |
+| #57: exact source set | Owner-fixed 21-output manifest in comment `6498702204`; generation and frozen-manifest scripts are in the branch | Workflow has not run for this source SHA. Retain all 21 rows, producer/tool identities, raw qpdf/Tzim output, first/middle/last render checks, and independent recomputation; do not claim measurements from CI status alone |
+| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT list in comment `6498702204`; fetch/measurement/recompute scripts are in the branch | Workflow has not run for this source SHA. Preserve failed rows with exact URL/error/one owner action; retain raw source hashes and tool output without uploading FITS bytes; do not substitute products |
+| #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seektable mapping, and regression tests are in this branch behind `flac` | Rust build/tests, external `flac`/`metaflac`, negative controls/fuzz, full-corpus and actual feature-size/speed/gain evidence remain pending |
+| #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, and tests are in this branch behind `pdf` | Independent of #57 implementation; Rust build/tests and frozen #57 qpdf/MuPDF measurement/render evidence remain pending |
+| #78 and #82/#83 | Existing accepted code and owner decisions were not changed in this iteration | Preserve them unless a concrete failure is demonstrated; no size threshold, baseline, prompt, or release default was changed |
+| #70: FITS implementation | PR #69 implementation and existing `fits` feature remain opt-in | This #59 measurement work does not close #70 or make a full FITS-admission claim |
+| #41: audit tracker | Historical audit and linked work remain available | This iteration does not claim every original finding is closed |
 
 The owner's exact decisions are retained in
 [Owner decisions for the next release scope](../handoff/iteration-fba3759/OWNER-DECISIONS.md). They do not close
@@ -155,9 +164,13 @@ The owner's exact decisions are retained in
 The owner has relayed assignments to a coder and an iteration has been delivered; no deadline is assumed.
 The manager owns product documentation and the acceptance report, not code or CI implementation.
 
-## Owner decisions for the general opt-in release
+## Historical owner decisions for the general opt-in release — superseded where noted for PR #84
 
-The owner selected **1A, 2C, 3A, 4A, 5C, 6B, 7A**. In summary:
+The earlier general-release decision selected **1A, 2C, 3A, 4A, 5C, 6B, 7A**. It remains part of the
+historical #72 record, but the owner's later PR #84 instructions supersede its #57/#59 sample-blocker and
+#80-waits-for-#57 procedural choices. For this PR, execute the fixed manifests in comment `6498702204`,
+implement #79 and #80 independently of the measurements, and continue unrelated work. Preserve #78 and #82/#83;
+no baseline/threshold changes, corpus commits, self-merge, self-close, or Release are authorized.
 
 1. This is a general release with FITS behind `--fits-tile`, not full/stable FITS admission. #70 remains an
    implementation tracker and is not closed automatically.

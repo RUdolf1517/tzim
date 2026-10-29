@@ -133,8 +133,9 @@ OPTIONS:
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
         --formats <LIST>       only process these formats: png, gzip, zip, ico,
-                               jpeg, tiff, zlib, fits; default builds enable
-                               JPEG V1; FITS needs --fits-tile
+                               jpeg, tiff, zlib, fits, flac, pdf; default builds
+                               enable JPEG V1; FLAC/PDF are optional features;
+                               FITS needs --fits-tile
         --fits-tile            FITS tile compression; single-file TTY asks
                                after verification (default No); otherwise
                                explicit opt-in.

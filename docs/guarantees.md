@@ -86,7 +86,7 @@ would suggest more than any of these delivers.
 
 | Level | Meaning | Used for |
 | --- | --- | --- |
-| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip, ZIP and FITS tile payloads (`flate2`, `miniz_oxide`), **JPEG pixels** (`jpeg-decoder`) when this build has the `jpeg-v1` feature, and the whole corpus through Pillow in the `third-party` job |
+| **V1 — independent decoder** | A decoder written by someone else, from the specification, with no knowledge of this codebase. | PNG and ICO pixels (`png` crate), gzip, ZIP and FITS tile payloads (`flate2`, `miniz_oxide`), **JPEG pixels** (`jpeg-decoder`) when this build has the `jpeg-v1` feature, FLAC PCM (`claxon`, independent of the `flacenc` writer), and the whole corpus through Pillow in the `third-party` job |
 | **V2 — separate reader** | Code in this repository, used only for reading, that the writer's output never passes through. | *Not used anywhere today.* |
 | **V3 — shared implementation** | The candidate is parsed by the same reader the handler used to build it. | ZIP structure, ICO directory, JPEG markers and JPEG coefficients |
 
@@ -97,6 +97,8 @@ would suggest more than any of these delivers.
 | zlib | V3 (own header reader) | **V1** (`flate2` decodes both streams; `Adler-32` recomputed here, not by the encoder) | A header misreading; the payload comparison and the checksum would still be independent |
 | ZIP | V3 (own central-directory reader) | **V1** per entry (`flate2` + recomputed CRC-32) | A structural field both sides misread; content is checked by an independent inflater and a checksum the writer had to compute from the bytes |
 | FITS | V3 (own card/header/table reader) | **V1** for external gzip inflation and CRC-32/ISIZE checks, **plus V3** for the shared `shuffle`/`unshuffle` permutation | A symmetric byte-permutation error can survive the in-binary check; external astropy/HEASARC evidence is separate and run-scoped |
+| FLAC | V3 (metadata/frame parser) | **V1** (`claxon` decodes both files; PCM samples and STREAMINFO MD5 are checked against the `flacenc` candidate) | Shared parsing or a defect common to independent decoders; external `flac -t`/`metaflac` and corpus checks remain separate evidence |
+| PDF | V3 (own object/xref parser) | Shared `flate2` zlib decode/re-encode check; qpdf and MuPDF are external run-scoped checks, not embedded or invoked by the binary | The in-process reader and inflater can share a defect; external parser/render evidence is required for acceptance |
 | ICO | V3 (own directory reader) | **V1** for embedded PNGs, byte comparison for bitmaps | A directory field both sides misread |
 | TIFF | V3 (own IFD walker; every tag value compared field by field) | **V1** for strips that were uncompressed — the original side is raw bytes and needs no decoder; **shared `flate2`** for strips that were already Deflate | A structural field both sides misread would pass. Unlike gzip, zlib and ZIP there is **no external checksum** anchoring the original side: those three carry a CRC-32, an Adler-32 or an ISIZE written by the original archiver, while TIFF strips carry none, so one `flate2` decode is compared with another `flate2` decode |
 | JPEG | V3 | **V3 for exact coefficients; V1 for pixels in release-default builds** (`jpeg-decoder`), plus V1 corpus checks in CI (Pillow) | A deliberately narrowed `--no-default-features` build without `jpeg-v1` has only the shared coefficient check; release builds run the independent pixel oracle inside `verify` |
@@ -148,7 +150,7 @@ every serious optimizer has it and users otherwise reach for a tool that removes
 | JPEG | `APP1` (Exif, XMP), `APP13` (Photoshop/IPTC), `COM` | `APP0` (JFIF density), `APP2` (ICC), `APP14` (Adobe colour transform), every other `APPn`, all quantization and Huffman tables, every DCT coefficient |
 | ICO / CUR | nothing of its own; embedded PNGs are stripped under the PNG rule | the directory, bitmap entries, every PNG chunk in the keep list above |
 | TIFF | the descriptive tags listed in [§4.8](#48-tiff-classic-baseline-strips--v07): `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC (33723), Photoshop (34377), `UserComment` (37510), `ImageSourceData` (37724), the Windows XP tags (40091–40095), GDAL metadata (42112) | colour, geometry, `Orientation`, ICC, strips, GDAL nodata (42113), unknown tags |
-| FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
+| FLAC (`flac` feature) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 | zlib | nothing: the header has no name, comment or timestamp, and `FLEVEL` describes the encoder | every byte of the header and the trailer |
 
 Rules that hold in every format:
@@ -719,20 +721,18 @@ does not match `RowsPerStrip` × row bytes for the last strip — all leave the 
 nothing on LZW (refused). This is the honest range: an uncompressed 8-bit RGB scan shrinks by roughly the
 entropy of its content, while a TIFF from a modern scanner is often already Deflate- or LZW-compressed.
 
-### 4.9. FLAC — refused after measurement
+### 4.9. FLAC — frame re-encoding (#79, non-default opt-in)
 
-**Historical status: refused after measurement; current implementation scope: #79 (non-default opt-in).**
-The audit behind the original decision is [flac-audit.md](flac-audit.md): a stronger encoder measured a
-**0.4 %** gain on musical material and **0 %** on files already written at `flac -8`, while encoder and
-independent decoder were estimated at **+150…300 KiB**. Those values remain historical and were not
-re-measured in this iteration. The owner has since authorized the opt-in implementation under #79 despite that
-result.
+**Implementation status: present behind the non-default `flac` feature in this unreleased PR branch; full
+format admission and performance claims remain pending.** The audit behind the earlier refusal is
+[flac-audit.md](flac-audit.md): it measured a **0.4 %** gain on musical material and **0 %** on files already
+written at `flac -8`, while encoder and independent decoder were estimated at **+150…300 KiB**. Those values
+remain historical and are not evidence for this implementation. The owner authorized #79 despite that result.
 
-This paragraph does **not** claim that the binary supports FLAC: no handler is present, and
-`--list-formats` does not name the format. The clauses below remain the required contract for #79. Runtime
-independent PCM checks, metadata/seektable tests, external references, corpus/fuzz evidence and actual
-size/speed/gain measurements are still outstanding; see [roadmap](roadmap.md) for the current blocker and
-owner action.
+The clauses below describe the current narrow handler contract; passing unit tests is not a full-corpus or
+release claim. Actual-binary CI, external `flac`/`metaflac`, negative controls, fuzzing, and fixed-manifest
+size/speed/gain measurements remain required before any broader admission or claim. See
+[measurement-status.md](measurement-status.md) for the exact run state.
 
 **Transformation.** Re-encode the audio frames with a better encoder. The decoded samples are identical;
 the frames, their lengths and the byte offsets that point at them are not, because a FLAC encoder is free
@@ -764,8 +764,9 @@ audio.
 
 **Allowed to change:** every frame; the frame headers' coded numbers and CRCs; `STREAMINFO`'s min/max block
 size and min/max frame size, which describe the frames and must be recomputed correctly; each `SEEKTABLE`
-point's byte offset, and only that — its sample number and its frame length are recomputed from the same
-sample position, and a point that cannot be resolved makes the file a refusal; the file length.
+point may be remapped to the new frame start at or before its original sample position, with that frame's byte
+offset and block length. If two distinct source points collapse onto one output frame, the file is refused rather
+than emitting duplicate seekpoints; the file length.
 
 **Verification.** The candidate is decoded with a decoder that is not the encoder (`claxon`, against
 `flacenc`; see [§2.6](#26-verification-independence)), and:
@@ -780,8 +781,8 @@ sample position, and a point that cannot be resolved makes the file a refusal; t
    order and at the same length;
 5. `STREAMINFO`'s sample rate, channel count, bit depth, total samples and MD5 are unchanged; its min/max
    block size and min/max frame size match the frames actually written;
-6. every `SEEKTABLE` point resolves to the frame that contains its sample number, and its frame length is
-   that frame's;
+6. every rewritten `SEEKTABLE` point names a valid output frame start, with the frame's actual block length;
+   distinct input points may not collapse to a duplicate output frame;
 7. the coded frame numbers cover the whole stream: no gap, no overlap, no frame beyond `total samples`;
 8. the candidate is strictly smaller than the input.
 
@@ -789,9 +790,9 @@ Clause 2 is what makes FLAC the strongest contract in this document: the compari
 and the only way to pass it with damaged audio is to damage the reference the same way.
 
 **Refused (skipped, exit 0):** a leading ID3v2 tag, a reserved or forbidden metadata block type, a zero
-sample rate or zero total samples, a bit depth the encoder does not implement, more than 8 channels, a
-`SEEKTABLE` point that does not resolve, a `STREAMINFO` that disagrees with the frames it precedes. The file
-is valid and is left untouched.
+sample rate or zero total samples, a bit depth the encoder does not implement, more than 8 channels, multiple
+`SEEKTABLE` blocks, a malformed/out-of-order seekpoint, two distinct seekpoints that collapse to one output
+frame, or a `STREAMINFO` that disagrees with the frames it precedes. The file is left untouched.
 
 **Corrupt (failed, exit 1):** a truncated stream, a frame CRC that does not match, a metadata length that
 runs past the end of the file, a decoder error in the input. All leave the original untouched.
@@ -905,25 +906,22 @@ the same reasoning.
 
 ---
 
-### 4.11. PDF — refused after measurement
+### 4.11. PDF — FlateDecode recompression (#80, non-default opt-in)
 
-**Historical result: refused; #57 supplemental measurement pending.** The 2 208-file audit in
+**Implementation status: present behind the non-default `pdf` feature in this unreleased PR branch; full
+format admission and performance claims remain pending.** The 2 208-file historical audit in
 [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) reported
 **1 009 (45.7 %)** in the narrow slice, a **0.08 %** median with level 9, 0.15 % with `zopfli`, and 0.59 % with
-the loosest instrument. That historical result applied the written *median < 1 % → refused* rule. The separately
-required 20–50-file real-toolchain sample was not assembled, so #57's current evidence-backed disposition is
-still pending. No threshold or old aggregate was changed. The historical 20.1 % forbidden-repacking number
-remains outside the allowed contract: flattening revisions, regenerating object streams and renumbering objects
-is a rewrite with a different risk class, not a recompress.
+the loosest instrument. Those old values and thresholds remain historical and unchanged. The owner selected a
+fixed 21-output real-toolchain #57 sample; the implementation is not conditional on that measurement, but
+broader acceptance and performance statements remain pending. The historical 20.1 % forbidden-repacking
+number remains outside this contract: flattening revisions, regenerating object streams and renumbering objects
+is a different risk class, not a recompress.
 
-Nothing in this section claims that the binary supports PDF: no PDF code exists, and `--list-formats` does not
-name it. The existing contract remains the scope boundary for any future handler; #80 is not started until
-#57's required sample and disposition exist.
-
-The shape of the opportunity is different from FLAC's and worth stating: a `FlateDecode` payload **is** an
-RFC 1950 stream, so the transformation is the one this document already specifies in
-[§4.10](#410-zlib-rfc-1950--v09), applied inside a container. There is no PDF codec to write and no new
-dependency.
+The handler recompresses only eligible FlateDecode streams. The feature is off by default. It supports a
+single-revision classic cross-reference table or a supported cross-reference stream; it never flattens revisions
+or serializes an object graph. A `FlateDecode` payload **is** an RFC 1950 stream, so the transformation reuses
+the zlib contract in [§4.10](#410-zlib-rfc-1950--v09), applied inside a container.
 
 **Transformation.** Inflate the payload of each `FlateDecode` stream, deflate it again at a higher level, and put
 a smaller stream back. Nothing else is re-encoded, renumbered or reordered.
@@ -931,60 +929,76 @@ a smaller stream back. Nothing else is re-encoded, renumbered or reordered.
 **Accepted subset** — a file is rewritten only when all of these hold, and is skipped with a reason otherwise:
 
 - the header is found within the first 1024 bytes, and everything before it is copied verbatim;
-- the cross-reference section parses: a classic `xref` table or a `/Type /XRef` stream, with every entry
-  resolving to an object header at the offset it names. A file that needed "repair" to be read is refused, not
-  repaired;
+- the cross-reference section parses: a classic `xref` table or a supported `/Type /XRef` stream, with every
+  type-1 entry resolving to an object header at its recorded offset and every type-2 entry resolving to the
+  matching member index and object number in a preserved `/ObjStm`. The parse is capped at 100,000 objects
+  and 100,000 accumulated value nodes across the xref/trailer, direct objects, and all decoded object-stream
+  members; each member is parsed within the remaining budget. A file that needed "repair" or exceeds a cap is refused;
 - exactly one `%%EOF`, and no trailer `/Prev`: an incrementally updated file is refused, because flattening the
   revisions is repacking;
 - no `/Encrypt` in the trailer;
 - no `/ByteRange` signature anywhere in the document;
 - no `/Linearized` dictionary and no hint streams;
-- every stream that is rewritten has `/Filter` equal to the single name `FlateDecode`, with no `/F`, and its
-  `/Length` agrees with `endstream`;
-- its payload is a well-formed RFC 1950 stream — `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, the check value valid and
-  the Adler-32 equal to the inflated bytes. Anything else is refused rather than repaired, as in §4.10;
-- objects held in an `ObjStm` are left alone: the container is copied verbatim. A file whose only compressed
-  payloads are inside object streams is therefore `already_optimal`, not an error.
+- every regular stream that is rewritten has one direct `/Filter` name `FlateDecode`, no `/F`, and a `/Length`
+  that agrees with `endstream`. Its length may be direct, or an indirect reference to a directly indexed,
+  matching integer object used by exactly this one stream; shared or compressed `/Length` objects are refused;
+- xref streams use a direct `/Length` and the supported raw or single-Flate encoding with a bounded supported
+  predictor. The xref stream is rebuilt only to update byte offsets and its own length; the classic table or
+  stream representation is preserved;
+- existing `/ObjStm` data is never rewritten. Its `/N`, `/First`, header object numbers and offsets, every
+  compressed member value, and every type-2 xref index are checked. Only direct unfiltered or single-Flate
+  object streams with at most 8 MiB decoded data are accepted; external-file data, `/Extends` and unsupported
+  filters/parameters are refused;
+- every rewritten payload is a well-formed RFC 1950 stream — `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, check value
+  valid and Adler-32 matching the inflated bytes. Anything else is refused rather than repaired, as in §4.10.
 
 **Preserved, byte-identically:**
 
 - the header, the junk before it, and every byte between objects;
 - every object number, generation number, and the order in which objects appear;
 - every dictionary, including `/Info`, `/Metadata`, `/ID`, `/PieceInfo` and `/DecodeParms`, with one exception:
-  the value of `/Length` for a stream that was rewritten, when that length is a direct value;
-- every stream that was not rewritten;
-- the inflated content of every stream that was rewritten.
+  the `/Length` of a rewritten regular stream (direct or its unique indirect integer object), and the xref
+  stream's direct `/Length`;
+- every stream that was not rewritten, including every existing `/ObjStm` byte-for-byte;
+- the inflated content of every regular stream that was rewritten.
 
 **Allowed to change:**
 
 - the bytes of each rewritten `FlateDecode` stream, and their length;
-- the `/Length` value of those streams (direct, or the object holding it when it is an indirect reference);
-- the cross-reference section and `startxref`, because offsets move;
+- the `/Length` value of those regular streams (direct, or the unique integer object holding it when it is an
+  indirect reference);
+- the xref section/stream data and `startxref`, solely to preserve the same entry semantics after byte offsets
+  move; an xref stream's `/Length` remains direct;
 - the total length of the file.
 
 `/ID` is **not** updated. The specification recommends changing its second element on an update; preserving it is
 the choice here, because a changed identifier is a changed document identity, and this project does not normalise
 metadata it was not asked to remove.
 
-**Verification** — structure **V3** (this repository's own reader, the same level as the ZIP structure), content
-**V1** (`flate2` inflates both sides, and the Adler-32 is recomputed by code in this repository):
+**Verification** — structure **V3** (the repository's own parser); stream-content comparison uses shared `flate2`
+code, not an independent PDF decoder. qpdf and MuPDF run in the external #57 measurement workflow and are
+separate, run-scoped evidence:
 
-1. both files parse, and every xref entry points at an object header at the offset it names;
-2. the set of `(object number, generation)` pairs is identical, in the same order;
-3. every dictionary compares equal, except `/Length` of the rewritten streams;
-4. every rewritten stream inflates to bytes identical to the original's, and its recomputed Adler-32 equals the
-   original stream's;
-5. every other stream is byte-identical;
-6. `startxref` resolves to the xref section, and `/Root` and `/Info` name the same objects as before;
+1. both files parse; type-1 xref offsets resolve to object headers, type-2 entries match the decoded `/ObjStm`
+   member number/index, and xref semantics are preserved;
+2. the set/order of `(object number, generation)` pairs and every non-target object byte range are identical;
+3. existing `/ObjStm` object bytes and compressed members are byte-identical;
+4. each rewritten regular stream inflates to bytes identical to the original's, and the RFC 1950 checksum is
+   verified; its direct or unique indirect `/Length` is the only corresponding object change;
+5. xref-stream rows retain their types, free-list links and compressed-member references while type-1 byte
+   offsets are updated; non-target stream payloads are byte-identical;
+6. `startxref` resolves to the same xref representation, and `/Root` and `/Info` retain their references;
 7. `candidate.len() < input.len()`.
 
-Clause 4 is the one that carries the trust, and it is the same instrument §4.10 uses. What this cannot prove is
-stated in the audit rather than here: no object-level comparison proves that a document *renders* the same, and
-the rendering check lives in CI with a real renderer, not in the binary.
+The in-process reader and inflater can share a defect; the contract does not claim to prove rendering equivalence.
+The #57 workflow uses qpdf checks and first/middle/last-page MuPDF render comparisons for the frozen PDF set.
 
-**Refused (skipped, exit 0):** encryption, signatures, linearization, incremental updates, a broken xref, object
-streams as a rewrite target, any filter other than a single `FlateDecode`, a payload that is not a valid zlib
-stream, a `/Length` that disagrees with `endstream`, external stream data (`/F`), duplicate object numbers.
+**Refused (skipped, exit 0):** encryption, signatures, linearization, incremental updates, a broken/malformed
+xref or object stream, more than 100,000 objects or parsed value nodes (including the aggregate across all
+object-stream members), shared/unsupported indirect `/Length`, xref-stream indirect `/Length`, unsupported xref
+predictors, object streams over 8 MiB decoded size, `/Extends`,
+external stream data (`/F`), unsupported filters, a payload that is not a valid zlib stream, or duplicate object
+numbers.
 
 **Corrupt (failed, exit 1):** a header that cannot be found within its bound, an object that runs past the end of
 the file, a trailer without `startxref`, a document whose `/Root` does not resolve. All leave the original

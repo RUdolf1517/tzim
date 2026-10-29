@@ -23,6 +23,9 @@ path = "src/main.rs"
 
 [dependencies]
 crc32fast = { version = "1.5", optional = true }
+claxon = { version = "=0.4.3", optional = true }
+flacenc = { version = "=0.5.1", optional = true, default-features = false }
+md-5 = { version = "=0.10.6", optional = true }
 flate2 = { version = "1.1", optional = true, default-features = false, features = ["rust_backend"] }
 png = { version = "0.18", optional = true, default-features = false }
 zopfli = { version = "0.8", optional = true, default-features = false, features = ["std"] }
@@ -70,6 +73,11 @@ zlib = ["dep:flate2"]
 # transformation is opt-in per run as well (`--fits-tile`), because it turns an
 # `IMAGE` HDU into a `BINTABLE` and a pipeline that indexes `NAXIS1` notices.
 fits = ["dep:flate2", "dep:crc32fast"]
+# FLAC remains opt-in: flacenc writes frames, Claxon independently decodes them,
+# and md-5 verifies STREAMINFO against PCM. No native codec or build-time C.
+flac = ["dep:claxon", "dep:flacenc", "dep:md-5"]
+# PDF uses the already verified zlib handler for FlateDecode stream payloads.
+pdf = ["zlib"]
 zopfli = ["dep:zopfli"]
 # Exposes the parsers to the fuzz targets in fuzz/. Never enabled for a release.
 fuzz-api = []

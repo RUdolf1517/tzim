@@ -20,6 +20,8 @@ Formats are detected by **content**, never by file name:
 | ZIP | `50 4B 03 04` (local header) or `50 4B 05 06` (empty archive) |
 | zlib | `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, and the two bytes big-endian divisible by 31 (RFC 1950 §2.2) |
 | FITS | `SIMPLE  =` in the first nine bytes, the value `T`, and a file that is a whole number of 2880-byte records |
+| FLAC | `fLaC` at byte zero |
+| PDF | `%PDF-` within the first 1024 bytes; the handler validates the version, xref and object structure |
 | ICO / CUR | `00 00 01 00` / `00 00 02 00` plus a valid directory |
 
 The extension is used only for two things: the `--include` / `--exclude` filters, and human-readable
@@ -46,7 +48,8 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW or `FillOrder 2` | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
 | zlib (`.zlib`, `.zz`) | v0.9 | implemented | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | 0–10 %, depends on the level that wrote the file | medium | [§4.10](guarantees.md#410-zlib-rfc-1950--v09) |
 | FITS (opt-in) | v0.14 | implemented in v0.14.0, behind the `fits` feature and `--fits-tile` | An uncompressed image HDU becomes a tile-compressed `BINTABLE` (`ZIMAGE`, `GZIP_1`/`GZIP_2`, quantisation off, one tile per row); every other HDU copied verbatim. A single-file TTY run asks default No after verification; scripted use of the flag remains explicit consent | Historical audit only; no current release/performance claim. Non-smaller candidates are left alone | high for the accepted subset; full admission remains open | [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) |
-| FLAC | #79 | **opt-in implementation authorized; not implemented** | The historical audit measured 0.4 % on music and estimated +150…300 KiB; the owner selected a non-default handler despite that result. No FLAC handler or new measurements ship yet | historical result only | high; PCM/metadata/seektable contract remains unproven | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
+| FLAC (opt-in) | #79 | **implemented in this unreleased branch behind the non-default `flac` feature; full acceptance pending** | Re-encode supported audio with flacenc; verify exact PCM, STREAMINFO and remapped seekpoints with independent Claxon; metadata is retained unless explicitly stripped | Historical audit only; fixed-corpus size/speed/gain not yet measured | high; external tools, corpus/fuzz and actual-binary CI evidence remain pending | [§4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in) |
+| PDF (opt-in) | #80 | **implemented in this unreleased branch behind the non-default `pdf` feature; #57 measurement pending** | Recompress only smaller eligible FlateDecode streams; preserve object IDs/order, xref semantics, object streams and all non-target bytes; no repacking | Historical audit only; fixed 21-output run not yet measured | high; qpdf/MuPDF real-file checks remain pending | [§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) |
 
 ### ZIP-based formats covered by the ZIP handler
 
@@ -117,14 +120,15 @@ If any item is missing, the format stays out. There is no "experimental support"
 
 ## 5. Refused formats
 
-A recorded refusal is the current policy until an explicitly authorized follow-up reopens it; a pending audit or
-implementation issue is not itself format admission. The PDF row below keeps its earlier decision historical
-while #57 supplies the newly required evidence before #80 can proceed. Every actual refusal still has a reason
-that follows from the invariant.
+A recorded refusal remains policy unless the owner authorizes a follow-up. #79 and #80 are now authorized
+implementation tracks and their handlers are present in this unreleased branch behind non-default features;
+that implementation status does not constitute full format admission or performance acceptance. The #57/#59
+fixed-manifest measurement work is independent of the #80 implementation. Every actual refusal still has a
+reason that follows from the invariant.
 
 | Format | Why Tzim refuses |
 | --- | --- |
-| **PDF** | **Historical refusal after measurement; #57 supplement pending** ([audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)). The old 2 208-file audit measured a 0.08 % median, but its separate 20–50 real-toolchain sample was not assembled and is still required for #57. The prior result and thresholds remain historical; no PDF handler is admitted pending that new sample and disposition. Contract in [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement). |
+| **PDF outside the narrow handler subset / without the `pdf` feature** | **Not handled by default.** The #80 implementation in this unreleased branch rewrites only a bounded single-revision classic-xref or supported xref-stream subset. It does not repack object graphs, flatten revisions, or claim full PDF admission. The fixed #57 real-toolchain measurement and qpdf/MuPDF checks remain pending; the old 2 208-file audit and thresholds are unchanged historical evidence. Contract in [guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in). |
 | **DICOM** | Never refused — never examined, until now. The question this row used to ask (is the dictionary or the refusal list the larger cost?) is answered in [dicom-audit](dicom-audit.md): the dictionary is, it is **5 189 entries measured**, and it is needed by exactly one of three tiers. Under measurement is a recompress-only slice — a data set already compressed as Deflated Explicit VR Little Endian, whose stream is **raw DEFLATE (RFC 1951), not zlib**, and therefore carries no checksum — specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented), with the decision rule fixed before the numbers. Until that run exists, the format is not supported. |
 | **WebP (lossless)** | No mature pure-Rust lossless encoder exists; a C dependency breaks static cross-platform builds. Re-encoding could also change the bitstream in ways we cannot independently verify sample-by-sample without the same library that produced it. |
 | **AVIF / HEIC / JPEG XL** | Same as WebP: no verifiable pure-Rust lossless re-encoder. Lossless JPEG transcoding to JXL is a format change (G2), which Tzim does not do. |

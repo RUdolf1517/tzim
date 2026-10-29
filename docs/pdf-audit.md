@@ -1,10 +1,10 @@
 # PDF: the audit the contract has to pass
 
-Related: [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement) · [formats](formats.md) ·
+Related: [guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [roadmap](roadmap.md)
 
 This is stage 1 for PDF — the audit a contract is allowed to follow, the same rule the FLAC work followed
-([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--refused-after-measurement))
+([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in))
 says what an implementation would have to preserve; this document says what such an implementation could
 possibly win and what it would cost.
 
@@ -111,7 +111,7 @@ worth more than anything the binary can do on its own — the same argument as i
 ## 6. Refusal list
 
 Every row below is a refusal with a reason, not a best-effort rewrite. This list is the spine of
-[§4.11](guarantees.md#411-pdf--refused-after-measurement); if a construct is not listed as accepted, it is
+[§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in); if a construct is not listed as accepted, it is
 refused.
 
 | Construct | Why refuse |
@@ -312,7 +312,7 @@ it is a rewrite with a different risk class. The audit's job was to find out whe
 without paying that price. It cannot.
 
 The refusal is recorded in [formats §5](formats.md#5-refused-formats) and
-[guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), which keeps the clause-by-clause
+[guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), which keeps the clause-by-clause
 contract: it is now a written answer to "what would it take", and the reason to keep it is the same
 reason FLAC's audit was kept.
 

@@ -101,8 +101,8 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
-| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
-| `--formats <LIST>` | all handlers enabled by this build's default policy (baseline JPEG when `jpeg-v1` is compiled; FITS still needs `--fits-tile`) | only process the named formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`); it is an allowlist, so `--formats png` excludes JPEG even in the default build |
+| `--memory-budget <BYTES>` | derived from the ceilings: `6 × --max-size + 8 × --max-pixels + --max-uncompressed + 128 MiB` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| `--formats <LIST>` | all handlers enabled by this build's default policy (baseline JPEG when `jpeg-v1` is compiled; FITS still needs `--fits-tile`) | only process the named formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`, `flac`, `pdf` when compiled); it is an allowlist, so `--formats png` excludes JPEG even in the default build |
 | `--fits-tile` | off | FITS: rewrite an uncompressed image HDU as a tile-compressed binary table (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off, one tile per row, every other HDU copied verbatim). In an interactive single-file TTY run, the candidate is fully verified before a default-No confirmation; elsewhere this flag is the explicit non-interactive opt-in. The handler is compiled in only with the `fits` cargo feature, so a `default` build answers `unsupported` — see §4.12 of [guarantees](guarantees.md) |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
@@ -148,7 +148,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
 | zlib | nothing: no name, no comment, no timestamp in the header | the header, the trailer, the payload |
-| FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
+| FLAC (when the non-default `flac` feature is compiled) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 | TIFF | `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata (42112) | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips, GDAL nodata (`42113`), unknown tags |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
@@ -307,7 +307,7 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
 | jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
-| memory budget, per file | the sum of the other ceilings | bounds the bytes one job may cost; a file above it is skipped before it is read |
+| memory budget, per file | `6 × max-size + 8 × max-pixels + max-uncompressed + 128 MiB` | bounds the bytes one job may cost, including PDF and FLAC scratch; a file above it is skipped before it is read |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |

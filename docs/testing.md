@@ -271,8 +271,9 @@ observable result.
   stripping is tested too: the pad-to-previous-width rule must count cells, not bytes.
 - Memory budget (`src/pipeline.rs`): `worst_case_bytes` is asserted term by term — a file with no format, a
   PNG with and without dimensions in the header, a lying `IHDR` clamped by `--max-pixels`, a JPEG, a TIFF,
-  a ZIP charged its decompression ceiling, gzip charged nothing, and a `u64::MAX` length that must not
-  overflow. `derived_memory_budget` is asserted to admit every format at the limits it is derived from.
+  FITS, PDF, FLAC, a ZIP charged its decompression ceiling, gzip charged nothing, and a `u64::MAX` length
+  that must not overflow. `derived_memory_budget` is asserted to admit every format at the limits it is
+  derived from: `6 × max_size + 8 × max_pixels + max_uncompressed + 128 MiB`; the fixed PDF parser reserve is asserted along with both PDF and FLAC format charges.
 - The probe (`src/detect.rs`): a PNG's dimensions are read from the header the detector already loads, and
   everything else — a JPEG, a truncated `IHDR`, an empty file — reports `pixels: None` rather than a guess.
 

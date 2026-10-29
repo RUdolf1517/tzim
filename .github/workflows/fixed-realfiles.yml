@@ -1,0 +1,630 @@
+name: fixed real-file measurements
+
+# Exact-input #57/#59 acceptance work. The source identities are fixed in PR
+# comment 6498702204; none of these jobs selects, drops or substitutes inputs by
+# size or measured gain. Generated PDFs and survey bytes are temporary inputs,
+# never committed or uploaded in the evidence artifacts.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "tests/**"
+      - ".github/scripts/fixed-*.py"
+      - ".github/scripts/merge-fixed-pdf-manifests.py"
+      - ".github/scripts/test_merge_fixed_pdf_manifests.py"
+      - ".github/scripts/quartz-markdown.swift"
+      - ".github/scripts/fits-measure.py"
+      - ".github/scripts/pdf-measure.py"
+      - ".github/scripts/build-requirements.txt"
+      - ".github/scripts/measure-requirements.txt"
+      - ".github/workflows/fixed-realfiles.yml"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "docs/guarantees.md"
+      - "docs/formats.md"
+      - "docs/roadmap.md"
+      - "docs/measurement-status.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fixed-realfiles-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  PYTHONUNBUFFERED: "1"
+  # Same exact CFITSIO source archive as the required HEASARC gate.
+  CFITSIO_COMMIT: "113781d8aa442cf8d3c27295d9084674b8b039f2"
+  CFITSIO_SHA256: "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e"
+
+jobs:
+  ubuntu-pdf-generation:
+    name: generate fixed Ubuntu PDFs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record fixed source identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/fixed-pdf-ubuntu/outputs"
+          printf 'source_sha=%s\n' "$source_sha" > "$RUNNER_TEMP/fixed-pdf-ubuntu/source-identity.txt"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the pinned Python measurement environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --require-hashes \
+            -r .github/scripts/build-requirements.txt
+          python3 -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
+            -r .github/scripts/measure-requirements.txt
+          python3 -VV
+          python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-pdf-ubuntu/measurement-environment.txt"
+
+      - name: Install the Ubuntu PDF producers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+            libreoffice-writer fonts-dejavu-core fonts-liberation
+          {
+            pandoc --version
+            pdflatex --version | head -n 2
+            soffice --version
+            dpkg-query -W -f='${binary:Package}=${Version}\n' \
+              pandoc texlive-latex-base texlive-latex-recommended texlive-latex-extra \
+              libreoffice-writer fonts-dejavu-core fonts-liberation
+          } | tee "$RUNNER_TEMP/fixed-pdf-ubuntu/producer-versions.txt"
+
+      - name: Generate all 15 fixed Ubuntu outputs
+        id: generate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/fixed-pdf-ubuntu/outputs"
+          python3 .github/scripts/fixed-pdf-generate.py \
+            --kind ubuntu \
+            --source-root "$GITHUB_WORKSPACE" \
+            --source-sha "$source_sha" \
+            --out-root "$out" \
+            --work-root "$RUNNER_TEMP/fixed-pdf-ubuntu/work" \
+            --manifest "$RUNNER_TEMP/fixed-pdf-ubuntu/generation.json" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-pdf-ubuntu/generation.log"
+
+      - name: Retain generation manifest, PDFs and tool output for the measurement job
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-pdf-ubuntu
+          path: |
+            ${{ runner.temp }}/fixed-pdf-ubuntu/source-identity.txt
+            ${{ runner.temp }}/fixed-pdf-ubuntu/measurement-environment.txt
+            ${{ runner.temp }}/fixed-pdf-ubuntu/producer-versions.txt
+            ${{ runner.temp }}/fixed-pdf-ubuntu/generation.json
+            ${{ runner.temp }}/fixed-pdf-ubuntu/generation.log
+            ${{ runner.temp }}/fixed-pdf-ubuntu/outputs/*.pdf
+            ${{ runner.temp }}/fixed-pdf-ubuntu/outputs/generation-commands.json
+          retention-days: 1
+          if-no-files-found: error
+
+  quartz-pdf-generation:
+    name: generate fixed Quartz PDFs
+    runs-on: macos-14
+    timeout-minutes: 45
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record fixed source identity and macOS toolchain
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/fixed-pdf-quartz/outputs"
+          printf 'source_sha=%s\n' "$source_sha" > "$RUNNER_TEMP/fixed-pdf-quartz/source-identity.txt"
+          {
+            sw_vers
+            xcodebuild -version
+            swift --version
+            xcrun --show-sdk-version
+            xcrun --find swift
+          } | tee "$RUNNER_TEMP/fixed-pdf-quartz/toolchain.txt"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Generate all six native AppKit/Quartz PDFs
+        id: generate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fixed-pdf-quartz"
+          python3 .github/scripts/fixed-pdf-generate.py \
+            --kind quartz \
+            --source-root "$GITHUB_WORKSPACE" \
+            --source-sha "$source_sha" \
+            --out-root "$RUNNER_TEMP/fixed-pdf-quartz/outputs" \
+            --work-root "$RUNNER_TEMP/fixed-pdf-quartz/work" \
+            --manifest "$RUNNER_TEMP/fixed-pdf-quartz/generation.json" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-pdf-quartz/generation.log"
+
+      - name: Retain generation manifest, PDFs and tool output for the measurement job
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-pdf-quartz
+          path: |
+            ${{ runner.temp }}/fixed-pdf-quartz/source-identity.txt
+            ${{ runner.temp }}/fixed-pdf-quartz/toolchain.txt
+            ${{ runner.temp }}/fixed-pdf-quartz/generation.json
+            ${{ runner.temp }}/fixed-pdf-quartz/generation.log
+            ${{ runner.temp }}/fixed-pdf-quartz/outputs/*.pdf
+            ${{ runner.temp }}/fixed-pdf-quartz/outputs/generation-commands.json
+          retention-days: 1
+          if-no-files-found: error
+
+  build-tzim:
+    name: build and test all handler features
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      binary_ready: ${{ steps.release-build.outputs.binary_ready }}
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record fixed source identity
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Test fixed PDF manifest merging and retained failure rows
+        shell: bash
+        run: python3 .github/scripts/test_merge_fixed_pdf_manifests.py
+
+      - name: Build the actual all-format measurement binary
+        id: release-build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --locked --features "fits,flac,pdf" --bin tzim
+          echo "binary_ready=true" >> "$GITHUB_OUTPUT"
+          cargo --version
+          rustc --version --verbose
+          sha256sum target/release/tzim | tee "$RUNNER_TEMP/tzim-binary.sha256"
+
+      - name: Run all-feature Rust unit, integration and documentation tests
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --all-features --locked 2>&1 | tee "$RUNNER_TEMP/fixed-all-features-tests.log"
+
+      - name: Upload the actual Tzim binary and test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-tzim-binary
+          path: |
+            target/release/tzim
+            ${{ runner.temp }}/tzim-binary.sha256
+            ${{ runner.temp }}/fixed-all-features-tests.log
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Preserve a red test result after uploading the binary
+        if: steps.tests.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+  pdf-measurement:
+    name: measure the frozen 21-PDF set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [ubuntu-pdf-generation, quartz-pdf-generation, build-tzim]
+    if: ${{ always() && needs.build-tzim.outputs.binary_ready == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record measurement source SHA
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          test "$(git rev-parse HEAD)" = "${{ needs.build-tzim.outputs.source_sha }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download generated PDFs and Tzim binary
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          pattern: fixed-pdf-*
+          path: ${{ runner.temp }}/pdf-artifacts
+          merge-multiple: false
+
+      - name: Download the actual Tzim binary
+        uses: actions/download-artifact@v5
+        with:
+          name: fixed-tzim-binary
+          path: ${{ runner.temp }}/tzim-artifact
+
+      - uses: actions/setup-python@v6
+        continue-on-error: true
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned measurement dependencies
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --require-hashes \
+            -r .github/scripts/build-requirements.txt
+          python3 -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
+            -r .github/scripts/measure-requirements.txt
+          python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-pdf-measurement-environment.txt"
+
+      - name: Build pinned qpdf 12.4.2 from its verified source archive
+        id: qpdf-build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build zlib1g-dev libjpeg-dev libssl-dev libgnutls28-dev
+          archive="$RUNNER_TEMP/qpdf-v12.4.2.tar.gz"
+          curl --fail --location --retry 3 \
+            https://codeload.github.com/qpdf/qpdf/tar.gz/refs/tags/v12.4.2 -o "$archive"
+          echo "88ddeb5f25c6e9156f3113fc3994d3a5e0cdfeee398cd09dd00fabc9dac9f573  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/qpdf-src" "$RUNNER_TEMP/qpdf-build"
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/qpdf-src"
+          cmake -S "$RUNNER_TEMP/qpdf-src" -B "$RUNNER_TEMP/qpdf-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/qpdf-install" \
+            -DCI_MODE=ON -DBUILD_DOC=OFF -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
+            -DUSE_IMPLICIT_CRYPTO=ON
+          cmake --build "$RUNNER_TEMP/qpdf-build" --target qpdf --parallel "$(nproc)"
+          qpdf_bin="$RUNNER_TEMP/qpdf-build/qpdf/qpdf"
+          test -x "$qpdf_bin"
+          LD_LIBRARY_PATH="$RUNNER_TEMP/qpdf-build/libqpdf${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            "$qpdf_bin" --version | tee "$RUNNER_TEMP/qpdf-version.txt"
+          echo "$qpdf_bin" > "$RUNNER_TEMP/qpdf-bin-path.txt"
+
+      - name: Record qpdf build output or expected unavailable path
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/qpdf-bin-path.txt" ]; then
+            printf '%s\n' "$RUNNER_TEMP/qpdf-build/qpdf/qpdf" > "$RUNNER_TEMP/qpdf-bin-path.txt"
+          fi
+          if [ ! -s "$RUNNER_TEMP/qpdf-version.txt" ]; then
+            printf 'qpdf unavailable; build step outcome: %s\n' "${{ steps.qpdf-build.outcome }}" \
+              > "$RUNNER_TEMP/qpdf-version.txt"
+          fi
+
+      - name: Merge and freeze all 21 generation rows before gain is measured
+        id: freeze
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifacts="$RUNNER_TEMP/pdf-artifacts"
+          evidence="$RUNNER_TEMP/fixed-pdf-evidence"
+          mkdir -p "$evidence"
+          if [ -s "$RUNNER_TEMP/qpdf-version.txt" ]; then
+            cp "$RUNNER_TEMP/qpdf-version.txt" "$evidence/qpdf-version.txt"
+          else
+            echo "qpdf version unavailable" > "$evidence/qpdf-version.txt"
+          fi
+          if [ -s "$RUNNER_TEMP/fixed-pdf-measurement-environment.txt" ]; then
+            cp "$RUNNER_TEMP/fixed-pdf-measurement-environment.txt" "$evidence/measurement-environment.txt"
+          else
+            echo "pinned measurement dependency installation did not produce an environment record" \
+              > "$evidence/measurement-environment.txt"
+          fi
+          merge_status=0
+          python3 .github/scripts/merge-fixed-pdf-manifests.py \
+            --artifact-root "$artifacts" \
+            --ubuntu-manifest "$artifacts/fixed-pdf-ubuntu/generation.json" \
+            --quartz-manifest "$artifacts/fixed-pdf-quartz/generation.json" \
+            --expected-source-sha "${{ needs.build-tzim.outputs.source_sha }}" \
+            --output "$evidence/frozen-manifest.json" \
+            2>&1 | tee "$evidence/freeze.log" || merge_status=$?
+          echo "$merge_status" > "$evidence/freeze-exit-code.txt"
+          for kind in ubuntu quartz; do
+            if [ -f "$artifacts/fixed-pdf-$kind/generation.json" ]; then
+              cp "$artifacts/fixed-pdf-$kind/generation.json" "$evidence/$kind-generation.json"
+            else
+              printf 'generation manifest missing for %s\n' "$kind" > "$evidence/$kind-generation-missing.txt"
+            fi
+            if [ -f "$artifacts/fixed-pdf-$kind/outputs/generation-commands.json" ]; then
+              cp "$artifacts/fixed-pdf-$kind/outputs/generation-commands.json" \
+                "$evidence/$kind-generation-commands.json"
+            else
+              printf 'generation command log missing for %s\n' "$kind" \
+                > "$evidence/$kind-generation-commands-missing.txt"
+            fi
+          done
+          exit "$merge_status"
+
+      - name: Run qpdf, faithful/repack comparators, Tzim and fixed render checks
+        id: measure
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          artifacts="$RUNNER_TEMP/pdf-artifacts"
+          evidence="$RUNNER_TEMP/fixed-pdf-evidence"
+          qpdf_bin="$(cat "$RUNNER_TEMP/qpdf-bin-path.txt")"
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/qpdf-build/libqpdf${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          python3 .github/scripts/fixed-pdf-measure.py \
+            --manifest "$evidence/frozen-manifest.json" \
+            --root "$artifacts" \
+            --out "$evidence/run" \
+            --tzim "$RUNNER_TEMP/tzim-artifact/tzim" \
+            --qpdf "$qpdf_bin" \
+            --expected-source-sha "${{ needs.build-tzim.outputs.source_sha }}" \
+            2>&1 | tee "$evidence/measurement.log"
+
+      - name: Independently recompute all raw PDF aggregates
+        id: recompute
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/fixed-pdf-evidence"
+          python3 .github/scripts/recompute-fixed-pdf.py \
+            --rows "$evidence/run/raw-rows.jsonl" \
+            --aggregate "$evidence/run/aggregate.json" \
+            --out "$evidence/independent-recomputation.json" \
+            2>&1 | tee "$evidence/recompute.log"
+
+      - name: Remove generated PDF bytes from the evidence artifact
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/fixed-pdf-evidence/run/tool-work" \
+            "$RUNNER_TEMP/fixed-pdf-evidence/run/tzim-work"
+
+      - name: Upload manifests, raw rows, aggregate and tool outputs (no PDF corpus)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-pdf-evidence
+          path: ${{ runner.temp }}/fixed-pdf-evidence
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Fail if generation, measurement or independent recomputation failed
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.freeze.outcome }}" != "success" \
+            || "${{ steps.measure.outcome }}" != "success" \
+            || "${{ steps.recompute.outcome }}" != "success" ]; then
+            exit 1
+          fi
+
+  fits-measurement:
+    name: measure the frozen 14-survey FITS set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    needs: [build-tzim]
+    if: ${{ always() && needs.build-tzim.outputs.binary_ready == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Record measurement source SHA
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          test "$source_sha" = "${{ needs.build-tzim.outputs.source_sha }}"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Download the actual Tzim binary
+        uses: actions/download-artifact@v5
+        with:
+          name: fixed-tzim-binary
+          path: ${{ runner.temp }}/tzim-artifact
+
+      - uses: actions/setup-python@v6
+        continue-on-error: true
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned FITS measurement dependencies
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check --require-hashes \
+            -r .github/scripts/build-requirements.txt
+          python3 -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
+            -r .github/scripts/measure-requirements.txt
+          python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-measurement-environment.txt"
+
+      - name: Fetch and freeze all exact FITS source rows before measurement
+        id: fetch
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fixed-fits-evidence"
+          fetch_status=0
+          python3 .github/scripts/fetch-fixed-fits.py \
+            --work "$RUNNER_TEMP/fixed-fits-work" \
+            --output-manifest "$RUNNER_TEMP/fixed-fits-evidence/source-manifest.json" \
+            --expected-source-sha "${{ needs.build-tzim.outputs.source_sha }}" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/fetch.log" || fetch_status=$?
+          if [ -f "$RUNNER_TEMP/fixed-fits-evidence/fits-measure-input-manifest.json" ]; then
+            cp "$RUNNER_TEMP/fixed-fits-evidence/fits-measure-input-manifest.json" \
+              "$RUNNER_TEMP/fixed-fits-work/fits-measure-input-manifest.json"
+          else
+            echo "FITS input manifest was not created by the fetch step" \
+              > "$RUNNER_TEMP/fixed-fits-evidence/fits-measure-input-manifest-missing.txt"
+          fi
+          exit "$fetch_status"
+
+      - name: Build pinned CFITSIO fitsverify and funpack
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/cfitsio-${CFITSIO_COMMIT}.tar.gz"
+          curl --fail --location --retry 3 \
+            "https://codeload.github.com/HEASARC/cfitsio/tar.gz/${CFITSIO_COMMIT}" -o "$archive"
+          echo "${CFITSIO_SHA256}  $archive" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/cfitsio-src" "$RUNNER_TEMP/cfitsio-install"
+          tar -xzf "$archive" --strip-components=1 -C "$RUNNER_TEMP/cfitsio-src"
+          cd "$RUNNER_TEMP/cfitsio-src"
+          ./configure --prefix="$RUNNER_TEMP/cfitsio-install" --disable-curl
+          make -j"$(nproc)"
+          make install
+          bindir="$RUNNER_TEMP/cfitsio-install/bin"
+          mkdir -p "$bindir"
+          for tool in fitsverify funpack; do
+            placed=""
+            for candidate in "$bindir/$tool" "$RUNNER_TEMP/cfitsio-src/utilities/.libs/$tool" \
+              "$RUNNER_TEMP/cfitsio-src/.libs/$tool"; do
+              [ -f "$candidate" ] || continue
+              kind="$(file -b "$candidate" 2>/dev/null || true)"
+              case "$kind" in
+                *ELF*)
+                  if [ "$candidate" != "$bindir/$tool" ]; then cp -f "$candidate" "$bindir/$tool"; fi
+                  placed="$candidate"
+                  break
+                  ;;
+              esac
+            done
+            if [ -z "$placed" ]; then
+              echo "::error::$tool is absent or is only a libtool wrapper"
+              ls -la "$bindir" "$RUNNER_TEMP/cfitsio-src/.libs" "$RUNNER_TEMP/cfitsio-src/utilities/.libs" 2>/dev/null || true
+              exit 1
+            fi
+            chmod +x "$bindir/$tool"
+            echo "$tool <- $placed: $(file -b "$bindir/$tool")"
+          done
+          echo "$bindir" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/cfitsio-install/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          ldd "$bindir/funpack" || true
+          "$bindir/fitsverify" 2>&1 | head -n 20 || true
+
+      - name: Run the existing two-tier FITS instrument on all downloaded fixed inputs
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/fits-measure.py \
+            --root "$RUNNER_TEMP/fixed-fits-work" \
+            --manifest "$RUNNER_TEMP/fixed-fits-work/fits-measure-input-manifest.json" \
+            --out "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier.log"
+
+      - name: Run Tzim Tier 2, Tier 1 comparator, fitsverify, funpack and array/header oracles
+        id: measure
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 .github/scripts/fixed-fits-measure.py \
+            --source-manifest "$RUNNER_TEMP/fixed-fits-evidence/source-manifest.json" \
+            --root "$RUNNER_TEMP/fixed-fits-work" \
+            --audit-rows "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
+            --tzim "$RUNNER_TEMP/tzim-artifact/tzim" \
+            --fitsverify "$RUNNER_TEMP/cfitsio-install/bin/fitsverify" \
+            --funpack "$RUNNER_TEMP/cfitsio-install/bin/funpack" \
+            --work "$RUNNER_TEMP/fixed-fits-work/candidates" \
+            --out "$RUNNER_TEMP/fixed-fits-evidence/run" \
+            --expected-source-sha "${{ needs.build-tzim.outputs.source_sha }}" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/measurement.log"
+
+      - name: Independently recompute the fixed 14-row FITS aggregates
+        id: recompute
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/recompute-fixed-fits.py \
+            --rows "$RUNNER_TEMP/fixed-fits-evidence/run/raw-rows.jsonl" \
+            --aggregate "$RUNNER_TEMP/fixed-fits-evidence/run/aggregate.json" \
+            --out "$RUNNER_TEMP/fixed-fits-evidence/independent-recomputation.json" \
+            2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/recompute.log"
+
+      - name: Upload all source manifest rows, SHAs, tool output and raw results (no FITS bytes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixed-fits-evidence
+          path: ${{ runner.temp }}/fixed-fits-evidence
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Fail if the exact source set or any measurement check failed
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.fetch.outcome }}" != "success" \
+            || "${{ steps.audit.outcome }}" != "success" \
+            || "${{ steps.measure.outcome }}" != "success" \
+            || "${{ steps.recompute.outcome }}" != "success" ]; then
+            exit 1
+          fi

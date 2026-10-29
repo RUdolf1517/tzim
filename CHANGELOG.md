@@ -115,7 +115,7 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   and so measures more than the contract allows. `qpdf --check` passed on all 1 009 candidates and 173 rendered
   pages from 140 files were pixel-identical, so nothing was refused for unsoundness: it was refused for being a
   rounding error. What repacking would buy is **20.1 %**, which is the price of the invariant stated in bytes.
-  [guarantees §4.11](docs/guarantees.md#411-pdf--refused-after-measurement) keeps the contract and names it
+  [guarantees §4.11](docs/guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) keeps the contract and names it
   refused, as FLAC's did.
 - **FITS implementation is opt-in; the historical audit is retained with limits** (#59).
   [fits-audit §8](docs/fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) measured 178 files from
@@ -601,7 +601,7 @@ work. The corpus still writes 379 177 bytes.
   ANSI sequences are detected and left alone.
 - **A progress line** on stderr for runs that take longer than a moment: ASCII frames, the file counter,
   the clock and the running total. Drawn only when stderr is a terminal; `--no-progress` turns it off.
-- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--refused-after-measurement)),
+- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in)),
   written before any code as every contract here is, with the audit behind it in
   [docs/flac-audit.md](docs/flac-audit.md). No FLAC support is claimed: the handler and its tests do not
   exist, and the implementation is blocked on three crates that have not been approved.
@@ -634,7 +634,7 @@ work. The corpus still writes 379 177 bytes.
 
 - The example in [cli §3](docs/cli.md#3-human-output) showed one decimal and a percentage in the summary,
   neither of which the program has ever printed. The text now matches the binary.
-- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-have-needed)
+- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-opt-in-dependency-set-authorized-by-79)
   record the FLAC crates that are not added and why colour and progress are not dependencies.
 
 ## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter

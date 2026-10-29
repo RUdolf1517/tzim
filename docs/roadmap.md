@@ -207,7 +207,7 @@ Nothing here changes a byte of output:
   `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §10](cli.md#10-colour-and-progress));
 - clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
   stdout pipe that exits quietly instead of aborting ([cli §11](cli.md#11-conformance-with-cli-conventions));
-- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)
+- the FLAC **contract**: [guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in); the opt-in handler is an unreleased #84 follow-up
   and the [audit](flac-audit.md) behind it.
 
 ### v0.9 — zlib, and the end of the format queue — **implemented**
@@ -336,23 +336,23 @@ v0.13/v0.14 decisions above:
 
 | Issue | Unreleased status | Remaining evidence or blocker |
 | --- | --- | --- |
-| #57 — PDF measurement | pending | Need 20–50 provenance- and permission-qualified real-toolchain PDFs, per-file hashes/refusals, qpdf checks, render comparisons and independent aggregates; no supplemental qualified sample or current run is retained here. |
-| #59 — FITS measurement | pending | Need pre-registered, permission-qualified full-size survey products and separate Tier 1/Tier 2 raw results; historical cutouts do not satisfy the selection. |
+| #57 — PDF measurement | Fixed 21-output source set and measurement workflow are present; run pending | Generate the six fixed documents through all three named producers plus the three pinned scan-derived PDFs, freeze all rows before gain, then retain qpdf, Tzim, MuPDF renders and independent aggregates. No completed workflow artifact exists for this source SHA. |
+| #59 — FITS measurement | Fixed 14-product TESS/GALEX/ROSAT source set and measurement workflow are present; run pending | Fetch exact full products, retain all source/error rows and run existing two-tier audit, Tzim, CFITSIO `fitsverify`/`funpack`, array/header oracles and recomputation. No completed workflow artifact exists for this source SHA. |
 | #82 — default JPEG V1 | implemented; evidence is recorded per source SHA | The fixed stripped-musl ceiling is **1,082,208 bytes**. Use only the exact-head size report and `size-<source SHA>` / `jpeg-runtime-<source SHA>` artifacts; never carry evidence to a later head. |
 | #83 — FITS confirmation | implemented; tests are part of the cross-platform CI matrix | The prompt is limited to one direct TTY `--fits-tile` run; the candidate is fully verified before default-No confirmation and only Yes reaches atomic install. |
-| #79 — FLAC re-encoding | not implemented | Full path requires an approved maintained encoder and independent decoder, exact PCM/metadata/seektable checks, external tools, negative controls, corpus/fuzz, and actual feature size/speed/gain measurements. |
-| #80 — narrow PDF FlateDecode | blocked on #57 | Do not implement until the required PDF measurement and disposition exist; no PDF handler is admitted by this status row. |
+| #79 — FLAC re-encoding | implemented in this unreleased branch behind the non-default `flac` feature | Rust compilation/tests, external tools, negative controls/fuzz, fixed corpus, and actual feature size/speed/gain measurements remain pending. |
+| #80 — narrow PDF FlateDecode | implemented in this unreleased branch behind the non-default `pdf` feature; independent of #57 | Rust compilation/tests and the fixed #57 qpdf/MuPDF measurement/render checks remain pending. The historical repack remains forbidden. |
 
 Full-format admission and other examined candidates remain separate follow-ups rather than reasons to smuggle
 another format into the v0.14.0 release:
 
 | Candidate | State | Why |
 | --- | --- | --- |
-| FLAC | opt-in implementation authorized by #79; not implemented | historical audit: 0.4 % on music and estimated +150…300 KiB; final size/speed/gain remains to be measured |
+| FLAC | non-default opt-in implementation present for #79; full admission pending | historical audit: 0.4 % on music and estimated +150…300 KiB; no current feature-size/speed/gain result or full-corpus evidence yet |
 | WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
 | FITS full-admission follow-up | open, outside the v0.14.0 opt-in release | The v0.14.0 handler is behind `--fits-tile` and the non-default `fits` feature. Historical audit figures are not release/performance evidence; current differences and the supplemental survey sample remain open for full admission. Candidate-specific HEASARC evidence and limitations are tracked in [measurement status](measurement-status.md) |
 | DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| PDF | historical refusal; #57 evidence follow-up pending; #80 blocked | the previous 2 208-file audit reported 45.7 % in-scope and a 0.08 % median; the required supplemental real-toolchain sample and current disposition are still missing; repacking remains forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
+| PDF | non-default opt-in #80 implementation present; #57 fixed-manifest execution pending | the previous 2 208-file audit reported 45.7 % in-scope and a 0.08 % median; the exact 21-output supplement has not run for this source SHA. Implementation is independent of #57; repacking remains forbidden ([guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
 | WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
 | raw DEFLATE | refused | no signature: recognition would be a guess |
 

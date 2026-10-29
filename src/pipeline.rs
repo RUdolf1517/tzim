@@ -9,6 +9,9 @@ use crate::formats::{self, Allow, Cand, Options};
 use crate::replace::{self, Snapshot, TempFile};
 use crate::report::{Outcome, Status};
 
+const PDF_PARSER_RESERVE_BYTES: u64 = 128 * 1024 * 1024;
+const FLAC_WORKING_RESERVE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Everything the per-file pipeline needs, copied out of the command line once.
 ///
 /// Two fields are only consulted on Unix, where ownership and link counts are
@@ -60,17 +63,21 @@ impl Config {
 /// The budget when the user has not given one: the sum of every worst case the
 /// other ceilings allow, so that the defaults never skip a file that they admit.
 ///
-/// `4 × --max-size` is the widest per-file term (`2 × len` for the file and the
-/// candidate, plus `4 × len` for a TIFF strip, and the larger of the two wins),
-/// `8 × --max-pixels` is a PNG's two RGBA buffers, and `--max-uncompressed` is
-/// a ZIP entry. The sum is therefore an upper bound on [`worst_case_bytes`] for
-/// every format, under any `len ≤ --max-size`. It is deliberately not a claim
-/// about how much RAM the machine has: that is what `--memory-budget` is for.
+/// `6 × --max-size` covers the input/candidate and the largest linear
+/// per-format scratch term: TIFF strips, PDF rewrite/name copies, or FLAC's
+/// bounded frame index plus copied metadata; `8 × --max-pixels` covers a PNG's
+/// two RGBA buffers; `--max-uncompressed` is a ZIP entry; and 128 MiB bounds
+/// PDF parser collections and decoded streams, as well as FLAC frame/PCM
+/// working buffers. The sum is an upper bound on [`worst_case_bytes`] for every
+/// handler, under any `len ≤ --max-size`. It is
+/// deliberately not a claim about how much RAM the machine has: that is what
+/// `--memory-budget` is for.
 pub fn derived_memory_budget(max_size: u64, max_pixels: u64, max_uncompressed: u64) -> u64 {
     max_size
-        .saturating_mul(4)
+        .saturating_mul(6)
         .saturating_add(max_pixels.saturating_mul(8))
         .saturating_add(max_uncompressed)
+        .saturating_add(PDF_PARSER_RESERVE_BYTES)
 }
 
 /// `--memory-budget`, or the derived ceiling when it is zero.
@@ -95,6 +102,8 @@ fn budget_or_derived(args: &Args) -> u64 {
 /// | a decoded JPEG | `7 × pixels` | the coefficient planes plus one decoded frame — the independent decoder hashes one side at a time (§2.6) |
 /// | a decoded TIFF strip | `4 × len` | the strip is bounded by the file, and `--max-size` bounds that |
 /// | two FITS tile buffers | `2 × len` | the file and its candidate (`2 × len`) plus the row a tile holds and the gzip member written from it; a tile is a row of the array, so the file bounds each |
+/// | PDF parser and rewrite scratch | `4 × len + 128 MiB` | copied names, compressed stream replacements, temporary xref rewrite, capped parser collections and bounded xref/`/ObjStm` decode buffers |
+/// | FLAC frame index and copied metadata | `4 × len + 8 MiB` | at most 24 bytes per minimum-size frame (≤ `3 × len`), up to one file of retained metadata, plus bounded frame/PCM buffers |
 /// | a decompressed ZIP entry | `--max-uncompressed` | the one term that is not bounded by the file at all, and the reason a budget cannot default to something small |
 ///
 /// `pixels` is the real count when the header carried it (a PNG does) and
@@ -121,6 +130,18 @@ pub fn worst_case_bytes(
         // holds and the gzip member written from it. A tile is a row of the
         // array, so the file bounds each of them.
         Some(detect::Format::Fits) => len.saturating_mul(2),
+        // FLAC's output frame index can use up to 24 bytes per minimum-size
+        // frame (bounded by the input length), and retained metadata is copied
+        // once. The remaining frame/PCM buffers are bounded at 8 MiB.
+        Some(detect::Format::Flac) => len
+            .saturating_mul(4)
+            .saturating_add(FLAC_WORKING_RESERVE_BYTES),
+        // PDF name copies and replacement/xref patches are bounded by four extra
+        // file-sized terms. The value-node and object ceilings bound parser maps,
+        // collections and decoded xref/`/ObjStm` buffers within the fixed reserve.
+        Some(detect::Format::Pdf) => len
+            .saturating_mul(4)
+            .saturating_add(PDF_PARSER_RESERVE_BYTES),
         _ => 0,
     };
     let container = match format {
@@ -732,6 +753,19 @@ mod tests {
             1000
         );
 
+        // PDF adds bounded object/xref planning and stream-patch scratch.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Pdf), None, max_pixels, 4096),
+            3000 + PDF_PARSER_RESERVE_BYTES
+        );
+
+        // FLAC holds a frame-start index and copied metadata bounded by the
+        // input size, plus bounded per-frame/PCM working buffers.
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Flac), None, max_pixels, 4096),
+            3000 + FLAC_WORKING_RESERVE_BYTES
+        );
+
         // FITS holds the file, its candidate and two tile-sized buffers; a tile
         // is a row of the array, so the file bounds both of them.
         assert_eq!(
@@ -766,6 +800,8 @@ mod tests {
             detect::Format::Tiff,
             detect::Format::Zip,
             detect::Format::Fits,
+            detect::Format::Flac,
+            detect::Format::Pdf,
         ] {
             let cost = worst_case_bytes(max_size, Some(format), None, max_pixels, max_uncompressed);
             assert!(
@@ -773,8 +809,11 @@ mod tests {
                 "{format:?} at the limits costs {cost}, above the derived {budget}"
             );
         }
-        // And it is a bound, not a wildly loose number: twice the largest term.
-        assert_eq!(budget, 4 * max_size + 8 * max_pixels + max_uncompressed);
+        // Assert the exact derived formula: the per-format file terms plus fixed parser reserve.
+        assert_eq!(
+            budget,
+            6 * max_size + 8 * max_pixels + max_uncompressed + PDF_PARSER_RESERVE_BYTES
+        );
     }
 
     #[test]
