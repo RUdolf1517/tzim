@@ -117,10 +117,8 @@ fn build_capabilities() -> String {
         push_json_separator(&mut json, &mut first);
         write!(
             json,
-            "{{\"format\":\"jpeg\",\"available\":true,\
-             \"kind\":\"independent_verifier_default_gate\",\"build_feature\":\"jpeg\",\
-             \"default_admission_feature\":\"jpeg-v1\",\"default_enabled\":{},\
-             \"codec_only_selection_flag\":\"--formats jpeg\"}}",
+            "{{\"format\":\"jpeg\",\"default_admission_feature\":\"jpeg-v1\",\
+             \"default_enabled\":{},\"codec_only_selection_flag\":\"--formats jpeg\"}}",
             bool_text(enabled("jpeg-v1")),
         )
         .unwrap();
@@ -128,51 +126,21 @@ fn build_capabilities() -> String {
     if enabled("fits") {
         push_json_separator(&mut json, &mut first);
         json.push_str(
-            "{\"format\":\"fits\",\"available\":true,\
-             \"kind\":\"visible_transform_consent\",\"build_feature\":\"fits\",\
-             \"runtime_opt_in_flag\":\"--fits-tile\",\"default_enabled\":false,\
-             \"allowlist_is_not_consent\":true}",
-        );
-    }
-    if enabled("flac") {
-        push_json_separator(&mut json, &mut first);
-        json.push_str(
-            "{\"format\":\"flac\",\"available\":true,\
-             \"kind\":\"optional_build_feature\",\"build_feature\":\"flac\",\
-             \"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\
-             \"runtime_opt_in_flag\":null}",
-        );
-    }
-    if enabled("pdf") {
-        push_json_separator(&mut json, &mut first);
-        json.push_str(
-            "{\"format\":\"pdf\",\"available\":true,\
-             \"kind\":\"optional_build_feature\",\"build_feature\":\"pdf\",\
-             \"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\
-             \"runtime_opt_in_flag\":null}",
+            "{\"format\":\"fits\",\"runtime_opt_in_flag\":\"--fits-tile\",\
+             \"default_enabled\":false,\"allowlist_is_not_consent\":true}",
         );
     }
     json.push(']');
 
     json.push_str(
-        ",\"transformations\":[{\"flag\":\"--strip-metadata\",\
-         \"available\":true,\"default\":false,\
-         \"effect\":\"removes only the documented per-format metadata list\"},\
-         {\"flag\":\"--nested\",\"available\":true,\"default\":false,\
-         \"effect\":\"also considers supported files inside archives\"}",
+        ",\"transformations\":[{\"flag\":\"--strip-metadata\",\"default\":false},\
+         {\"flag\":\"--nested\",\"default\":false}",
     );
     if enabled("zopfli") {
-        json.push_str(
-            ",{\"flag\":\"--zopfli\",\"available\":true,\"default\":false,\
-             \"effect\":\"uses the slower, stronger DEFLATE encoder where supported\"}",
-        );
+        json.push_str(",{\"flag\":\"--zopfli\",\"default\":false}");
     }
     if enabled("fits") {
-        json.push_str(
-            ",{\"flag\":\"--fits-tile\",\"available\":true,\"default\":false,\
-             \"effect\":\"converts an eligible FITS IMAGE HDU to a tile-compressed BINTABLE\",\
-             \"confirmation_policy\":\"fits_tile_confirmation\"}",
-        );
+        json.push_str(",{\"flag\":\"--fits-tile\",\"default\":false}");
     }
     json.push(']');
 
@@ -180,7 +148,6 @@ fn build_capabilities() -> String {
     if enabled("fits") {
         json.push_str(
             "{\"id\":\"fits_tile_confirmation\",\"flag\":\"--fits-tile\",\
-             \"available\":true,\
              \"interactive\":{\"eligible_for_single_direct_regular_file_only\":true,\
              \"requires_stdin_and_stderr_tty\":true,\"prompt_stream\":\"stderr\",\
              \"default_answer\":\"no\",\"runs_after_candidate_verification\":true,\

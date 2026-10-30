@@ -401,14 +401,14 @@ pub fn print_json<W: Write + ?Sized>(
         push_raw_path(&mut line, &o.path);
         line.push_str(",\"format\":");
         match o.format {
-            Some(f) => push_json_string(&mut line, f.id()),
+            Some(f) => push_json_identifier(&mut line, f.id()),
             None => line.push_str("null"),
         }
         line.push_str(",\"status\":");
-        push_json_string(&mut line, o.status.id());
+        push_json_identifier(&mut line, o.status.id());
         line.push_str(",\"reason_code\":");
         match o.reason_code() {
-            Some(reason) => push_json_string(&mut line, reason.id()),
+            Some(reason) => push_json_identifier(&mut line, reason.id()),
             None => line.push_str("null"),
         }
         write!(
@@ -434,7 +434,7 @@ pub fn print_json<W: Write + ?Sized>(
         match (&o.status, &o.error) {
             (Status::Failed, Some(e)) => {
                 line.push_str("{\"kind\":");
-                push_json_string(&mut line, e.kind());
+                push_json_identifier(&mut line, e.kind());
                 line.push_str(",\"message\":");
                 push_json_string(&mut line, &e.to_string());
                 line.push('}');
@@ -574,6 +574,14 @@ fn round_half_even(value: u128, divisor: u128) -> u128 {
     } else {
         quotient
     }
+}
+
+#[inline]
+fn push_json_identifier(out: &mut String, value: &str) {
+    // These IDs are internal ASCII enum values, not user-provided strings.
+    out.push('"');
+    out.push_str(value);
+    out.push('"');
 }
 
 pub fn push_json_string(out: &mut String, value: &str) {

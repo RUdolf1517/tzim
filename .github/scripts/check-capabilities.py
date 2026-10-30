@@ -30,6 +30,11 @@ def check_default(value: dict) -> None:
     assert "fits" not in value["compiled_formats"]
     assert "fits" not in value["default_enabled_formats"]
     assert [item["format"] for item in value["handler_opt_ins"]] == ["jpeg"]
+    jpeg = value["handler_opt_ins"][0]
+    assert jpeg["default_enabled"] is True
+    assert jpeg["default_admission_feature"] == "jpeg-v1"
+    assert jpeg["codec_only_selection_flag"] == "--formats jpeg"
+    assert all(item["default"] is False for item in value["transformations"])
     assert all(item["flag"] != "--fits-tile" for item in value["transformations"])
     assert value["confirmation_policies"] == []
 
@@ -42,7 +47,8 @@ def check_codec_only(value: dict) -> None:
     assert "jpeg" not in value["default_enabled_formats"]
     assert [item["format"] for item in value["handler_opt_ins"]] == ["jpeg"]
     jpeg = next(item for item in value["handler_opt_ins"] if item["format"] == "jpeg")
-    assert jpeg["available"] is True and jpeg["default_enabled"] is False
+    assert jpeg["default_enabled"] is False
+    assert jpeg["default_admission_feature"] == "jpeg-v1"
     assert jpeg["codec_only_selection_flag"] == "--formats jpeg"
 
 
@@ -52,17 +58,13 @@ def check_all_features(value: dict) -> None:
     assert all(features[name] for name in ("jpeg", "jpeg-v1", "fits", "flac", "pdf"))
     assert all(name in value["compiled_formats"] for name in ("jpeg", "fits", "flac", "pdf"))
     assert all(name in value["default_enabled_formats"] for name in ("jpeg", "flac", "pdf"))
-    assert [item["format"] for item in value["handler_opt_ins"]] == [
-        "jpeg",
-        "fits",
-        "flac",
-        "pdf",
-    ]
+    assert [item["format"] for item in value["handler_opt_ins"]] == ["jpeg", "fits"]
     assert "fits" not in value["default_enabled_formats"]
     fits = next(item for item in value["handler_opt_ins"] if item["format"] == "fits")
-    assert fits["available"] is True and fits["default_enabled"] is False
+    assert fits["default_enabled"] is False
     assert fits["runtime_opt_in_flag"] == "--fits-tile"
     assert fits["allowlist_is_not_consent"] is True
+    assert any(item["flag"] == "--fits-tile" for item in value["transformations"])
     assert [policy["id"] for policy in value["confirmation_policies"]] == [
         "fits_tile_confirmation"
     ]
