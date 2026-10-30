@@ -59,10 +59,11 @@ function Assert-NewProcessResolvesInstall {
         $expectedExecutable = Join-Path $InstallPath 'tzim.exe'
         $expectedLiteral = "'" + $expectedExecutable.Replace("'", "''") + "'"
         $childCommand = '$resolved = Get-Command -Name tzim -CommandType Application -ErrorAction Stop; ' +
-            'if ([string]::Equals($resolved.Source, ' + $expectedLiteral + ', [System.StringComparison]::OrdinalIgnoreCase)) { "PATH_OK" } else { "PATH_MISMATCH" }; ' +
+            'if ([string]::Equals($resolved.Source, ' + $expectedLiteral + ', [System.StringComparison]::OrdinalIgnoreCase)) { Write-Output ''PATH_OK'' } else { Write-Output ''PATH_MISMATCH'' }; ' +
             '& $resolved.Source --version'
+        $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($childCommand))
         $powershell = Join-Path $PSHOME 'powershell.exe'
-        $output = @(& $powershell -NoProfile -NonInteractive -Command $childCommand 2>&1)
+        $output = @(& $powershell -NoProfile -NonInteractive -EncodedCommand $encodedCommand 2>&1)
         $exitCode = $LASTEXITCODE
     }
     finally {
