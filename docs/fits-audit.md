@@ -353,21 +353,84 @@ separately in [measurement status](measurement-status.md).
    original checksums. Mirroring is more work and produces a better file; refusing is cheaper and excludes most
    archival data. This is the decision that most affects how many real files the handler can touch.
 
-## 10. What happens to this work
+## 10. What happened to this work
 
-- **If the measurement refuses FITS**, this audit and §4.12 stay on record, `formats.md` §5 gains FITS with the
-  numbers beside it, and the next attempt starts here rather than from zero — the same disposition FLAC got.
-- **If it admits**, the next issue carries the [formats §4](formats.md#4-admission-criteria-for-a-new-format)
-  checklist: a synthetic FITS writer in `tests/common/mod.rs` modelled on `build_tiff`, the corpus gate, the
-  measured size delta, and `fitsverify` wired into CI.
+The two branches in the original stage-1 plan are historical. The v0.14 handler is an opt-in implementation
+behind `--fits-tile` and the non-default `fits` feature, not full FITS admission. The separately registered #59
+survey ran at exact SHA `7b82c9ed`; all 14 Astropy reference candidates failed the strict `funpack`
+array/literal-header comparison, so its pre-registered threshold was not applied. The fixed source rows and
+candidate identities remain unchanged in §11; no checksum or header repair was made. The result leaves the
+threshold blocked and #70/full-admission questions open; it does not alter the historical audit.
 
-Either way the answer stops being "nobody looked". That is the only claim this document makes.
+## 11. PR #84 follow-up — #59 fixed survey sample
 
-## 11. PR #84 follow-up — #59 full-size survey sample not run
+The historical 178-file audit in §8 remains unchanged. The separate, owner-fixed full-product sample from
+[comment `6498702204`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204) ran at exact SHA
+`7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, workflow run
+[41038741167](https://github.com/RUdolf1517/tzim/actions/runs/41038741167). The frozen 14-product source-manifest
+SHA-256 is `7a7b563b4a641cca519c47c7fbd07cbe904c7608a8a79774bd4f3efa3d937d46`. All 14 products were fetched and
+measured; none was substituted or selected by gain. The environment was Python 3.12.15, NumPy 2.4.6, Astropy
+8.0.2, with HEASARC CFITSIO commit `113781d8aa442cf8d3c27295d9084674b8b039f2` (archive SHA-256
+`d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e`). The existing two-tier instrument SHA-256
+was `104d7fb528007a67c8e9fe613a7fe00084fcfbf6ab9e49b47f0bc2c02319aeff`.
 
-The historical 178-file corpus and the later candidate-specific HEASARC checks are not the separately required
-full-size survey-product measurement. This update has no pre-registered survey-product selection with per-file
-source/permission records, and the current runner lacks `fitsverify` and `funpack`; no new Tier 1 or Tier 2
-numbers, checksum exceptions, or acceptance claims are added. The checksum refusal, historical baselines and
-thresholds remain unchanged. See [measurement status](measurement-status.md) for the exact blocker and owner
-action.
+### Distribution and gated disposition
+
+| Registered measurement | n | Median gain | Q1 | Q3 | Share-positive |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Tier 1 existing-tile comparator | 0 | **empty** | **empty** | **empty** | **empty** |
+| Tier 2 Astropy reference candidates | 14 | 30.42168674698795% | 29.518072289156628% | 64.63408680369086% | 100.00% |
+
+Tier 1 is an empty comparator set, not 0%. The per-tier/refusal distribution was Tier 1 comparator n=0, Tier 2
+reference n=14, refused n=0, not-measured n=0, with no refusal reasons. The Tier-2 distribution is **not an
+applied acceptance result**: the gate requires `fitsverify -l`,
+`funpack`, and exact storage-array plus literal-header comparison on each Astropy candidate, and **0/14
+candidates passed the full gate**. `fitsverify -l` statuses were 4 failed, 6 passed, and 4 passed with only
+source-inherited warnings; all 14 `funpack` round trips failed the combined literal-header/array comparison.
+Therefore the pre-registered #59 threshold disposition is **not applied**. A mismatch is a stop; there was no
+checksum removal, header normalization, scaling removal, or other input/candidate repair.
+
+### Exact per-row Astropy reference-candidate identities
+
+The following are the exact candidate byte counts and SHA-256 values measured and validated in this run. The
+reference-candidate results below are distinct from the Tzim columns later in the report. The compact report is
+[PR comment `6520285722`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520285722).
+
+| Fixed product ID | Reference candidate bytes | Candidate SHA-256 | `fitsverify -l` on reference candidate | `funpack` storage-array + literal-header comparison |
+| --- | ---: | --- | --- | --- |
+| `tess-s1-c1-ccd1-calibrated` | 26,242,560 | `41698a6e1e90611d70ac06a7b0b0a29b2a68616b70b7ddbacde034ca94d03b93` | FAIL, exit 1; new checksum warning | FAIL |
+| `tess-s1-c1-ccd1-uncalibrated` | 8,280,000 | `dfa30bbef4c5aac175da2ceccb7243987fac3b2e3317cd197b268344747e54fe` | FAIL, exit 1; new checksum warning | FAIL |
+| `tess-s1-c4-ccd2-calibrated` | 27,089,280 | `a417b75ca6b184d1d67f3fc7d9bef5758e2fc605313e462113a37441d5fe3c1c` | FAIL, exit 1; new checksum warning | FAIL |
+| `tess-s1-c4-ccd2-uncalibrated` | 9,192,960 | `2a83e24a6ca726ab989ca3c8e6d988db81b0bbdc063f6adb826e17e463051b23` | FAIL, exit 1; new checksum warning | FAIL |
+| `galex-tile-01-MISDR1_18916_0459-fd-int` | 15,693,120 | `65631d1dcbe2184bd30f29fd85e3fe57ca51d34822a30f3e1a033cec9509b16c` | inherited EPOCH warning; candidate exit 1 | FAIL |
+| `galex-tile-02-MISDR1_18916_0459-nd-int` | 20,862,720 | `ed7055cad3e847f27f23863570dde8fdb81b7ef0865adb7a9cc6bd4ee9ca781a` | inherited EPOCH warning; candidate exit 1 | FAIL |
+| `galex-tile-03-MISWZS03_18917_0284-fd-int` | 6,825,600 | `e07f97d54710b8abeda7b042bbf4ab51d155739354dcfcb550e73b0505989f46` | inherited EPOCH warning; candidate exit 1 | FAIL |
+| `galex-tile-04-MISWZS03_18917_0284-nd-int` | 15,782,400 | `7b46cf22c50b03c18d6693ec83c369bd6f057798402f8282ca3b7961a4c12122` | inherited EPOCH warning; candidate exit 1 | FAIL |
+| `rosat-rass-c` | 328,320 | `b2c0817a8900a237cec8095938fd1d7d1e7e2c42639f86551949922478d7433e` | PASS, exit 0 | FAIL |
+| `rosat-rass-m` | 336,960 | `7a9a4d65c406c1a6cead13957b6b6cc9dbcfa35dba186ad0bb9330b191bd3858` | PASS, exit 0 | FAIL |
+| `rosat-rass-ij` | 339,840 | `b99dbd1baa69bd387863d1226a5e09a0028af14764483562465e76cbad44a288` | PASS, exit 0 | FAIL |
+| `rosat-rass-exp-c` | 336,960 | `d0e382fc0a1252b38246c0df3f2603cb815a7de164246f425fca5e2a3c2bb773` | PASS, exit 0 | FAIL |
+| `rosat-rass-exp-m` | 336,960 | `a1d1fbd1784d05970dcc314bac215d5659ecb35493a2df9e51d677f412e3fd2e` | PASS, exit 0 | FAIL |
+| `rosat-rass-exp-ij` | 336,960 | `7552f1109551fd16c6823fde5c4b9ce50c7670a7610349b6859f52c2811128f6` | PASS, exit 0 | FAIL |
+
+For the four GALEX candidates, `fitsverify -l` returned the same single deprecated-`EPOCH` warning as the
+source; these are counted as inherited-warning diagnostics, not as clean exit-zero checks. The six ROSAT
+candidates returned zero with no candidate warning; the source-side deprecated-`BLOCKED` warning remains an
+unchanged-source diagnostic. The four TESS candidates introduced a `CHECKSUM`-agreement warning absent from
+their source baseline. Exact command arguments, full stdout/stderr, row validation records, source hashes, and
+independent recomputation are retained in artifact `fixed-fits-evidence` (ID `12970075387`, SHA-256
+`0d7599db4ac4edf833eeff67038bceadfe9a69f78e2d82606a776d3f3b054ba4`, 133,704 bytes). The artifact contains no
+source FITS bytes, reference-candidate bytes, reconstructed bytes, or ROSAT data. A local download attempt
+returned Azure Blob `EOF`, so the raw ZIP has not been independently inspected in this sandbox; the artifact
+remains attached to the exact run and the report comment preserves the per-row identities and outcomes.
+
+### Separate Tzim disposition
+
+Tzim **skipped all 14 rows unchanged**: output sizes and SHA-256 values equal the inputs. Direct source-versus-
+unchanged-Tzim array/header comparisons passed 14/14; Tzim-candidate `funpack` is not applicable for these
+unchanged rows. These results do **not** validate the Astropy reference candidates above and are not Tier-2
+gain results. No FITS input or candidate bytes were uploaded, and the ROSAT permission boundary was preserved.
+
+**One owner action remains:** decide whether to keep #59 blocked on these exact reference-candidate mismatches or
+authorize a separately specified, independently validated reference-candidate protocol. Until then, retain this
+14-row result unchanged and do not apply the registered threshold.

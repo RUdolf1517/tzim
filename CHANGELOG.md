@@ -11,8 +11,32 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Added
+
+- **Lossless FLAC frame re-encoding behind the non-default `flac` feature** (#79). The handler uses independent
+  Claxon PCM/STREAMINFO verification and remaps seekpoints while retaining metadata. At exact source SHA
+  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, the frozen 43-row sample optimized 23 valid files; all 23 passed
+  external `flac --test`, `metaflac`, exact PCM and STREAMINFO-MD5 checks. The full-corpus total is
+  109,472,390 → 108,727,820 bytes; the optimized-only rows are 91,284,082 → 90,539,512 bytes; 744,570 saved
+  in either denominator. This sample is not full format admission.
+- **Narrow PDF FlateDecode recompression behind the non-default `pdf` feature** (#80). The implementation
+  preserves object/xref structure and existing `/ObjStm` bytes, and does not repack or flatten revisions. It
+  remains separately owner-authorized and opt-in even though the #57 sample's registered threshold result is
+  refusal.
+
 ### Changed
 
+- **#57 fixed PDF sample: original accepted-subset rule applied.** At exact source SHA
+  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, 18 of 21 outputs were accepted and the `faithful_pct` median
+  (flate2 level 9) was 0.00038990779980227345%, below the registered 1% refusal bar. The pre-registered result
+  is **refused after measurement**. The permitted-qpdf and forbidden-repack distributions, all raw rows, and
+  qpdf/MuPDF checks are in [PDF audit §11](docs/pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
+- **#59 fixed FITS survey: reference-candidate gate stops threshold application.** At exact source SHA
+  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, Tier 2 had n=14, median 30.42168674698795%, Q1
+  29.518072289156628%, Q3 64.63408680369086%, and 100% positive share; Tier 1 was explicitly empty. All 14
+  Astropy candidates failed the strict `funpack` array/literal-header comparison, so the threshold is
+  **not applied**. Tzim's 14 rows remained unchanged skips; no FITS bytes were uploaded or inputs repaired.
+  Exact per-row candidate identities and diagnostics are in [FITS audit §11](docs/fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample).
 - **Baseline JPEG is enabled in the release default with independent V1 verification** (#82). The default
   feature set includes `jpeg-v1`; the exact coefficient, marker and refusal checks remain, with an independent
   decoder comparing original and candidate pixels before atomic replacement. `--formats` stays an allowlist.

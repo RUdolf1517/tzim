@@ -3,70 +3,87 @@
 Historical checklist date: 2026-10-27. Baseline: `5dd45b38412ffb762a1fc380bd291351c9e6601e`.
 This is a living management checklist, not a completed execution audit or a release approval.
 
-## PR #84 execution status — 2026-10-29
+## PR #84 execution status — 2026-10-30
 
-The owner has fixed the #57/#59 source identities and protocol in PR comment
-[6498702204](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204). The exact 21-output PDF set and
-14-product FITS set are now implemented as fixed-manifest workflows in
-[`.github/workflows/fixed-realfiles.yml`](../.github/workflows/fixed-realfiles.yml); no input is selected, dropped,
-or substituted based on size or gain. **Neither workflow has run for this source revision yet**, so this is not
-measurement evidence. The existing #82 JPEG runtime artifact and #59 fixture gate are separate evidence and do
-not satisfy #57 or #59. No threshold, baseline, old aggregate, #78 policy, or #82/#83 behavior was changed.
+The owner-fixed #57/#59 source identities and protocol are in PR comment
+[6498702204](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204). The fixed-manifest workflows
+retain every row and do not select, drop, repair, or substitute inputs based on size or gain. The first complete
+measurement pass ran at exact source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` in
+[workflow `41038741167`](https://github.com/RUdolf1517/tzim/actions/runs/41038741167). These results are exact
+for that SHA. The documentation commit below changes Markdown-derived PDF inputs; the required post-documentation
+run is reported separately on the PR and must not be conflated with this immutable snapshot. No baseline,
+threshold, old aggregate, #78 policy, or #82/#83 behavior was changed.
 
-- **#57 — pending execution, not a source-manifest blocker.** The frozen set is 21 outputs: six fixed Markdown
-  documents, each produced by Pandoc/pdflatex, Markdown→DOCX→LibreOffice, and native AppKit/Quartz, plus three
-  scan-derived PDFs from the pinned OCRmyPDF source. The workflow must finish generation before freezing the
-  expanded manifest and measuring. This sandbox lacks Pandoc, pdflatex, LibreOffice, Swift/Quartz, PyMuPDF,
-  qpdf, and Rust/Cargo; the earlier local probe produced 0/15 Ubuntu PDFs because its producer/decoder tools
-  were absent. The pinned scan archive and three source-image hashes were checked, but no measurement PDFs or
-  qpdf/MuPDF results exist. The workflow must retain all 21 rows and their exact failures if a producer fails.
-- **#59 — pending execution, not a source-manifest blocker.** The frozen set is the exact 14 TESS, GALEX and
-  ROSAT products in comment `6498702204`, including full products only. No substitutes, cutouts, or repairs are
-  allowed. A local HTTPS HEAD probe for TESS/GALEX/ROSAT ended in TLS EOF; this is not a completed GET and does
-  not establish that a fixed source is unavailable on the pinned runner. The workflow performs exact GETs,
-  records redirects/headers/hashes and retains a failed row plus one exact owner action for any failed product.
-  The local sandbox lacks Astropy, NumPy, CFITSIO `fitsverify`/`funpack`, and Rust/Cargo; no fixed-set FITS
-  measurements have been run.
-- **#79 — implementation present; validation pending.** The FLAC handler is behind the non-default `flac`
-  feature, uses flacenc plus independent Claxon PCM decoding/STREAMINFO checks, remaps seekpoints, and refuses
-  distinct source seekpoints that collapse to one output frame. Reserved sample-size codes 3 and 7 have a
-  regression test. No Rust compilation, test, external `flac`/`metaflac`, fuzz, corpus, or actual feature-size/
-  speed/gain result is available in this sandbox. The lockfile was hand-edited because Cargo is absent here;
-  CI's branch lockfile job must regenerate it with `cargo generate-lockfile`, and the all-features locked build
-  and tests must validate the resulting graph.
-- **#80 — implementation present; validation and #57 measurement pending independently.** The non-default
-  `pdf` feature supports the narrow classic-xref and supported xref-stream paths, preserves existing `/ObjStm`
-  bytes, validates type-2 xref member mappings and bounds decoded object streams at 8 MiB. It does **not** wait
-  for #57 to be implemented. No Rust build/test or qpdf/MuPDF run is available locally; the frozen #57 run is
-  still required for acceptance evidence.
+- **#57 — fixed sample measured; original threshold applied.** All 21 registered outputs were generated and
+  retained (six documents through all three named producers plus three pinned scan-derived PDFs): 18 accepted,
+  3 refused as `incremental_update`. The accepted-subset `faithful_pct` distribution was n=18, median
+  0.00038990779980227345%, Q1 0.0%, Q3 0.19344060494152818%, share-positive 72.22%. Permitted-qpdf and
+  forbidden-repack distributions are in [PDF audit §11](pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
+  The pre-registered rule was **applied and returned refused after measurement** because the faithful median is
+  below 1%. Tzim's separate result was 12 optimized rows and 3,565 bytes saved from 72,982,531 optimized-input
+  bytes; this optimized-only median was not substituted for the registered metric. There were zero qpdf
+  candidate-check failures and zero registered render differences. The exact report is
+  [comment `6520274047`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520274047).
+- **#59 — fixed survey measured; threshold not applied.** All 14 exact TESS, GALEX and ROSAT products were
+  fetched and measured. Tier 2 Astropy candidates: n=14, median 30.42168674698795%, Q1 29.518072289156628%,
+  Q3 64.63408680369086%, share-positive 100%. The per-tier/refusal distribution is Tier 1 comparator n=0,
+  Tier 2 reference n=14, refused n=0, not-measured n=0, with no refusal reasons; Tier 1 remains explicitly
+  empty, not 0%. Every Astropy candidate was retained by its exact size/SHA, then checked with HEASARC
+  `fitsverify -l` and `funpack`. The full round-trip gate failed 14/14 on literal-header/storage-array
+  comparison, so the registered threshold was **not applied**. Tzim independently skipped all 14 rows
+  unchanged; its 14 direct comparisons concern source-versus-unchanged-copy, not the reference candidates.
+  No input repair or FITS-byte upload occurred; the ROSAT boundary was preserved. See [FITS audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample) and [comment `6520285722`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520285722).
+- **#79 — fixed FLAC corpus evidence recorded.** The 43-row manifest SHA-256 remains
+  `fe3e15d22d098744bee1955a026c537cc077331b89765a698ddfb6c169de71be`; the run-specific expanded-manifest
+  SHA-256 is `225cb1b592da64008f9c0e5679bdb898aa943751579c9b03c93257fcdc58615c`. Counts were 30 valid inputs
+  (23 optimized, 7 already optimal), 7 documented refusals and 6 invalid controls. All 23 candidates passed
+  external `flac --test`, `metaflac`, exact PCM comparison, and STREAMINFO-MD5 checks. Whole-corpus bytes were
+  109,472,390 → 108,727,820; optimized-only bytes were 91,284,082 → 90,539,512; saved 744,570. First-pass
+  time was 6.873 seconds total (median 109.207 ms/file). The `flac`-only feature build was 836,384 bytes.
+  Exact report: [comment `6520214774`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774).
+- **#80 — implementation remains separately authorized and non-default.** The PDF handler supports the narrow
+  classic-xref/xref-stream paths, preserves existing `/ObjStm` bytes, validates type-2 members and bounds
+  decoded object streams at 8 MiB. It does not wait for #57. The #57 sample's refused result does not alter
+  the owner's separate opt-in implementation decision. All-feature and feature-specific CI tests passed; no
+  full PDF admission or release-default claim is made.
 
-The sandbox has no local Cargo/Rust toolchain, so none of the newly edited Rust code, lockfile graph, or Rust
-regressions has been compiled or tested here. CI must provide that evidence. A green build/test result alone
-will not be described as proof of #57/#59 measurements or rendered/decoded equivalence.
+**Checks and remaining limits at this SHA.** PR CI run `41038741139` passed the platform matrix, all-feature
+Rust tests, Clippy, MSRV, package, size, and documentation-link checks; its Astropy FITS oracle passed. Fixed
+run `41038741167` passed PDF generation, qpdf/MuPDF measurement and independent recomputation, and all-feature
+Rust tests, but the #59 reference-candidate gate correctly made the aggregate run fail. The fixed FLAC run
+`41038741487`, fuzz `41038741155`, corpus `41038741154`, third-party `41038741314`, lockfile `41038735328`, and
+HEASARC `41038741101` completed successfully. #78's external Astropy EXTNAMX fixture and final evidence-bundle /
+repro jobs were skipped; #78 remains open. `measure-repro` run
+[41038741066](https://github.com/RUdolf1517/tzim/actions/runs/41038741066) failed at this SHA: the historical
+FITS totals were Astropy 780→675 KiB, CFITSIO 60→678 KiB, Drizzlepac 3.3→14.8 MiB, Reproject 2.0→1.8 MiB,
+and total 17.8→17.9 MiB (counts/commits reproduced). Historical PDF median/Q1/Q3 and repack median reproduced,
+but the mean was 0.4216836773% vs 0.39%, share-positive 69.3756% vs 68%, qpdf mean 1.65% vs 1.68%, and render
+pages 168 vs 173; five old Zopfli cells remain unavailable because their per-file sample was not retained.
+These are historical-reproduction differences, not the fixed #57/#59 run results; no baseline or threshold was
+changed. The local sandbox still lacks Rust/Cargo and HEASARC tools; pinned CI performed the measurements. A
+green CI status alone is not treated as proof of acceptance.
 
 ## Evidence and limits
 
-The issue bodies, repository documents and measurement script headers were reviewed. The historical PDF/FITS
-execution details below are attributed to the earlier handover; they were not independently reproduced in this
-iteration. The CI JPEG benchmark and ordinary fixture gates are separate evidence and do not close #57 or #59.
+The historical 2,208-file PDF and 178-file FITS execution details below remain attributed to the earlier
+handover; their historical per-file artifacts were not retained. This is distinct from the actual fixed #57/#59
+runs at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, whose raw rows, reports, commands, environments and
+independent aggregates are attached to the workflow and linked above. The ordinary fixture gates and JPEG
+benchmark remain separate evidence; they do not turn the failed #59 reference-candidate gate into a pass.
 
-The instruments are already linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
+The current instruments are linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
 [FITS §8.1](fits-audit.md#81-what-was-actually-run-and-with-what):
 
-- [PDF measurement script](../.github/scripts/pdf-measure.py), reported historical blob `1677d63`;
-- [FITS measurement script](../.github/scripts/fits-measure.py), reported historical blob `2978fe4`.
+- [PDF measurement script](../.github/scripts/pdf-measure.py) and fixed-sample wrapper/recomputation scripts;
+  the exact source SHA and manifest are recorded in the #57 report/artifact;
+- [FITS measurement script](../.github/scripts/fits-measure.py) and fixed-sample wrapper/recomputation scripts;
+  the existing two-tier instrument SHA-256 is `104d7fb528007a67c8e9fe613a7fe00084fcfbf6ab9e49b47f0bc2c02319aeff`.
 
-The handover's statement that no document links these scripts is incorrect: both links exist at the baseline.
-The headers provide invocation examples, but their shallow clones track upstream default branches; naming
-historical commits in prose does not make those commands check out those commits.
-
-According to the handover, historical per-file outputs (`pdf.jsonl`, `pdf_faithful.jsonl`, `fits.jsonl`,
-`zfile.json`) and temporary corpus/environment directories were not retained. Published aggregates remain,
-but are not substitutes for per-file evidence. A fresh run must retain its own identity and disclose differences.
-
-The PDF audit records libqpdf 12.4.2 and MuPDF 1.28.5. The handover additionally reports Python 3.11.2,
-pikepdf 10.17.0, zopfli 0.4.3, astropy 8.0.2 and numpy 2.4.6; these are unverified historical version claims,
-not a tested environment lock. The complete historical OS/package inventory is not available here.
+The old blob labels `1677d63` and `2978fe4` above the historical aggregates refer to earlier script versions;
+they are not the current fixed-sample instrument identities. The current #59 report records Python 3.12.15,
+NumPy 2.4.6, Astropy 8.0.2 and pinned CFITSIO 4.7.0 source; #57 records pinned qpdf 12.4.2 and its MuPDF
+render tool. The exact raw command arguments and stdout/stderr are retained in the workflow artifacts. The
+133,704-byte #59 evidence artifact has SHA-256 `0d7599db4ac4edf833eeff67038bceadfe9a69f78e2d82606a776d3f3b054ba4`; a local download attempt ended in Azure Blob `EOF`, so its ZIP contents remain uninspected in this sandbox. The report comment itself retains the complete 14-row source/candidate identities and summarized command outcomes.
 
 ## Independent FITS review handoff
 
@@ -140,11 +157,11 @@ separately, and the final release inventory must name the actual release SHA.
 
 | Issue / requirement | Available evidence in this iteration | Open gap / disposition |
 | --- | --- | --- |
-| #57: exact source set | Owner-fixed 21-output manifest in comment `6498702204`; generation and frozen-manifest scripts are in the branch | Workflow has not run for this source SHA. Retain all 21 rows, producer/tool identities, raw qpdf/Tzim output, first/middle/last render checks, and independent recomputation; do not claim measurements from CI status alone |
-| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT list in comment `6498702204`; fetch/measurement/recompute scripts are in the branch | Workflow has not run for this source SHA. Preserve failed rows with exact URL/error/one owner action; retain raw source hashes and tool output without uploading FITS bytes; do not substitute products |
-| #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seektable mapping, and regression tests are in this branch behind `flac` | Rust build/tests, external `flac`/`metaflac`, negative controls/fuzz, full-corpus and actual feature-size/speed/gain evidence remain pending |
-| #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, and tests are in this branch behind `pdf` | Independent of #57 implementation; Rust build/tests and frozen #57 qpdf/MuPDF measurement/render evidence remain pending |
-| #78 and #82/#83 | Existing accepted code and owner decisions were not changed in this iteration | Preserve them unless a concrete failure is demonstrated; no size threshold, baseline, prompt, or release default was changed |
+| #57: exact source set | Owner-fixed 21-output set; exact run `41038741167` at source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, manifest SHA `8b4705e6…` | 18 accepted, 3 refused; `faithful_pct` median 0.00038990779980227345%; original threshold applied and returned refusal. Permitted-qpdf/repack distributions, raw commands, qpdf checks, renders and independent recomputation are retained. The post-documentation rerun is separately reported; do not replace the registered metric with Tzim-only gain |
+| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; exact run `41038741167` at source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, manifest SHA `7a7b563b…` | 14/14 products downloaded; Tier 2 n=14 (median 30.42168674698795%, Q1 29.518072289156628%, Q3 64.63408680369086%, positive share 100%); Tier 1 explicitly empty. All 14 reference-candidate `funpack` array/literal-header checks failed; threshold **not applied**. Full per-row candidate hashes and external results retained without FITS bytes; all unchanged Tzim skips remain distinct |
+| #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seekpoint mapping, and regression tests behind `flac`; fixed 43-row run `41038741487` at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` | 23 optimized, 7 already optimal, 7 documented refusals, 6 invalid controls; all 23 optimized rows passed external tools, exact PCM and STREAMINFO-MD5. Saved 744,570 bytes; whole-corpus and optimized-only labels are both recorded. Fuzz, feature-size and timing evidence are linked; broader admission/review remains separate |
+| #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, tests, behind `pdf` | Implementation is independent of #57 and remains owner-authorized/non-default. #57's original rule refused the fixed sample; qpdf/MuPDF evidence and all-feature tests passed. No default enablement or full PDF-admission claim |
+| #78 and #82/#83 | #78 HEASARC run `41038741101` passed; its external Astropy EXTNAMX fixture and final evidence/repro jobs were skipped. #82/#83 code and owner decisions were unchanged | Keep #78 open pending its missing evidence/manager review; preserve #82/#83. No size threshold, baseline, prompt, or release default was changed |
 | #70: FITS implementation | PR #69 implementation and existing `fits` feature remain opt-in | This #59 measurement work does not close #70 or make a full FITS-admission claim |
 | #41: audit tracker | Historical audit and linked work remain available | This iteration does not claim every original finding is closed |
 
@@ -178,9 +195,11 @@ no baseline/threshold changes, corpus commits, self-merge, self-close, or Releas
    stop rule is not retroactively relabelled as an approved revised protocol.
 3. The five FITS input-byte and four PDF result-table differences remain under investigation before the
    corresponding full format acceptance. Baselines and thresholds are not edited to obtain green CI.
-4. The five unavailable Zopfli cells remain an explicit limitation. No new sample is required for this general
-   release and no comparison is invented.
-5. The real-toolchain PDF and representative survey FITS samples remain required for full admission only.
+4. The five unavailable Zopfli cells remain an explicit limitation; the earlier general-release decision did
+   not request a replacement sample. This does not override PR #84's separate fixed #57/#59 measurement scope.
+5. For PR #84, the exact fixed real-toolchain PDF and survey FITS samples were required now and have been run.
+   The #57 threshold was applied; the #59 threshold remains unapplied after the reference-candidate mismatch.
+   Neither result by itself claims full format admission.
 6. A durable measurements/evidence Release artifact is required before publication. Selecting that retention
    policy does not authorise creating or publishing the Release; separate final confirmation is still needed.
 7. Signed-P standard/source evidence, arithmetic boundary tests and ordinary CI are sufficient for opt-in F-06

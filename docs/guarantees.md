@@ -724,15 +724,16 @@ entropy of its content, while a TIFF from a modern scanner is often already Defl
 ### 4.9. FLAC — frame re-encoding (#79, non-default opt-in)
 
 **Implementation status: present behind the non-default `flac` feature in this unreleased PR branch; full
-format admission and performance claims remain pending.** The audit behind the earlier refusal is
-[flac-audit.md](flac-audit.md): it measured a **0.4 %** gain on musical material and **0 %** on files already
-written at `flac -8`, while encoder and independent decoder were estimated at **+150…300 KiB**. Those values
-remain historical and are not evidence for this implementation. The owner authorized #79 despite that result.
+format admission and release claims remain separate.** The audit behind the historical refusal is
+[flac-audit.md](flac-audit.md): its 0.4% musical-material result, 0% at `flac -8`, and estimated +150…300 KiB
+cost remain unchanged historical evidence. The owner separately authorized #79 despite that result.
 
-The clauses below describe the current narrow handler contract; passing unit tests is not a full-corpus or
-release claim. Actual-binary CI, external `flac`/`metaflac`, negative controls, fuzzing, and fixed-manifest
-size/speed/gain measurements remain required before any broader admission or claim. See
-[measurement-status.md](measurement-status.md) for the exact run state.
+**Fixed-corpus evidence at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`:** the 43-row corpus had 23
+optimized and 7 already-optimal valid inputs, 7 documented refusals and 6 invalid controls. All 23 optimized
+candidates passed external `flac`/`metaflac`, exact PCM, and STREAMINFO-MD5 checks; total saved bytes were
+744,570. First-pass time was 6.873 seconds, and the feature-only build measured 836,384 bytes. These fixed rows
+are evidence for that subset, not full format admission or release approval. The exact report and artifact limits
+are in [measurement-status.md](measurement-status.md).
 
 **Transformation.** Re-encode the audio frames with a better encoder. The decoded samples are identical;
 the frames, their lengths and the byte offsets that point at them are not, because a FLAC encoder is free
@@ -911,15 +912,16 @@ the same reasoning.
 
 ### 4.11. PDF — FlateDecode recompression (#80, non-default opt-in)
 
-**Implementation status: present behind the non-default `pdf` feature in this unreleased PR branch; full
-format admission and performance claims remain pending.** The 2 208-file historical audit in
-[pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) reported
-**1 009 (45.7 %)** in the narrow slice, a **0.08 %** median with level 9, 0.15 % with `zopfli`, and 0.59 % with
-the loosest instrument. Those old values and thresholds remain historical and unchanged. The owner selected a
-fixed 21-output real-toolchain #57 sample; the implementation is not conditional on that measurement, but
-broader acceptance and performance statements remain pending. The historical 20.1 % forbidden-repacking
-number remains outside this contract: flattening revisions, regenerating object streams and renumbering objects
-is a different risk class, not a recompress.
+**Implementation status: present behind the non-default `pdf` feature in this unreleased PR branch; no
+release-default or full-admission claim is made.** The 2,208-file historical audit in
+[pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) remains
+unchanged. The fixed #57 21-output sample at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` produced an
+accepted-subset `faithful_pct` median of 0.00038990779980227345%; the original rule was applied and returned
+**refused after measurement** (<1% refusal bar). The permitted-qpdf and forbidden-repack distributions, qpdf
+checks and MuPDF render results are in [pdf-audit §11](pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
+This measurement decision does not change the owner's separate #80 authorization for a non-default
+implementation. The historical 20.1% forbidden-repacking number remains outside this contract: flattening
+revisions, regenerating object streams and renumbering objects is a different risk class, not a recompress.
 
 The handler recompresses only eligible FlateDecode streams. The feature is off by default. It supports a
 single-revision classic cross-reference table or a supported cross-reference stream; it never flattens revisions
@@ -1032,14 +1034,14 @@ as TIFF `Compression 1 → 8` in [§4.8](#48-tiff-classic-baseline-strips--v07),
 so it is opt-in per run. This is an implementation contract for the general opt-in release, not a claim of
 full FITS format admission or stability.
 
-**Historical audit, not current release/performance evidence.** The historical audit reported median **21.9 %**
-on **84.8 %** of its 178-file sample and admitted Tier 2 under its written thresholds. Those figures and that
-admission are retained as history, not used to make a current release or performance claim. The owner has
-selected a general release with this implementation behind `--fits-tile`; investigation of current measurement
-differences and the missing supplemental samples remains necessary for full FITS admission. Recompressing
-tiles that are already `GZIP_1`/`GZIP_2` measured **0.00 %** in that historical run and **does not ship** — a
-`ZIMAGE` table is copied verbatim. See [fits-audit §8](fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance)
-and [measurement status](measurement-status.md) for the limitations and open decisions.
+**Historical audit, not current release/performance evidence.** The historical 178-file audit reported median
+**21.9%** on **84.8%** of its sample and admitted Tier 2 under its written thresholds; those figures remain
+history. The owner selected an opt-in `--fits-tile` implementation, not full FITS admission. In the separate #59
+14-product survey run at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, all 14 Astropy Tier-2 reference
+candidates failed the required `funpack` literal-header/storage-array round trip. The pre-registered threshold
+was **not applied**; Tzim skipped all 14 products unchanged, which is distinct from the candidate check.
+Recompressing tiles already `GZIP_1`/`GZIP_2` measured **0.00%** in the historical run and **does not ship** — a
+`ZIMAGE` table is copied verbatim. No FITS inputs were repaired or uploaded. See [FITS audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample) and [measurement status](measurement-status.md) for identities and limits.
 
 **Confirmation (#83).** `--fits-tile` remains the only transformation that can request confirmation. For a
 single direct regular file on a TTY, the handler first establishes eligibility, builds the candidate, and runs

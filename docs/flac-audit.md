@@ -8,18 +8,18 @@ queue in the roadmap says "contract before code", and a contract written without
 wish list: FLAC is the one format in the queue where the *lossless* part is easy and the *verifiable* part
 is the whole problem.
 
-**Historical status: refused after measurement (§7).** No FLAC code exists in this checkout, and the
-historical audit estimated small gains against a substantial encoder/decoder size cost. §7 retains those figures
-as evidence; no threshold or measurement below was changed.
+**Historical status: refused after measurement (§7).** That refusal and its historical gain/cost figures remain
+unchanged evidence; the current owner separately authorized the non-default #79 implementation. No historical
+threshold or result in §7 has been rewritten.
 
-**Current owner scope: #79 authorizes a non-default opt-in implementation despite that historical result.**
-This supersedes the old refusal as the current product decision, but it does not mean a handler ships: #79's
-runtime verifier, external checks, corpus/fuzz results and actual size/speed/gain measurements remain
-unimplemented. The current runner has no Rust/Cargo toolchain or `flac`/`metaflac` executables, and no
-permission-qualified PCM corpus manifest is staged, so no dependency re-review, build or runtime evidence was
-possible in this iteration. **Owner action:** approve a provenance/licence-qualified PCM corpus and provision
-one pinned Rust runner containing `flac`/`metaflac`, so the issue can be implemented and tested without changing
-the historical baseline.
+**Current owner scope and exact-SHA evidence.** #79 is implemented behind the non-default `flac` feature. The
+fixed corpus run at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` retained all 43 frozen rows: 30 valid
+inputs (23 optimized, 7 already optimal), 7 documented refusals, and 6 invalid controls. All 23 optimized
+candidates passed external `flac --test` and `metaflac`, independent PCM comparison, and STREAMINFO-MD5 checks.
+The full 43-row corpus totaled 109,472,390 → 108,727,820 bytes; the 23 optimized inputs totaled 91,284,082 →
+90,539,512 bytes; both views save 744,570 bytes. First-pass time was 6.873 seconds total (109.207 ms/file
+median); the `flac`-only feature build was 836,384 bytes. Exact rows, manifest and commands are in the [run
+report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774) and artifact `flac-corpus-7b82c9edb6e5060bc8ce7ed756caebba91505b5b` (no FLAC bytes). This is measured sample evidence, not full-format admission or release approval.
 
 ---
 
@@ -157,8 +157,8 @@ re-quantisation and no colour management anywhere in the chain.
 | Cost | Amount | How it is known |
 | --- | --- | --- |
 | dependencies | 3 direct crates (`flacenc`, `claxon`, `md-5`), 6 with transitive | `cargo tree` when it lands |
-| binary size | not measured yet | the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) will get a `flac` column; the budget in §1 is not raised in advance |
-| encoder speed | not measured yet | `flacenc` searches LPC orders and Rice partitions; the real-file corpus run will show it |
+| binary size | `flac`-only build: 836,384 bytes at exact SHA `7b82c9ed` | source-SHA size report [`6520257597`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520257597); this feature-only binary size is not stated as a net delta |
+| encoder speed | 6.873 seconds total first-pass time; median 109.207 ms/file | fixed 43-row corpus report [`6520214774`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774) |
 | memory | one decoded pass per file, bounded by `--max-size` | the existing limit applies unchanged |
 
 `flacenc`'s default features pull `log`, `crossbeam-channel` (for its internal parallelism) and `serde`;

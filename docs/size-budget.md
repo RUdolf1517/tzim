@@ -14,6 +14,15 @@ measured, so this document defines the budget, the build profile, and the exact 
 > The #82 limit is a ceiling, not a target: no verification is weakened and no measurement is rounded.
 > Details: [benchmarks.md](benchmarks.md#1-binary-size--measured).
 
+### Exact-head #79/#80 feature-size report — 2026-10-30
+
+The `size` report at exact source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` recorded the
+1,082,208-byte stripped-musl default binary (SHA-256
+`c8e8e0b61001c5c977a11ea68c390a929f193eafd7dcd3737fd7731483093d1d`) and feature-only builds of 836,384 bytes
+for `flac` and 742,176 bytes for `pdf`. These are complete feature-only binary sizes, not calculated feature
+deltas; the release ceiling and default feature set were not changed. The exact feature matrix is in the
+[source-SHA CI report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520257597).
+
 ### Errata: the v0.12.1 "same size" claim
 
 v0.12.1 shipped with the CHANGELOG, the release notes and this document all saying 1 049 440 bytes, and the
