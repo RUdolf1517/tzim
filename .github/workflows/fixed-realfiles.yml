@@ -611,7 +611,8 @@ jobs:
             -r .github/scripts/build-requirements.txt
           python3 -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
             -r .github/scripts/measure-requirements.txt
-          python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-measurement-environment.txt"
+          mkdir -p "$RUNNER_TEMP/fixed-fits-evidence"
+          python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-evidence/measurement-environment.txt"
 
       - name: Test the compressed-primary FITS measurement oracle
         shell: bash
@@ -692,6 +693,7 @@ jobs:
           python3 .github/scripts/fits-measure.py \
             --root "$RUNNER_TEMP/fixed-fits-work" \
             --manifest "$RUNNER_TEMP/fixed-fits-work/fits-measure-input-manifest.json" \
+            --candidate-dir "$RUNNER_TEMP/fixed-fits-work/reference-candidates" \
             --out "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier.log"
 
@@ -709,6 +711,7 @@ jobs:
             --fitsverify "$RUNNER_TEMP/cfitsio-install/bin/fitsverify" \
             --funpack "$RUNNER_TEMP/cfitsio-install/bin/funpack" \
             --work "$RUNNER_TEMP/fixed-fits-work/candidates" \
+            --reference-candidate-dir "$RUNNER_TEMP/fixed-fits-work/reference-candidates" \
             --out "$RUNNER_TEMP/fixed-fits-evidence/run" \
             --expected-source-sha "${{ needs.build-tzim.outputs.source_sha }}" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/measurement.log"

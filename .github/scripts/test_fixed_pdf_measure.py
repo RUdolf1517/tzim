@@ -22,6 +22,57 @@ RECOMPUTE_PATH = ROOT / ".github/scripts/recompute-fixed-pdf.py"
 
 
 class FixedPdfGainTests(unittest.TestCase):
+    def test_registered_threshold_uses_faithful_pct_and_publishes_both_qpdf_distributions(self) -> None:
+        rows = [
+            {
+                "id": f"accepted-{index:02d}",
+                "classification": "accepted",
+                "bytes": 1000,
+                "faithful_pct": 0.25,
+                "qpdf_pct": 0.4,
+                "repack_pct": 2.0,
+                "tzim": {"status": "optimized", "bytes": 990, "gain_pct": 1.0},
+                "original_qpdf_check": {"returncode": 0},
+                "qpdf_allowed_check": {"returncode": 0},
+                "qpdf_repack_check": {"returncode": 0},
+                "render_comparisons": [],
+            }
+            for index in range(18)
+        ]
+        rows.extend(
+            {
+                "id": f"refused-{index:02d}",
+                "classification": "refused",
+                "reason": "signed",
+                "bytes": 1000,
+                "tzim": {"status": "skipped", "bytes": 1000},
+                "render_comparisons": [],
+            }
+            for index in range(3)
+        )
+        summary = MEASURE.aggregate(rows)
+        threshold = MEASURE.threshold_disposition(rows, summary)
+        self.assertEqual(threshold["status"], "applied")
+        self.assertEqual(threshold["rule_result"], "refused")
+        self.assertIn("faithful_pct", threshold["metric"])
+        self.assertEqual(summary["qpdf_allowed_pct"]["n"], 18)
+        self.assertEqual(summary["forbidden_repack_pct"]["n"], 18)
+        self.assertEqual(summary["refusal_reasons"], {"signed": 3})
+
+        mid_band_rows = [dict(row) for row in rows]
+        for row in mid_band_rows:
+            if row["classification"] == "accepted":
+                row["faithful_pct"] = 2.0
+        mid_band = MEASURE.aggregate(mid_band_rows)
+        self.assertEqual(
+            MEASURE.threshold_disposition(mid_band_rows, mid_band)["status"],
+            "not_applied",
+        )
+        accepted_delta = MEASURE.threshold_disposition(mid_band_rows, mid_band, 70 * 1024)
+        refused_delta = MEASURE.threshold_disposition(mid_band_rows, mid_band, 70 * 1024 + 1)
+        self.assertEqual(accepted_delta["rule_result"], "admitted")
+        self.assertEqual(refused_delta["rule_result"], "refused")
+
     def test_actual_savings_and_weighted_gain_recompute_from_all_21_rows(self) -> None:
         rows = [
             {
@@ -51,6 +102,7 @@ class FixedPdfGainTests(unittest.TestCase):
             for index in range(2, 21)
         )
         aggregate = MEASURE.aggregate(rows)
+        aggregate["pre_registered_threshold_disposition"] = MEASURE.threshold_disposition(rows, aggregate)
         self.assertEqual(aggregate["tzim_optimized_n"], 2)
         self.assertEqual(aggregate["tzim_saved_bytes"], 25)
         self.assertEqual(aggregate["tzim_optimized_source_bytes"], 300)

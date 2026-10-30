@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import statistics
 import subprocess
@@ -15,11 +16,14 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+astropy = None
 try:
+    import astropy
     import numpy as np
     from astropy.io import fits
     FITS_IO_IMPORT_ERROR = None
 except Exception as error:
+    astropy = None
     np = None
     fits = None
     FITS_IO_IMPORT_ERROR = f"{type(error).__name__}: {error}"
@@ -119,6 +123,19 @@ def raw_hdu(path: Path, hdu) -> bytes:
         return stream.read(end - start)
 
 
+def raw_header(path: Path, hdu) -> bytes:
+    """Return the original FITS header record bytes without Astropy normalization."""
+    start = int(hdu._header_offset)
+    header_end = int(
+        hdu._data_offset
+        if hdu._data_offset is not None
+        else start + len(hdu.header.tostring().encode("ascii"))
+    )
+    with path.open("rb") as stream:
+        stream.seek(start)
+        return stream.read(header_end - start)
+
+
 def raw_data(path: Path, hdu) -> bytes:
     data_start = int(hdu._data_offset if hdu._data_offset is not None else hdu._header_offset + len(hdu.header.tostring().encode("ascii")))
     data_size = int(hdu._data_size or 0)
@@ -126,6 +143,81 @@ def raw_data(path: Path, hdu) -> bytes:
     with path.open("rb") as stream:
         stream.seek(data_start)
         return stream.read(padded)
+
+
+def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
+    """Compare a reference candidate's `funpack` output with the exact source.
+
+    Unlike the Tzim candidate comparison, this checks each uncompressed output
+    against the source using literal header record bytes (including padding) and
+    storage-array bytes. It does not ignore CHECKSUM/DATASUM or normalize cards.
+    """
+    with fits.open(original, memmap=False, do_not_scale_image_data=True, uint=False) as before, \
+         fits.open(reconstructed, memmap=False, do_not_scale_image_data=True, uint=False) as after:
+        if len(before) != len(after):
+            return {
+                "ok": False,
+                "reason": "hdu_count",
+                "original_hdus": len(before),
+                "reconstructed_hdus": len(after),
+                "comparison": "literal header-record bytes and reconstructed array bytes",
+            }
+        checks = []
+        for index, (original_hdu, reconstructed_hdu) in enumerate(zip(before, after)):
+            original_header = raw_header(original, original_hdu)
+            reconstructed_header = raw_header(reconstructed, reconstructed_hdu)
+            original_image = image_bytes(original_hdu)
+            reconstructed_image = image_bytes(reconstructed_hdu)
+            if original_image is None and reconstructed_image is None:
+                original_payload = raw_data(original, original_hdu)
+                reconstructed_payload = raw_data(reconstructed, reconstructed_hdu)
+                payload_kind = "non-image-HDU-data-and-padding"
+                payload_equal = original_payload == reconstructed_payload
+            elif original_image is not None and reconstructed_image is not None:
+                original_shape = tuple(np.asarray(original_hdu.data).shape)
+                reconstructed_shape = tuple(np.asarray(reconstructed_hdu.data).shape)
+                original_payload = original_image
+                reconstructed_payload = reconstructed_image
+                payload_kind = "FITS image storage-array bytes"
+                payload_equal = original_shape == reconstructed_shape and original_image == reconstructed_image
+            else:
+                original_payload = original_image
+                reconstructed_payload = reconstructed_image
+                payload_kind = "image/non-image HDU type mismatch"
+                payload_equal = False
+            hdu_type_equal = type(original_hdu).__name__ == type(reconstructed_hdu).__name__
+            header_equal = original_header == reconstructed_header
+            checks.append({
+                "hdu": index,
+                "original_hdu_type": type(original_hdu).__name__,
+                "reconstructed_hdu_type": type(reconstructed_hdu).__name__,
+                "hdu_type_equal": hdu_type_equal,
+                "header_record_bytes_equal": header_equal,
+                "original_header_record_sha256": hashlib.sha256(original_header).hexdigest(),
+                "reconstructed_header_record_sha256": hashlib.sha256(reconstructed_header).hexdigest(),
+                "payload_kind": payload_kind,
+                "payload_bytes_equal": payload_equal,
+                "original_payload_sha256": (
+                    hashlib.sha256(original_payload).hexdigest() if original_payload is not None else None
+                ),
+                "reconstructed_payload_sha256": (
+                    hashlib.sha256(reconstructed_payload).hexdigest() if reconstructed_payload is not None else None
+                ),
+            })
+        return {
+            "ok": all(
+                item["hdu_type_equal"] and item["header_record_bytes_equal"] and item["payload_bytes_equal"]
+                for item in checks
+            ),
+            "reason": "ok" if all(
+                item["hdu_type_equal"] and item["header_record_bytes_equal"] and item["payload_bytes_equal"]
+                for item in checks
+            ) else "literal-header-or-reconstructed-payload-mismatch",
+            "comparison": "literal header-record bytes (including padding), exact storage-array bytes, and non-image data bytes",
+            "original_hdus": len(before),
+            "reconstructed_hdus": len(after),
+            "hdu_checks": checks,
+        }
 
 
 def is_compressed_image_hdu(hdu) -> bool:
@@ -241,6 +333,301 @@ def sample_tier1(original: Path, fits_measure) -> dict:
         return {"status": "failed", "error": f"{type(error).__name__}: {error}"}
 
 
+def distribution_stats(values: list[float]) -> dict:
+    ordered = sorted(values)
+    if not ordered:
+        return {
+            "n": 0,
+            "status": "empty",
+            "median": None,
+            "q1_index": None,
+            "q3_index": None,
+            "share_positive": None,
+        }
+    return {
+        "n": len(ordered),
+        "status": "measured",
+        "median": statistics.median(ordered),
+        "q1_index": ordered[len(ordered) // 4],
+        "q3_index": ordered[(3 * len(ordered)) // 4],
+        "share_positive": sum(value > 0 for value in ordered) / len(ordered),
+    }
+
+
+def fitsverify_messages(check: dict, severity: str) -> list[str]:
+    text = str(check.get("stdout", "")) + "\n" + str(check.get("stderr", ""))
+    pattern = re.compile(rf"^\s*\*{{3}}\s*{re.escape(severity)}:\s*(.*?)\s*$", re.IGNORECASE)
+    messages = []
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if match:
+            message = re.sub(r"Keyword\s+#\d+\s*,", "Keyword #,", match.group(1), flags=re.IGNORECASE)
+            messages.append(message)
+    return messages
+
+
+def reference_fitsverify_status(source_check: dict, candidate_check: dict) -> dict:
+    """Require a clean candidate or only the exact warning-only source baseline."""
+    source_rc = source_check.get("returncode")
+    candidate_rc = candidate_check.get("returncode")
+    source_warnings = fitsverify_messages(source_check, "Warning")
+    candidate_warnings = fitsverify_messages(candidate_check, "Warning")
+    source_errors = fitsverify_messages(source_check, "Error")
+    candidate_errors = fitsverify_messages(candidate_check, "Error")
+    if candidate_rc == 0 and not candidate_errors:
+        status = "passed"
+        reason = "fitsverify -l returned zero with no error diagnostics"
+    elif (
+        isinstance(candidate_rc, int)
+        and candidate_rc > 0
+        and candidate_rc == source_rc
+        and candidate_rc == len(candidate_warnings)
+        and candidate_warnings == source_warnings
+        and not candidate_errors
+        and not source_errors
+    ):
+        status = "passed_inherited_warnings"
+        reason = "candidate has only the same warning diagnostics as the exact source; no new HEASARC diagnostics"
+    else:
+        status = "failed"
+        reason = "candidate fitsverify result is non-zero or differs from the source warning-only baseline"
+    return {
+        "status": status,
+        "reason": reason,
+        "source_returncode": source_rc,
+        "candidate_returncode": candidate_rc,
+        "source_warning_count": len(source_warnings),
+        "candidate_warning_count": len(candidate_warnings),
+        "source_warning_messages": source_warnings,
+        "candidate_warning_messages": candidate_warnings,
+        "source_error_messages": source_errors,
+        "candidate_error_messages": candidate_errors,
+    }
+
+
+def validate_reference_candidate(
+    source: Path,
+    audit: dict,
+    reference_candidate_dir: Path,
+    work: Path,
+    product_id: str,
+    order: int,
+    fitsverify: str,
+    funpack: str,
+    logs: list[dict],
+) -> dict:
+    """HEASARC-validate the exact Astropy candidate that produced a Tier-2 row."""
+    reference = audit.get("reference_candidate") if isinstance(audit, dict) else None
+    audit_status = audit.get("status") if isinstance(audit, dict) else "not_measured"
+    if audit_status != "tier2" or not isinstance(reference, dict):
+        return {
+            "status": "not_applicable",
+            "reason": f"no Tier-2 reference candidate (instrument status: {audit_status})",
+        }
+
+    filename = reference.get("filename")
+    result = {
+        "status": "failed",
+        "candidate_filename": filename,
+        "registered_bytes": reference.get("bytes"),
+        "registered_sha256": reference.get("sha256"),
+        "astropy_verifier_exact": audit.get("exact"),
+        "astropy_verifier_reason": audit.get("why"),
+        "generation": reference.get("generation"),
+        "eligible_images": reference.get("eligible_images"),
+        "hdu_mapping": reference.get("mapping"),
+        "fitsverify_invocation": "fitsverify -l <exact Astropy Tier-2 candidate>",
+        "funpack_invocation": "funpack -O <temporary reconstructed FITS> <exact Astropy Tier-2 candidate>",
+        "funpack_checksum_mode": "default CFITSIO behavior; no -C, checksum removal, or source repair",
+    }
+    candidate = None
+    unpacked = work / f"{order:02d}-{product_id}.reference-unpacked.fits"
+    cleanup_errors = []
+    try:
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            result["reason"] = "missing or unsafe reference candidate filename"
+            return result
+        candidate = reference_candidate_dir / filename
+        if not candidate.is_file():
+            result["reason"] = "the exact reference candidate recorded by fits-measure.py is missing"
+            return result
+        candidate_bytes, candidate_sha = digest(candidate)
+        identity_matches = candidate_bytes == reference.get("bytes") and candidate_sha == reference.get("sha256")
+        result.update(
+            observed_bytes=candidate_bytes,
+            observed_sha256=candidate_sha,
+            identity_matches_measurement_candidate=identity_matches,
+        )
+
+        source_check = run([fitsverify, "-l", str(source)], logs)
+        candidate_check = run([fitsverify, "-l", str(candidate)], logs)
+        result["fitsverify_source"] = source_check
+        result["fitsverify_candidate"] = candidate_check
+        result["fitsverify"] = reference_fitsverify_status(source_check, candidate_check)
+
+        funpack_argv = [funpack, "-O", str(unpacked), str(candidate)]
+        funpack_check = run(funpack_argv, logs)
+        result["funpack"] = {
+            **funpack_check,
+            "checksum_mode": "default; -C not used",
+        }
+        if funpack_check.get("returncode") == 0 and unpacked.is_file():
+            unpacked_bytes, unpacked_sha = digest(unpacked)
+            result["funpack_output"] = {"bytes": unpacked_bytes, "sha256": unpacked_sha}
+            try:
+                roundtrip = compare_reference_funpack(source, unpacked)
+            except Exception as error:
+                roundtrip = {"ok": False, "reason": f"{type(error).__name__}: {error}"}
+            result["reconstructed_array_literal_header_comparison"] = roundtrip
+        else:
+            result["reconstructed_array_literal_header_comparison"] = {
+                "ok": False,
+                "reason": "funpack failed or produced no reconstructed FITS output",
+            }
+
+        fitsverify_ok = result["fitsverify"].get("status") in ("passed", "passed_inherited_warnings")
+        funpack_ok = (
+            funpack_check.get("returncode") == 0
+            and result["reconstructed_array_literal_header_comparison"].get("ok") is True
+        )
+        if (
+            identity_matches
+            and audit.get("exact") is True
+            and fitsverify_ok
+            and funpack_ok
+        ):
+            result["status"] = "passed"
+            result["reason"] = "exact candidate identity, HEASARC check, funpack, and literal-header/storage-array round trip passed"
+        else:
+            failures = []
+            if not identity_matches:
+                failures.append("candidate identity differs from the bytes used by the reference measurement")
+            if audit.get("exact") is not True:
+                failures.append("existing Astropy reference verifier did not report an exact candidate")
+            if not fitsverify_ok:
+                failures.append(result["fitsverify"].get("reason", "fitsverify failed"))
+            if not funpack_ok:
+                roundtrip = result.get("reconstructed_array_literal_header_comparison", {})
+                failures.append(roundtrip.get("reason", "funpack or reconstruction check failed"))
+            result["reason"] = "; ".join(failures)
+    except Exception as error:
+        result["reason"] = f"{type(error).__name__}: {error}"
+    finally:
+        for temporary in (candidate, unpacked):
+            if temporary is None:
+                continue
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as error:
+                cleanup_errors.append(f"{temporary.name}: {type(error).__name__}: {error}")
+    if cleanup_errors:
+        result["cleanup_errors"] = cleanup_errors
+    return result
+
+
+def threshold_disposition(rows: list[dict], tier1_stats: dict, tier2_stats: dict) -> dict:
+    """Apply issue #59's original rule only after exact reference-candidate gates."""
+    blockers = []
+    if len(rows) != 14:
+        blockers.append(f"expected all 14 frozen products, found {len(rows)}")
+    tier2_rows = []
+    for row in rows:
+        product_id = row.get("product_id", "unknown")
+        if row.get("fetch_status") != "downloaded":
+            blockers.append(f"{product_id}: source fetch did not complete")
+        if row.get("measurement_status") != "measured":
+            blockers.append(f"{product_id}: fixed-product measurement status is {row.get('measurement_status')}")
+        audit = row.get("existing_two_tier_instrument") or {}
+        if audit.get("status") == "not_measured":
+            blockers.append(f"{product_id}: no row in the existing two-tier instrument")
+        if audit.get("status") == "tier2":
+            tier2_rows.append(row)
+            if audit.get("exact") is not True:
+                blockers.append(f"{product_id}: Astropy reference candidate did not pass its original verifier")
+            validation = row.get("reference_candidate_validation") or {}
+            if validation.get("status") != "passed":
+                blockers.append(f"{product_id}: reference-candidate HEASARC/funpack gate is {validation.get('status')}")
+
+    if blockers:
+        return {
+            "status": "not_applied",
+            "decision": "threshold not applied",
+            "reason": "one or more fixed rows or reference-candidate validation checks remain unresolved",
+            "blockers": blockers,
+            "tier2_threshold": {
+                "median_gain_pct_at_least": 8.0,
+                "share_of_frozen_corpus_pct_at_least": 15.0,
+                "n": tier2_stats["n"],
+                "median_gain_pct": tier2_stats["median"],
+                "q1_index_gain_pct": tier2_stats["q1_index"],
+                "q3_index_gain_pct": tier2_stats["q3_index"],
+                "share_positive": tier2_stats["share_positive"],
+                "share_of_frozen_corpus_pct": 100.0 * len(tier2_rows) / len(rows) if rows else None,
+                "result": "not evaluated because the validation gate is incomplete",
+            },
+            "tier1_threshold": {
+                "median_gain_pct_at_least": 2.0,
+                "n": tier1_stats["n"],
+                "median_gain_pct": tier1_stats["median"],
+                "result": "empty set; not evaluated" if tier1_stats["n"] == 0 else "not evaluated because the validation gate is incomplete",
+            },
+        }
+
+    tier2_share = 100.0 * len(tier2_rows) / len(rows) if rows else None
+    tier2_clears = (
+        tier2_stats["n"] > 0
+        and tier2_stats["median"] is not None
+        and tier2_stats["median"] >= 8.0
+        and tier2_share is not None
+        and tier2_share >= 15.0
+    )
+    tier1_clears = (
+        tier1_stats["n"] > 0
+        and tier1_stats["median"] is not None
+        and tier1_stats["median"] >= 2.0
+    )
+    if tier1_stats["n"] == 0:
+        tier1_result = "empty set; not evaluated (not 0%)"
+    elif tier1_clears:
+        tier1_result = "clears the ≥2% median bar; ships on by default inside the fits feature"
+    else:
+        tier1_result = "does not clear the ≥2% median bar"
+
+    if tier2_clears and tier1_clears:
+        decision = "Tier 1 clears for default-in-feature use; Tier 2 clears for opt-in --fits-tile use"
+    elif tier2_clears:
+        decision = "Tier 2 clears; opt-in --fits-tile use; Tier 1 is not evaluated because its set is empty"
+    elif tier1_clears:
+        decision = "Tier 1 clears for default-in-feature use; Tier 2 does not clear"
+    else:
+        decision = "neither tier clears; FITS refused after measurement"
+    return {
+        "status": "applied",
+        "decision": decision,
+        "blockers": [],
+        "tier2_threshold": {
+            "median_gain_pct_at_least": 8.0,
+            "share_of_frozen_corpus_pct_at_least": 15.0,
+            "n": tier2_stats["n"],
+            "median_gain_pct": tier2_stats["median"],
+            "q1_index_gain_pct": tier2_stats["q1_index"],
+            "q3_index_gain_pct": tier2_stats["q3_index"],
+            "share_positive": tier2_stats["share_positive"],
+            "share_of_frozen_corpus_pct": tier2_share,
+            "result": "clears" if tier2_clears else "does not clear",
+        },
+        "tier1_threshold": {
+            "median_gain_pct_at_least": 2.0,
+            "n": tier1_stats["n"],
+            "median_gain_pct": tier1_stats["median"],
+            "q1_index_gain_pct": tier1_stats["q1_index"],
+            "q3_index_gain_pct": tier1_stats["q3_index"],
+            "share_positive": tier1_stats["share_positive"],
+            "result": tier1_result,
+        },
+    }
+
+
 def main() -> int:
     global fits_measure
     parser = argparse.ArgumentParser(description=__doc__)
@@ -251,6 +638,7 @@ def main() -> int:
     parser.add_argument("--fitsverify", required=True)
     parser.add_argument("--funpack", required=True)
     parser.add_argument("--work", required=True)
+    parser.add_argument("--reference-candidate-dir", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--fits-measure", default=".github/scripts/fits-measure.py")
     parser.add_argument("--expected-source-sha", required=True)
@@ -295,8 +683,10 @@ def main() -> int:
     audit_by_path = {Path(row.get("path", "")).name: row for row in audit_rows}
     input_root = Path(args.root).resolve()
     work = Path(args.work).resolve()
+    reference_candidate_dir = Path(args.reference_candidate_dir).resolve()
     out = Path(args.out).resolve()
     work.mkdir(parents=True, exist_ok=True)
+    reference_candidate_dir.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     logs: list[dict] = []
     products_by_id = {row["id"]: row for row in products}
@@ -340,10 +730,32 @@ def main() -> int:
             continue
 
         audit = audit_by_path.get(source.name)
-        if audit is not None:
-            row["existing_two_tier_instrument"] = audit
-        else:
-            row["existing_two_tier_instrument"] = {"status": "not_measured", "reason": "input absent from fits-measure audit rows"}
+        if audit is None:
+            audit = {"status": "not_measured", "reason": "input absent from fits-measure audit rows"}
+        row["existing_two_tier_instrument"] = audit
+        reference_validation = validate_reference_candidate(
+            source=source,
+            audit=audit,
+            reference_candidate_dir=reference_candidate_dir,
+            work=work,
+            product_id=product["id"],
+            order=order,
+            fitsverify=str(Path(args.fitsverify).resolve()),
+            funpack=str(Path(args.funpack).resolve()),
+            logs=logs,
+        )
+        if isinstance(audit.get("reference_candidate"), dict):
+            row["reference_candidate"] = {
+                **audit["reference_candidate"],
+                "astropy_verifier_exact": audit.get("exact"),
+                "astropy_verifier_reason": audit.get("why"),
+            }
+        row["reference_candidate_validation"] = reference_validation
+        row["external_checks"]["fitsverify_reference_source"] = reference_validation.get("fitsverify_source")
+        row["external_checks"]["fitsverify_reference_candidate"] = reference_validation.get("fitsverify_candidate")
+        row["external_checks"]["funpack_reference_candidate"] = reference_validation.get("funpack")
+        if reference_validation.get("cleanup_errors"):
+            row.setdefault("temporary_cleanup_errors", []).extend(reference_validation["cleanup_errors"])
         row["tier1"] = sample_tier1(source, fits_measure)
         if row["tier1"].get("status") == "failed":
             row["tier1_error"] = row["tier1"].get("error")
@@ -474,10 +886,53 @@ def main() -> int:
     rows_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
     (out / "external-tool-output.jsonl").write_text("".join(json.dumps(item, sort_keys=True) + "\n" for item in logs), encoding="utf-8")
 
-    audit_stats = {"tier2_rows": len(audit_rows), "status_counts": dict(sorted(Counter(row.get("status", "missing") for row in audit_rows).items()))}
-    audit_gains = [row["pct"] for row in audit_rows if row.get("status") == "tier2" and row.get("exact") and isinstance(row.get("pct"), (int, float))]
-    tier1_gains = [row["tier1"]["gain_pct"] for row in rows if row.get("tier1", {}).get("status") == "measured_comparator"]
-    tzim_gains = [row["tier2_tzim"]["gain_pct"] for row in rows if isinstance(row.get("tier2_tzim", {}).get("gain_pct"), (int, float))]
+    audit_status_counts = dict(sorted(Counter(row.get("status", "missing") for row in audit_rows).items()))
+    audit_refusal_reasons = dict(sorted(Counter(
+        row.get("reason", "unspecified") for row in audit_rows if row.get("status") == "refused"
+    ).items()))
+    audit_tier2_rows = [row for row in audit_rows if row.get("status") == "tier2"]
+    audit_gains = [
+        row["pct"] for row in audit_tier2_rows
+        if row.get("exact") is True and isinstance(row.get("pct"), (int, float))
+    ]
+    tier1_gains = [
+        row["tier1"]["gain_pct"] for row in rows
+        if row.get("tier1", {}).get("status") == "measured_comparator"
+    ]
+    tzim_gains = [
+        row["tier2_tzim"]["gain_pct"] for row in rows
+        if isinstance(row.get("tier2_tzim", {}).get("gain_pct"), (int, float))
+    ]
+    tier1_stats = distribution_stats(tier1_gains)
+    tier2_stats = distribution_stats(audit_gains)
+    tzim_stats = distribution_stats(tzim_gains)
+    reference_rows = [
+        row for row in rows
+        if (row.get("existing_two_tier_instrument") or {}).get("status") == "tier2"
+    ]
+    reference_validation_counts = dict(sorted(Counter(
+        (row.get("reference_candidate_validation") or {}).get("status", "missing")
+        for row in reference_rows
+    ).items()))
+    tier_distribution = {
+        "tier1_comparator_n": len(tier1_gains),
+        "tier1_comparator_product_ids": [
+            row["product_id"] for row in rows if row.get("tier1", {}).get("status") == "measured_comparator"
+        ],
+        "tier2_reference_n": len(audit_tier2_rows),
+        "tier2_reference_product_ids": [row.get("product_id") for row in reference_rows],
+        "refused_n": sum(1 for row in audit_rows if row.get("status") == "refused"),
+        "refusal_reasons": audit_refusal_reasons,
+        "not_measured_n": sum(1 for row in rows if (row.get("existing_two_tier_instrument") or {}).get("status") == "not_measured"),
+        "note": "Tier 1 recompression rows are comparators derived from the frozen products and may overlap a Tier 2 product; they are not new survey inputs.",
+    }
+    threshold_result = threshold_disposition(rows, tier1_stats, tier2_stats)
+    audit_stats = {
+        "audit_rows": len(audit_rows),
+        "tier2_candidate_rows": len(audit_tier2_rows),
+        "status_counts": audit_status_counts,
+        "refusal_reasons": audit_refusal_reasons,
+    }
     aggregate = {
         "source_manifest_sha256": manifest_sha,
         "products_n": len(rows),
@@ -485,67 +940,127 @@ def main() -> int:
         "measurement_status_counts": dict(sorted(Counter(row.get("measurement_status", "missing") for row in rows).items())),
         "tzim_status_counts": dict(sorted(Counter(row.get("tier2_tzim", {}).get("status", "missing") for row in rows).items())),
         "existing_fits_measure_instrument": audit_stats,
+        "tier_and_refusal_distribution": tier_distribution,
         "existing_fits_measure_tier2_gain_pct": {
-            "n": len(audit_gains), "median": statistics.median(audit_gains) if audit_gains else None,
-            "min": min(audit_gains) if audit_gains else None, "max": max(audit_gains) if audit_gains else None,
+            **tier2_stats,
+            "min": min(audit_gains) if audit_gains else None,
+            "max": max(audit_gains) if audit_gains else None,
         },
         "existing_tile_tier1_comparator_gain_pct": {
-            "n": len(tier1_gains), "median": statistics.median(tier1_gains) if tier1_gains else None,
-            "min": min(tier1_gains) if tier1_gains else None, "max": max(tier1_gains) if tier1_gains else None,
+            **tier1_stats,
+            "min": min(tier1_gains) if tier1_gains else None,
+            "max": max(tier1_gains) if tier1_gains else None,
         },
         "tzim_tier2_gain_pct": {
-            "n": len(tzim_gains), "median": statistics.median(tzim_gains) if tzim_gains else None,
-            "min": min(tzim_gains) if tzim_gains else None, "max": max(tzim_gains) if tzim_gains else None,
+            **tzim_stats,
+            "min": min(tzim_gains) if tzim_gains else None,
+            "max": max(tzim_gains) if tzim_gains else None,
         },
+        "reference_candidate_gate": {
+            "expected_candidates_n": len(reference_rows),
+            "validation_status_counts": reference_validation_counts,
+            "validated_candidates_n": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("status") == "passed"),
+            "candidate_identity_mismatches": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("identity_matches_measurement_candidate") is False),
+            "funpack_roundtrip_failures": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("reconstructed_array_literal_header_comparison", {}).get("ok") is False),
+        },
+        "pre_registered_threshold_disposition": threshold_result,
         "fitsverify_candidate_nonzero": sum(1 for row in rows if row.get("tier2_tzim", {}).get("status") == "optimized" and row.get("external_checks", {}).get("fitsverify_candidate", {}).get("returncode") != 0),
         "array_header_roundtrip_passes": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is True),
         "array_header_roundtrip_failures": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is False),
         "funpack_roundtrip_passes": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("ok") is True),
         "funpack_roundtrip_not_applicable": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("status") == "not_applicable"),
         "funpack_failures": sum(1 for row in rows if row.get("funpack_array_header_roundtrip", {}).get("ok") is False),
+        "reference_funpack_roundtrip_passes": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("reconstructed_array_literal_header_comparison", {}).get("ok") is True),
+        "reference_funpack_roundtrip_failures": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("reconstructed_array_literal_header_comparison", {}).get("ok") is False),
         "measurement_script": ".github/scripts/fixed-fits-measure.py",
         "existing_two_tier_script": ".github/scripts/fits-measure.py",
+        "existing_two_tier_script_sha256": hashlib.sha256(Path(args.fits_measure).read_bytes()).hexdigest() if Path(args.fits_measure).is_file() else None,
+        "python_version": sys.version,
+        "numpy_version": np.__version__ if np is not None else None,
+        "astropy_version": astropy.__version__ if astropy is not None else None,
+        "fitsverify_source": {
+            "cfitsio_commit": "113781d8aa442cf8d3c27295d9084674b8b039f2",
+            "cfitsio_archive_sha256": "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e",
+            "version_line": next((
+                line.strip()
+                for row in rows
+                for line in ((row.get("external_checks") or {}).get("fitsverify_reference_candidate") or {}).get("stdout", "").splitlines()
+                if line.lstrip().startswith("fitsverify ")
+            ), None),
+        },
         "derived_tier1_is_comparator_only": True,
         "fpack_checksum_behavior": "documentation/comparator only; never used to admit or repair a candidate",
     }
     (out / "aggregate.json").write_text(json.dumps(aggregate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    def distribution_text(label: str, stats: dict) -> str:
+        if stats["n"] == 0:
+            return f"{label}: n=0 (empty; not reported as 0%)"
+        return (
+            f"{label}: n={stats['n']}, median={stats['median']}%, Q1={stats['q1_index']}%, "
+            f"Q3={stats['q3_index']}%, share-positive={100.0 * stats['share_positive']:.2f}%"
+        )
+
+    reference_gate = aggregate["reference_candidate_gate"]
+    threshold = aggregate["pre_registered_threshold_disposition"]
     summary = [
         "# Fixed #59 FITS measurement",
         "",
         f"- Frozen 14-product source manifest SHA-256: `{manifest_sha}`",
+        f"- Environment: Python `{sys.version.split()[0]}`, NumPy `{aggregate['numpy_version']}`, Astropy `{aggregate['astropy_version']}`; CFITSIO commit `{aggregate['fitsverify_source']['cfitsio_commit']}` (archive SHA-256 `{aggregate['fitsverify_source']['cfitsio_archive_sha256']}`).",
+        f"- Existing two-tier instrument SHA-256: `{aggregate['existing_two_tier_script_sha256']}`; exact reference-candidate generation and check commands/results are retained in the rows/logs.",
         f"- Fetch statuses: `{json.dumps(aggregate['fetch_status_counts'], sort_keys=True)}`",
         f"- Measurement statuses: `{json.dumps(aggregate['measurement_status_counts'], sort_keys=True)}`",
         f"- Tzim Tier 2 statuses: `{json.dumps(aggregate['tzim_status_counts'], sort_keys=True)}`",
-        f"- Existing Tier 2 audit outputs: {len(audit_rows)}",
-        f"- Astropy Tier 2 median: {aggregate['existing_fits_measure_tier2_gain_pct']['median']}",
-        f"- Existing tile Tier 1 comparator median: {aggregate['existing_tile_tier1_comparator_gain_pct']['median']}",
-        f"- Tzim Tier 2 median among strictly smaller candidates: {aggregate['tzim_tier2_gain_pct']['median']}",
-        f"- Direct array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
-        f"- funpack array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed, {aggregate['funpack_roundtrip_not_applicable']} not applicable for unchanged non-optimized rows.",
+        f"- Existing two-tier instrument rows: {len(audit_rows)}; statuses `{json.dumps(audit_status_counts, sort_keys=True)}`",
+        f"- {distribution_text('Tier 2 Astropy reference-candidate gain', aggregate['existing_fits_measure_tier2_gain_pct'])}",
+        f"- {distribution_text('Tier 1 existing-tile comparator gain', aggregate['existing_tile_tier1_comparator_gain_pct'])}",
+        f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
+        f"- Reference candidate HEASARC/funpack gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`.",
+        f"- Pre-registered #59 disposition: **{threshold['status']}** — {threshold['decision']}.",
+        f"- Tzim Tier 2 median among strictly smaller candidates (separate implementation result): {aggregate['tzim_tier2_gain_pct']['median']}",
+        f"- Direct Tzim array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
+        f"- Tzim-candidate funpack array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed, {aggregate['funpack_roundtrip_not_applicable']} not applicable for unchanged non-optimized rows.",
+        f"- Exact reference-candidate funpack round trips: {aggregate['reference_funpack_roundtrip_passes']} passed, {aggregate['reference_funpack_roundtrip_failures']} failed.",
         "",
-        "All 14 source rows remain in `raw-rows.jsonl`. The Tier 1 outputs are comparators derived from the corresponding source product and are not additional inputs. No source bytes, candidates, or ROSAT data are included in this evidence directory.",
+        "All 14 fixed source rows are retained. The two-tier reference-candidate identities and HEASARC commands/results are separate from Tzim's unchanged/skipped rows. Tier 1 is a comparator derived from each source, never an extra survey input. The artifact contains hashes and tool output only—no source FITS bytes, candidate FITS bytes, reconstructed FITS bytes, or ROSAT data.",
         "",
-        "## All fixed product rows — identity and round-trip disposition",
+        "## All fixed product rows — distinct reference and Tzim dispositions",
         "",
-        "No row is dropped based on outcome. Hashes and check statuses are reported; FITS and ROSAT data bytes are not included.",
+        "No row is dropped based on outcome. Candidate file identities are retained as byte counts and SHA-256; the FITS bytes themselves are temporary and are not uploaded.",
         "",
-        "| Fixed product | Input bytes / SHA-256 | Tzim status; candidate bytes / SHA-256 | Direct HDU/content comparison | funpack round trip | fitsverify candidate |",
-        "| --- | ---: | --- | --- | --- | --- |",
+        "| Fixed product | Input bytes / SHA-256 | Astropy reference candidate bytes / SHA-256 | Reference `fitsverify -l` | Reference `funpack` literal header / array | Tzim status; candidate bytes / SHA-256 | Direct Tzim comparison | Tzim fitsverify |",
+        "| --- | ---: | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         tzim = row.get("tier2_tzim") or {}
         direct = row.get("array_header_roundtrip") or {}
         funpack_roundtrip = row.get("funpack_array_header_roundtrip") or {}
+        reference = row.get("reference_candidate") or {}
+        reference_validation = row.get("reference_candidate_validation") or {}
         checks = row.get("external_checks") or {}
         candidate_fitsverify = checks.get("fitsverify_candidate") or {}
+        reference_fitsverify = reference_validation.get("fitsverify") or {}
+        reference_roundtrip = reference_validation.get("reconstructed_array_literal_header_comparison") or {}
         if direct.get("ok") is True:
             direct_status = "PASS"
         elif direct.get("ok") is False:
             direct_status = "FAIL"
         else:
             direct_status = "not measured"
+        if reference_roundtrip.get("ok") is True:
+            reference_funpack_status = "PASS"
+        elif reference_roundtrip.get("ok") is False:
+            reference_funpack_status = "FAIL"
+        else:
+            reference_funpack_status = "not run / not applicable"
+        if reference_fitsverify.get("status") == "passed_inherited_warnings":
+            reference_fitsverify_status = f"PASS (source warnings inherited; candidate exit {reference_fitsverify.get('candidate_returncode')})"
+        elif reference_fitsverify.get("status") == "passed":
+            reference_fitsverify_status = "PASS (exit 0)"
+        else:
+            reference_fitsverify_status = f"{reference_fitsverify.get('status', 'not applicable')} (exit {reference_fitsverify.get('candidate_returncode')})"
         if funpack_roundtrip.get("status") == "not_applicable":
-            funpack_status = "not applicable (unchanged non-optimized row)"
+            funpack_status = "not applicable (Tzim unchanged)"
         elif funpack_roundtrip.get("ok") is True:
             funpack_status = "pass"
         elif funpack_roundtrip.get("ok") is False:
@@ -558,11 +1073,16 @@ def main() -> int:
             fitsverify_status = f"exit {candidate_fitsverify.get('returncode')} (unchanged source diagnostic)"
         else:
             fitsverify_status = f"exit {candidate_fitsverify.get('returncode')}"
+        reference_identity = (
+            f"{reference.get('bytes', '—')} / `{reference.get('sha256', '—')}`"
+            if reference else "— (no Tier 2 reference candidate)"
+        )
         summary.append(
             f"| `{row.get('product_id', 'unknown')}` | {row.get('input_bytes', '—')} / "
-            f"`{row.get('input_sha256', '—')}` | {tzim.get('status', 'not-run')}; "
+            f"`{row.get('input_sha256', '—')}` | {reference_identity} | {reference_fitsverify_status} | "
+            f"{reference_funpack_status} | {tzim.get('status', 'not-run')}; "
             f"{tzim.get('candidate_bytes', '—')} / `{tzim.get('candidate_sha256', '—')}` | "
-            f"{direct_status} | {funpack_status} | {fitsverify_status} |"
+            f"{direct_status} | {funpack_status}; fitsverify {fitsverify_status} |"
         )
 
     def diagnostic_excerpt(value: object, limit: int = 600) -> str:
@@ -600,13 +1120,23 @@ def main() -> int:
                 if text != "(empty)":
                     diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
             diagnostics.append("")
+        reference_validation = row.get("reference_candidate_validation") or {}
         for name, check in (row.get("external_checks") or {}).items():
             if not isinstance(check, dict) or (not check.get("error") and check.get("returncode") in (None, 0)):
                 continue
-            if name.endswith("_source"):
+            if (
+                name == "fitsverify_reference_candidate"
+                and (reference_validation.get("fitsverify") or {}).get("status") == "passed_inherited_warnings"
+            ):
+                continue
+            if name == "fitsverify_reference_source":
+                heading = f"### Reference source diagnostic: {product_id}"
+            elif name in ("fitsverify_reference_candidate", "funpack_reference_candidate"):
+                heading = f"### Reference candidate external-check failure: {product_id} / {name}"
+            elif name.endswith("_source"):
                 heading = f"### External source diagnostic: {product_id} / {name}"
             elif (row.get("tier2_tzim") or {}).get("unchanged_nonoptimized"):
-                heading = f"### Inherited external diagnostic (unchanged source): {product_id} / {name}"
+                heading = f"### Inherited external diagnostic (unchanged Tzim source): {product_id} / {name}"
             else:
                 heading = f"### External check failure: {product_id} / {name}"
             diagnostics.extend([
@@ -619,6 +1149,16 @@ def main() -> int:
                 if text != "(empty)":
                     diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
             diagnostics.append("")
+        if reference_validation.get("status") == "failed":
+            details = json.dumps(reference_validation, sort_keys=True, ensure_ascii=False)
+            diagnostics.extend([
+                f"### Reference candidate gate failure: {product_id}",
+                f"- Exact candidate identity: `{(row.get('reference_candidate') or {}).get('bytes')}` bytes / "
+                f"`{(row.get('reference_candidate') or {}).get('sha256')}`",
+                f"- Reason: {diagnostic_excerpt(reference_validation.get('reason'))}",
+                f"- Validation record: `{diagnostic_excerpt(details)}`",
+                "",
+            ])
         for label in ("array_header_roundtrip", "funpack_array_header_roundtrip"):
             check = row.get(label) or {}
             if check.get("ok") is False:
@@ -650,6 +1190,14 @@ def main() -> int:
             failures.append(f"{row['product_id']}: reconstructed array/header mismatch: {row['array_header_roundtrip'].get('reason')}")
         if row.get("funpack_array_header_roundtrip", {}).get("ok") is False:
             failures.append(f"{row['product_id']}: funpack array/header mismatch: {row['funpack_array_header_roundtrip'].get('reason')}")
+        if (
+            (row.get("existing_two_tier_instrument") or {}).get("status") == "tier2"
+            and (row.get("reference_candidate_validation") or {}).get("status") != "passed"
+        ):
+            failures.append(
+                f"{row['product_id']}: reference candidate validation did not pass: "
+                f"{(row.get('reference_candidate_validation') or {}).get('reason')}"
+            )
         unchanged_nonoptimized = bool(row.get("tier2_tzim", {}).get("unchanged_nonoptimized"))
         for name in ("fitsverify_source", "fitsverify_candidate", "funpack_source", "funpack_candidate"):
             check = row.get("external_checks", {}).get(name)
