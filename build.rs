@@ -168,6 +168,18 @@ fn build_capabilities() -> String {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=PROFILE");
+    println!("cargo:rerun-if-env-changed=TARGET");
+
+    let profile = env::var("PROFILE").expect("Cargo sets PROFILE");
+    let target = env::var("TARGET").expect("Cargo sets TARGET");
+    if profile == "release" && target == "x86_64-unknown-linux-musl" {
+        // Release panics abort, so the binary does not unwind Rust stacks.
+        // Keep .eh_frame but omit the linker's lookup header on the fixed-size
+        // x86_64 musl release binary.
+        println!("cargo:rustc-link-arg-bins=-Wl,--no-eh-frame-hdr");
+    }
+
     for (_, feature) in BUILD_FEATURES {
         let variable = format!(
             "CARGO_FEATURE_{}",
