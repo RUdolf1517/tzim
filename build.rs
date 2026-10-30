@@ -53,7 +53,11 @@ fn enabled(feature: &str) -> bool {
 }
 
 fn bool_text(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
+    if value {
+        "true"
+    } else {
+        "false"
+    }
 }
 
 fn write_feature_map(json: &mut String) {
