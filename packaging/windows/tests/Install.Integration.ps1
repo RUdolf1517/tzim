@@ -356,8 +356,8 @@ try {
     $manualChecksumMatches = @(Select-String -Path $checksums015 `
         -Pattern '^([0-9a-fA-F]{64})  \./tzim-x86_64-pc-windows-msvc\.zip$')
     Assert-Equal -Expected 1 -Actual $manualChecksumMatches.Count -Message 'documented manual ZIP checksum selector'
-    $manualExpectedHash = $manualChecksumMatches[0].Matches[0].Groups[1].Value
-    $manualActualHash = (Get-FileHash -LiteralPath $archive015 -Algorithm SHA256).Hash
+    $manualExpectedHash = $manualChecksumMatches[0].Matches[0].Groups[1].Value.ToLowerInvariant()
+    $manualActualHash = (Get-FileHash -LiteralPath $archive015 -Algorithm SHA256).Hash.ToLowerInvariant()
     Assert-Equal -Expected $manualExpectedHash -Actual $manualActualHash -Message 'documented manual ZIP SHA-256 check'
     New-Item -ItemType Directory -Force -Path $manualRoot | Out-Null
     Expand-Archive -LiteralPath $archive015 -DestinationPath $manualRoot -Force

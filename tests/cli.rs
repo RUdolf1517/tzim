@@ -96,7 +96,7 @@ fn capabilities_is_one_versioned_read_only_json_record() {
     assert!(lines[0].contains("\"jpeg\",\"available\":true"), "{stdout}");
     #[cfg(not(feature = "jpeg"))]
     assert!(
-        lines[0].contains("\"jpeg\",\"available\":false"),
+        !lines[0].contains("\"format\":\"jpeg\""),
         "{stdout}"
     );
 

@@ -29,6 +29,9 @@ def check_default(value: dict) -> None:
     assert "jpeg" in value["default_enabled_formats"]
     assert "fits" not in value["compiled_formats"]
     assert "fits" not in value["default_enabled_formats"]
+    assert [item["format"] for item in value["handler_opt_ins"]] == ["jpeg"]
+    assert all(item["flag"] != "--fits-tile" for item in value["transformations"])
+    assert value["confirmation_policies"] == []
 
 
 def check_codec_only(value: dict) -> None:
@@ -37,6 +40,7 @@ def check_codec_only(value: dict) -> None:
     assert features["jpeg"] is True and features["jpeg-v1"] is False
     assert value["compiled_formats"] == ["jpeg"]
     assert "jpeg" not in value["default_enabled_formats"]
+    assert [item["format"] for item in value["handler_opt_ins"]] == ["jpeg"]
     jpeg = next(item for item in value["handler_opt_ins"] if item["format"] == "jpeg")
     assert jpeg["available"] is True and jpeg["default_enabled"] is False
     assert jpeg["codec_only_selection_flag"] == "--formats jpeg"
@@ -48,11 +52,20 @@ def check_all_features(value: dict) -> None:
     assert all(features[name] for name in ("jpeg", "jpeg-v1", "fits", "flac", "pdf"))
     assert all(name in value["compiled_formats"] for name in ("jpeg", "fits", "flac", "pdf"))
     assert all(name in value["default_enabled_formats"] for name in ("jpeg", "flac", "pdf"))
+    assert [item["format"] for item in value["handler_opt_ins"]] == [
+        "jpeg",
+        "fits",
+        "flac",
+        "pdf",
+    ]
     assert "fits" not in value["default_enabled_formats"]
     fits = next(item for item in value["handler_opt_ins"] if item["format"] == "fits")
     assert fits["available"] is True and fits["default_enabled"] is False
     assert fits["runtime_opt_in_flag"] == "--fits-tile"
     assert fits["allowlist_is_not_consent"] is True
+    assert [policy["id"] for policy in value["confirmation_policies"]] == [
+        "fits_tile_confirmation"
+    ]
 
 
 def main() -> None:

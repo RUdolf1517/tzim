@@ -288,10 +288,10 @@ The object keeps distinct:
 - `compiled_formats`: handlers present in this binary, regardless of run selection;
 - `default_enabled_formats`: handlers admitted without a run-time handler opt-in. FITS is deliberately omitted even in a build with the `fits` feature, because `--fits-tile` is separate explicit consent;
 - `selection_flags`: `--formats` is an allowlist, not a force flag, and never grants a handler-specific opt-in;
-- `handler_opt_ins`: JPEG's independent `jpeg-v1` default-admission gate, codec-only JPEG's explicit `--formats jpeg`, FITS's `--fits-tile`, and the optional FLAC/PDF build features;
-- `transformations` and `confirmation_policies`: metadata removal, nested processing, Zopfli, and the FITS visible `IMAGE`-to-`BINTABLE` transform, including the direct-single-file TTY default-No prompt and the explicit non-interactive behavior.
+- `handler_opt_ins`: opt-ins and default-admission gates for handlers compiled into this binary; absent optional handlers are represented by `build_features` and `compiled_formats`, not by unavailable handler records;
+- `transformations` and `confirmation_policies`: transformations available in this build, including metadata removal, nested processing, Zopfli, and—when FITS is compiled—the visible `IMAGE`-to-`BINTABLE` transform and its direct-single-file TTY default-No prompt and explicit non-interactive behavior.
 
-A feature-limited binary reports its own actual feature booleans and format arrays; `--all-features` reports its wider set. A compiled or listed format is not evidence of user consent. Consumers must require the exact capability and schema fields their action depends on; an unknown schema version or unknown opt-in policy must fail closed. Unknown fields can be ignored only when they do not affect that decision.
+A feature-limited binary reports its own actual feature booleans and format arrays; `--all-features` reports its wider set. Handler opt-ins, transformations, and confirmation policies are listed only when available in that build. A compiled or listed format is not evidence of user consent. Consumers must require the exact capability and schema fields their action depends on; an unknown schema version or unknown opt-in policy must fail closed. Unknown fields can be ignored only when they do not affect that decision.
 
 A representative default release-like build emits this one-line JSON object (shown pretty-printed here):
 
@@ -306,18 +306,14 @@ A representative default release-like build emits this one-line JSON object (sho
   "default_enabled_formats": ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib"],
   "selection_flags": [{"flag": "--formats", "semantics": "allowlist", "scope": "compiled_formats", "default_set": "default_enabled_formats", "does_not_grant_handler_opt_ins": true}],
   "handler_opt_ins": [
-    {"format": "jpeg", "available": true, "kind": "independent_verifier_default_gate", "build_feature": "jpeg", "default_admission_feature": "jpeg-v1", "default_enabled": true, "codec_only_selection_flag": "--formats jpeg"},
-    {"format": "fits", "available": false, "kind": "visible_transform_consent", "build_feature": "fits", "runtime_opt_in_flag": "--fits-tile", "default_enabled": false, "allowlist_is_not_consent": true},
-    {"format": "flac", "available": false, "kind": "optional_build_feature", "build_feature": "flac", "feature_in_default_set": false, "enabled_by_default_when_compiled": true, "runtime_opt_in_flag": null},
-    {"format": "pdf", "available": false, "kind": "optional_build_feature", "build_feature": "pdf", "feature_in_default_set": false, "enabled_by_default_when_compiled": true, "runtime_opt_in_flag": null}
+    {"format": "jpeg", "available": true, "kind": "independent_verifier_default_gate", "build_feature": "jpeg", "default_admission_feature": "jpeg-v1", "default_enabled": true, "codec_only_selection_flag": "--formats jpeg"}
   ],
   "transformations": [
     {"flag": "--strip-metadata", "available": true, "default": false, "effect": "removes only the documented per-format metadata list"},
     {"flag": "--nested", "available": true, "default": false, "effect": "also considers supported files inside archives"},
-    {"flag": "--zopfli", "available": true, "default": false, "effect": "uses the slower, stronger DEFLATE encoder where supported"},
-    {"flag": "--fits-tile", "available": false, "default": false, "effect": "converts an eligible FITS IMAGE HDU to a tile-compressed BINTABLE", "confirmation_policy": "fits_tile_confirmation"}
+    {"flag": "--zopfli", "available": true, "default": false, "effect": "uses the slower, stronger DEFLATE encoder where supported"}
   ],
-  "confirmation_policies": [{"id": "fits_tile_confirmation", "flag": "--fits-tile", "available": false, "interactive": {"eligible_for_single_direct_regular_file_only": true, "requires_stdin_and_stderr_tty": true, "prompt_stream": "stderr", "default_answer": "no", "runs_after_candidate_verification": true, "only_yes_commits": true}, "non_interactive": {"prompt": false, "flag_is_explicit_opt_in": true}, "decline": {"status": "skipped", "original_unchanged": true}, "never_prompts_for": ["--json", "--dry-run", "recursive_or_batch_runs", "nested_work", "filtered_or_refused_inputs", "candidate_or_verification_failures"]}],
+  "confirmation_policies": [],
   "side_effects": {"scans_files": false, "writes_files": false, "prompts": false}
 }
 ```

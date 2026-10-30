@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -410,14 +411,20 @@ pub fn print_json<W: Write + ?Sized>(
             Some(reason) => push_json_string(&mut line, reason.id()),
             None => line.push_str("null"),
         }
-        line.push_str(&format!(",\"before\":{},\"after\":{}", o.before, o.after));
-        line.push_str(&format!(",\"saved\":{}", o.saved()));
-        line.push_str(",\"guarantee\":");
-        push_json_string(&mut line, o.guarantee().id());
+        write!(
+            &mut line,
+            ",\"before\":{},\"after\":{},\"saved\":{},\"guarantee\":\"{}\"",
+            o.before,
+            o.after,
+            o.saved(),
+            o.guarantee().id()
+        )
+        .expect("write JSON fields to a String");
         if strip_metadata && matches!(o.status, Status::Optimized | Status::WouldOptimize) {
             line.push_str(",\"metadata_stripped\":true");
         }
-        line.push_str(&format!(",\"duration_ms\":{}", o.duration.as_millis()));
+        write!(&mut line, ",\"duration_ms\":{}", o.duration.as_millis())
+            .expect("write duration to a String");
         line.push_str(",\"note\":");
         match &o.note {
             Some(note) => push_json_string(&mut line, note),

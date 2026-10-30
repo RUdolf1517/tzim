@@ -726,7 +726,13 @@ jobs:
             cat /tmp/tzim-features.txt 2>/dev/null || echo "(the matrix step did not run)"
             echo
             echo "sections:"
-            llvm-size -A /tmp/tzim-full 2>/dev/null | head -12 || true
+            if command -v llvm-size >/dev/null 2>&1; then
+              llvm-size -A /tmp/tzim-full 2>/dev/null | head -12 || true
+            elif command -v size >/dev/null 2>&1; then
+              size -A /tmp/tzim-full 2>/dev/null | head -12 || true
+            else
+              echo "(no size utility found)"
+            fi
           } | tee /tmp/tzim-size-report.txt
           # Keep the detailed measurements separate from the size-gate log so
           # the failure report cannot overwrite the feature/section breakdown.
