@@ -214,9 +214,10 @@ fn validate_vorbis_comment(data: &[u8]) -> Result<()> {
         .map_err(|_| refusal("Vorbis comment vendor string is not valid UTF-8"))?;
 
     let count_end = vendor_end + 4;
-    let mut comments_left =
-        usize::try_from(u32::from_le_bytes(data[vendor_end..count_end].try_into().unwrap()))
-            .map_err(|_| refusal("Vorbis comment count does not fit this platform"))?;
+    let mut comments_left = usize::try_from(u32::from_le_bytes(
+        data[vendor_end..count_end].try_into().unwrap(),
+    ))
+    .map_err(|_| refusal("Vorbis comment count does not fit this platform"))?;
     if comments_left >= data.len() / 4 {
         return Err(refusal("too many entries for Vorbis comment block"));
     }
@@ -226,9 +227,10 @@ fn validate_vorbis_comment(data: &[u8]) -> Result<()> {
     let mut comments_seen = 0usize;
     while bytes_left >= 4 && comments_seen < comments_left {
         let length_end = offset + 4;
-        let comment_len =
-            usize::try_from(u32::from_le_bytes(data[offset..length_end].try_into().unwrap()))
-                .map_err(|_| refusal("Vorbis comment length does not fit this platform"))?;
+        let comment_len = usize::try_from(u32::from_le_bytes(
+            data[offset..length_end].try_into().unwrap(),
+        ))
+        .map_err(|_| refusal("Vorbis comment length does not fit this platform"))?;
         offset = length_end;
         bytes_left -= 4;
         if comment_len > bytes_left {
@@ -299,10 +301,7 @@ fn decode_info(data: &[u8]) -> Result<claxon::metadata::StreamInfo> {
     decode_streaminfo(data, &file)
 }
 
-fn decode_streaminfo(
-    data: &[u8],
-    file: &FlacFile,
-) -> Result<claxon::metadata::StreamInfo> {
+fn decode_streaminfo(data: &[u8], file: &FlacFile) -> Result<claxon::metadata::StreamInfo> {
     let block = file
         .blocks
         .first()
@@ -1106,13 +1105,14 @@ fn next_pcm_frame(
     let frame = read_decoded_frame(cursor, reuse)
         .map_err(|error| Error::verify(format!("Claxon could not decode {side} FLAC: {error}")))?;
     if let Some(frame) = frame {
-        sequence.observe(
-            &frame,
-            info.channels as usize,
-            info.min_block_size,
-            info.max_block_size,
-        )
-        .map_err(|error| Error::verify(format!("{side} FLAC frame sequence: {error}")))?;
+        sequence
+            .observe(
+                &frame,
+                info.channels as usize,
+                info.min_block_size,
+                info.max_block_size,
+            )
+            .map_err(|error| Error::verify(format!("{side} FLAC frame sequence: {error}")))?;
         Ok(Some(frame))
     } else {
         sequence
@@ -1433,14 +1433,7 @@ pub fn verify(original: &[u8], candidate: &[u8], options: &Options) -> Result<()
         right_info.samples.unwrap_or(0),
         right_info.max_block_size,
     )?;
-    compare_pcm(
-        original,
-        &left,
-        left_info,
-        candidate,
-        &right,
-        right_info,
-    )?;
+    compare_pcm(original, &left, left_info, candidate, &right, right_info)?;
     Ok(())
 }
 
@@ -1682,8 +1675,7 @@ mod tests {
             Cand::Written(_)
         ));
         let candidate_info = decode_info(&candidate).unwrap();
-        let nominal_output_block_size =
-            flacenc::config::Encoder::default().block_size as u16;
+        let nominal_output_block_size = flacenc::config::Encoder::default().block_size as u16;
         assert_eq!(candidate_info.min_block_size, nominal_output_block_size);
         assert_eq!(candidate_info.max_block_size, nominal_output_block_size);
         verify(&input, &candidate, &options).unwrap();
