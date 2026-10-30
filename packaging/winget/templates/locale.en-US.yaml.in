@@ -6,5 +6,5 @@ PackageName: tzim
 License: MIT
 ShortDescription: Lossless file optimizer that shrinks files without changing their information.
 Description: Tzim recompresses supported formats and replaces a file only when a smaller candidate passes its preservation checks.
-ManifestType: locale
+ManifestType: defaultLocale
 ManifestVersion: 1.6.0

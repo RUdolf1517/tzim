@@ -233,6 +233,12 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
             "winget template is missing {field}"
         );
     }
+
+    let default_locale_template = read("packaging/winget/templates/locale.en-US.yaml.in");
+    assert!(
+        default_locale_template.contains("ManifestType: defaultLocale"),
+        "the en-US local manifest must be typed as the version manifest's default locale"
+    );
 }
 
 #[test]
