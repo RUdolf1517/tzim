@@ -67,6 +67,29 @@ def canonical_manifest_hash(expanded: dict) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def valid_input_expectation_failures(rows: list[dict], expanded: dict) -> list[dict]:
+    """Derive valid-input acceptance directly from the frozen rows and raw statuses."""
+    registered = {
+        row.get("id"): row
+        for row in expanded.get("inputs", []) + expanded.get("derived_inputs", [])
+    }
+    failures = []
+    for row in rows:
+        entry = registered.get(row.get("id"))
+        if entry is None or entry.get("handler_expectation") != "valid-input":
+            continue
+        status = row.get("status", "unknown")
+        if status not in {"optimized", "already_optimal"}:
+            failures.append({
+                "id": row.get("id"),
+                "code": "valid_input_expectation_not_met",
+                "expected": "valid-input",
+                "accepted_statuses": ["optimized", "already_optimal"],
+                "observed_status": status,
+            })
+    return failures
+
+
 def recompute(rows: list[dict], expanded: dict) -> dict:
     counts = Counter(row.get("status", "unknown") for row in rows)
     before = sum(int(row.get("before_bytes") or 0) for row in rows)
@@ -80,6 +103,12 @@ def recompute(rows: list[dict], expanded: dict) -> dict:
         for row in rows
         for blocker in row.get("blockers", [])
     ]
+    expectation_failures = valid_input_expectation_failures(rows, expanded)
+    blocker_keys = {(blocker.get("id"), blocker.get("code")) for blocker in blockers}
+    blockers.extend(
+        failure for failure in expectation_failures
+        if (failure.get("id"), failure.get("code")) not in blocker_keys
+    )
     return {
         "schema": 1,
         "expected_rows": len(expanded.get("inputs", [])) + len(expanded.get("derived_inputs", [])),
@@ -116,6 +145,7 @@ def recompute(rows: list[dict], expanded: dict) -> dict:
             "streaminfo_md5" in checks
             for checks in candidate_checks
         ),
+        "valid_input_expectation_failures": expectation_failures,
         "blockers": blockers,
     }
 
@@ -171,6 +201,8 @@ def main() -> int:
             continue
         expected_sha = registered.get("observed_sha256", registered.get("sha256"))
         expected_bytes = registered.get("observed_bytes", registered.get("bytes"))
+        if row.get("handler_expectation") != registered.get("handler_expectation"):
+            errors.append(f"{row['id']} handler expectation differs from its frozen manifest")
         if expected_sha is not None and row.get("source_sha256") != expected_sha:
             errors.append(f"{row['id']} source SHA differs from its frozen expanded manifest")
         if expected_bytes is not None and row.get("before_bytes") is not None and row.get("before_bytes") != expected_bytes:
@@ -202,6 +234,10 @@ def main() -> int:
             errors.append(f"{row['id']} changed bytes without an optimized status")
 
     expected_aggregate = recompute(rows, expanded)
+    for failure in expected_aggregate["valid_input_expectation_failures"]:
+        errors.append(
+            f"{failure['id']} valid-input expectation failed with raw status {failure['observed_status']}"
+        )
     for key, value in expected_aggregate.items():
         if published.get(key) != value:
             errors.append(f"aggregate mismatch for {key}: published={published.get(key)!r}, recomputed={value!r}")

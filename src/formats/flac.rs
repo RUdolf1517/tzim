@@ -56,6 +56,24 @@ struct FrameStart {
     samples: u16,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct FrameHeader {
+    variable_blocking: bool,
+    coded_number: u64,
+    block_size: u16,
+    #[cfg(test)]
+    number_start: usize,
+    #[cfg(test)]
+    number_len: usize,
+    #[cfg(test)]
+    crc_index: usize,
+}
+
+struct DecodedFrame {
+    block: claxon::Block,
+    header: FrameHeader,
+}
+
 struct Spool {
     path: PathBuf,
     file: File,
@@ -213,13 +231,16 @@ fn decode_info(data: &[u8]) -> Result<claxon::metadata::StreamInfo> {
 /// the encoder receives at most one 4096-sample frame buffer, rather than a
 /// second full decoded copy of a long recording.
 struct DecoderSource<'a> {
-    reader: claxon::FlacReader<Cursor<&'a [u8]>>,
+    frame_cursor: Cursor<&'a [u8]>,
     channels: usize,
     bits_per_sample: usize,
     sample_rate: usize,
     total_samples: usize,
+    streaminfo_total_samples: u64,
+    streaminfo_min_block_size: u16,
+    streaminfo_max_block_size: u16,
     samples_read: usize,
-    next_block_sample: u64,
+    sequence: FrameSequence,
     current: Option<claxon::Block>,
     current_pos: u32,
     reuse: Vec<i32>,
@@ -228,19 +249,27 @@ struct DecoderSource<'a> {
 }
 
 impl<'a> DecoderSource<'a> {
-    fn new(data: &'a [u8], info: claxon::metadata::StreamInfo) -> Result<Self> {
+    fn new(
+        data: &'a [u8],
+        frame_start: usize,
+        info: claxon::metadata::StreamInfo,
+    ) -> Result<Self> {
         let total_samples = usize::try_from(info.samples.unwrap_or(0))
             .map_err(|_| refusal("sample count does not fit this platform"))?;
-        let reader = claxon::FlacReader::new(Cursor::new(data))
-            .map_err(|error| refusal(format!("independent decoder rejected input: {error}")))?;
+        let audio = data
+            .get(frame_start..)
+            .ok_or_else(|| refusal("audio frame start is outside the input"))?;
         Ok(Self {
-            reader,
+            frame_cursor: Cursor::new(audio),
             channels: info.channels as usize,
             bits_per_sample: info.bits_per_sample as usize,
             sample_rate: info.sample_rate as usize,
             total_samples,
+            streaminfo_total_samples: info.samples.unwrap_or(0),
+            streaminfo_min_block_size: info.min_block_size,
+            streaminfo_max_block_size: info.max_block_size,
             samples_read: 0,
-            next_block_sample: 0,
+            sequence: FrameSequence::default(),
             current: None,
             current_pos: 0,
             reuse: Vec::new(),
@@ -252,25 +281,31 @@ impl<'a> DecoderSource<'a> {
     fn next_block(
         &mut self,
     ) -> std::result::Result<Option<claxon::Block>, flacenc::error::SourceError> {
-        let buffer = std::mem::take(&mut self.reuse);
-        let mut frames = self.reader.blocks();
-        let block = frames.read_next_or_eof(buffer).map_err(|_| {
-            flacenc::error::SourceError::by_reason(flacenc::error::SourceErrorReason::InvalidFormat)
-        })?;
-        if let Some(block) = &block {
-            if block.channels() as usize != self.channels
-                || block.time() != self.next_block_sample
-                || block.duration() == 0
-            {
-                return Err(flacenc::error::SourceError::by_reason(
-                    flacenc::error::SourceErrorReason::InvalidFormat,
-                ));
-            }
-            self.next_block_sample = self
-                .next_block_sample
-                .saturating_add(u64::from(block.duration()));
+        if self.end_checked {
+            return Ok(None);
         }
-        Ok(block)
+        let buffer = std::mem::take(&mut self.reuse);
+        let decoded = read_decoded_frame(&mut self.frame_cursor, buffer)
+            .map_err(|_| invalid_frame_source())?;
+        let Some(decoded) = decoded else {
+            self.sequence
+                .finish(
+                    self.streaminfo_total_samples,
+                    self.streaminfo_min_block_size,
+                    self.streaminfo_max_block_size,
+                )
+                .map_err(|_| invalid_frame_source())?;
+            self.end_checked = true;
+            return Ok(None);
+        };
+        self.sequence
+            .observe(
+                &decoded,
+                self.channels,
+                self.streaminfo_max_block_size,
+            )
+            .map_err(|_| invalid_frame_source())?;
+        Ok(Some(decoded.block))
     }
 
     fn check_eof(&mut self) -> std::result::Result<(), flacenc::error::SourceError> {
@@ -293,6 +328,161 @@ impl<'a> DecoderSource<'a> {
         self.end_checked = true;
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct FrameSequence {
+    frame_count: u64,
+    next_sample: u64,
+    variable_blocking: Option<bool>,
+    minimum_block_size: u16,
+    maximum_block_size: u16,
+    previous_block_size: Option<u16>,
+}
+
+impl Default for FrameSequence {
+    fn default() -> Self {
+        Self {
+            frame_count: 0,
+            next_sample: 0,
+            variable_blocking: None,
+            minimum_block_size: u16::MAX,
+            maximum_block_size: 0,
+            previous_block_size: None,
+        }
+    }
+}
+
+impl FrameSequence {
+    fn observe(
+        &mut self,
+        frame: &DecodedFrame,
+        channels: usize,
+        streaminfo_max_block_size: u16,
+    ) -> Result<()> {
+        let block_size = u16::try_from(frame.block.duration())
+            .map_err(|_| refusal("frame block size exceeds STREAMINFO range"))?;
+        if block_size == 0
+            || block_size != frame.header.block_size
+            || frame.block.channels() as usize != channels
+        {
+            return Err(refusal(
+                "decoded frame size or channel count disagrees with its header",
+            ));
+        }
+        if self
+            .variable_blocking
+            .is_some_and(|previous| previous != frame.header.variable_blocking)
+        {
+            return Err(refusal("FLAC blocking strategy changes within the stream"));
+        }
+        if !frame.header.variable_blocking
+            && self
+                .previous_block_size
+                .is_some_and(|previous| previous != streaminfo_max_block_size)
+        {
+            return Err(refusal(
+                "a short fixed-block frame is followed by another frame",
+            ));
+        }
+
+        if frame.header.variable_blocking {
+            if frame.header.coded_number != self.next_sample
+                || frame.block.time() != self.next_sample
+            {
+                return Err(refusal("FLAC frame sample numbers have a gap or overlap"));
+            }
+        } else {
+            let expected_start = self
+                .frame_count
+                .checked_mul(u64::from(streaminfo_max_block_size))
+                .ok_or_else(|| refusal("fixed-block sample position overflows"))?;
+            if frame.header.coded_number != self.frame_count || self.next_sample != expected_start {
+                return Err(refusal("fixed-block frame numbers have a gap or overlap"));
+            }
+            if block_size > streaminfo_max_block_size {
+                return Err(refusal("fixed-block frame exceeds STREAMINFO maximum"));
+            }
+            // Claxon 0.4.3 computes fixed-frame time using this frame's block
+            // size. That is correct for full frames but undercounts the start
+            // position of a short final frame. The frame number and the
+            // STREAMINFO maximum block size above provide its unambiguous start.
+            if block_size == streaminfo_max_block_size && frame.block.time() != expected_start {
+                return Err(refusal(
+                    "independent decoder fixed-block time disagrees with frame number",
+                ));
+            }
+        }
+
+        self.variable_blocking = Some(frame.header.variable_blocking);
+        self.next_sample = self
+            .next_sample
+            .checked_add(u64::from(block_size))
+            .ok_or_else(|| refusal("decoded sample count overflows"))?;
+        self.frame_count = self
+            .frame_count
+            .checked_add(1)
+            .ok_or_else(|| refusal("decoded frame count overflows"))?;
+        self.minimum_block_size = self.minimum_block_size.min(block_size);
+        self.maximum_block_size = self.maximum_block_size.max(block_size);
+        self.previous_block_size = Some(block_size);
+        Ok(())
+    }
+
+    fn finish(
+        &self,
+        expected_samples: u64,
+        streaminfo_min_block_size: u16,
+        streaminfo_max_block_size: u16,
+    ) -> Result<()> {
+        if self.frame_count == 0
+            || self.next_sample != expected_samples
+            || self.minimum_block_size != streaminfo_min_block_size
+            || self.maximum_block_size != streaminfo_max_block_size
+        {
+            return Err(refusal(
+                "decoded frame count or block statistics disagree with STREAMINFO",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn read_decoded_frame(
+    cursor: &mut Cursor<&[u8]>,
+    buffer: Vec<i32>,
+) -> Result<Option<DecodedFrame>> {
+    let start = usize::try_from(cursor.position())
+        .map_err(|_| refusal("frame position does not fit this platform"))?;
+    let (decoded, end) = {
+        let mut frames = claxon::frame::FrameReader::new(&mut *cursor);
+        let decoded = frames.read_next_or_eof(buffer);
+        let end = frames.into_inner().position();
+        (decoded, end)
+    };
+    let Some(block) = decoded
+        .map_err(|error| refusal(format!("independent decoder rejected frame: {error}")))?
+    else {
+        if end != start as u64 {
+            return Err(refusal("independent decoder consumed bytes at frame EOF"));
+        }
+        return Ok(None);
+    };
+    if end <= start as u64 + 2 {
+        return Err(refusal("independent decoder returned an empty frame"));
+    }
+    let header = frame_header(cursor.get_ref(), start)
+        .ok_or_else(|| refusal("independent decoder frame has an invalid FLAC header"))?;
+    if u64::from(header.block_size) != u64::from(block.duration()) {
+        return Err(refusal(
+            "decoded frame size disagrees with its FLAC frame header",
+        ));
+    }
+    Ok(Some(DecodedFrame { block, header }))
+}
+
+fn invalid_frame_source() -> flacenc::error::SourceError {
+    flacenc::error::SourceError::by_reason(flacenc::error::SourceErrorReason::InvalidFormat)
 }
 
 impl Source for DecoderSource<'_> {
@@ -367,11 +557,12 @@ impl Source for DecoderSource<'_> {
 
 fn encode_frames(
     input: &[u8],
+    frame_start: usize,
     info: claxon::metadata::StreamInfo,
     original_md5: [u8; 16],
     frame_limit: u64,
 ) -> Result<Option<EncodedFrames>> {
-    let mut source = DecoderSource::new(input, info)?;
+    let mut source = DecoderSource::new(input, frame_start, info)?;
     let config = flacenc::config::Encoder::default()
         .into_verified()
         .map_err(|error| refusal(format!("flacenc configuration failed: {error:?}")))?;
@@ -575,7 +766,7 @@ fn flac_crc8(bytes: &[u8]) -> u8 {
     crc
 }
 
-fn frame_header(data: &[u8], offset: usize) -> Option<(bool, u64, u16)> {
+fn frame_header(data: &[u8], offset: usize) -> Option<FrameHeader> {
     let header = data.get(offset..)?;
     if header.len() < 6 || header[0] != 0xff || header[1] & 0xfe != 0xf8 || header[3] & 1 != 0 {
         return None;
@@ -604,6 +795,8 @@ fn frame_header(data: &[u8], offset: usize) -> Option<(bool, u64, u16)> {
         5
     } else if first & 0xfe == 0xfc {
         6
+    } else if first == 0xfe {
+        7
     } else {
         return None;
     };
@@ -652,41 +845,41 @@ fn frame_header(data: &[u8], offset: usize) -> Option<(bool, u64, u16)> {
     {
         return None;
     }
-    Some((strategy, number, block_size as u16))
+    Some(FrameHeader {
+        variable_blocking: strategy,
+        coded_number: number,
+        block_size: block_size as u16,
+        #[cfg(test)]
+        number_start: offset + 4,
+        #[cfg(test)]
+        number_len: number_bytes,
+        #[cfg(test)]
+        crc_index: offset + crc_index,
+    })
 }
 
-fn validate_frame_sequence(data: &[u8], info: claxon::metadata::StreamInfo) -> Result<()> {
+fn validate_frame_sequence(
+    data: &[u8],
+    frame_start: usize,
+    info: claxon::metadata::StreamInfo,
+) -> Result<()> {
     let expected = info
         .samples
         .ok_or_else(|| refusal("STREAMINFO total samples are unknown"))?;
-    let mut reader = claxon::FlacReader::new(Cursor::new(data))
-        .map_err(|error| refusal(format!("Claxon rejected stream: {error}")))?;
-    let mut frames = reader.blocks();
-    let mut next_sample = 0u64;
-    let mut minimum = u16::MAX;
-    let mut maximum = 0u16;
+    let audio = data
+        .get(frame_start..)
+        .ok_or_else(|| refusal("audio frame start is outside the input"))?;
+    let mut cursor = Cursor::new(audio);
+    let mut sequence = FrameSequence::default();
     let mut reuse = Vec::new();
     loop {
-        let block = frames
-            .read_next_or_eof(reuse)
-            .map_err(|error| refusal(format!("Claxon frame validation failed: {error}")))?;
-        let Some(block) = block else { break };
-        let count = u16::try_from(block.duration())
-            .map_err(|_| refusal("frame block size exceeds STREAMINFO range"))?;
-        if block.time() != next_sample {
-            return Err(refusal("FLAC frame sample numbers have a gap or overlap"));
-        }
-        next_sample = next_sample.saturating_add(u64::from(count));
-        minimum = minimum.min(count);
-        maximum = maximum.max(count);
-        reuse = block.into_buffer();
+        let Some(frame) = read_decoded_frame(&mut cursor, reuse)? else {
+            break;
+        };
+        sequence.observe(&frame, info.channels as usize, info.max_block_size)?;
+        reuse = frame.block.into_buffer();
     }
-    if next_sample != expected || minimum != info.min_block_size || maximum != info.max_block_size {
-        return Err(refusal(
-            "STREAMINFO block statistics disagree with decoded frames",
-        ));
-    }
-    Ok(())
+    sequence.finish(expected, info.min_block_size, info.max_block_size)
 }
 
 fn seektable_valid(data: &[u8], file: &FlacFile, total: u64, max_block_size: u16) -> Result<()> {
@@ -729,18 +922,18 @@ fn seektable_valid(data: &[u8], file: &FlacFile, total: u64, max_block_size: u16
             ));
         }
         let at = offset as usize;
-        let (variable, coded_number, actual_count) =
-            frame_header(frame_bytes, at).ok_or_else(|| {
-                Error::verify("FLAC SEEKTABLE offset does not point to a valid frame header")
-            })?;
-        let frame_sample = if variable {
-            coded_number
+        let header = frame_header(frame_bytes, at).ok_or_else(|| {
+            Error::verify("FLAC SEEKTABLE offset does not point to a valid frame header")
+        })?;
+        let frame_sample = if header.variable_blocking {
+            header.coded_number
         } else {
-            coded_number
+            header
+                .coded_number
                 .checked_mul(u64::from(max_block_size))
                 .ok_or_else(|| Error::verify("FLAC fixed-block frame number overflows"))?
         };
-        if frame_sample != sample || actual_count != count {
+        if frame_sample != sample || header.block_size != count {
             return Err(Error::verify(
                 "FLAC SEEKTABLE sample or block length disagrees with its frame",
             ));
@@ -890,7 +1083,7 @@ fn rewrite(input: &[u8], strip_metadata: bool) -> Result<Option<RewrittenFlac>> 
     let file = parse(input)?;
     let info = decode_info(input)?;
     let total = info.samples.unwrap_or(0);
-    validate_frame_sequence(input, info)
+    validate_frame_sequence(input, file.frame_start, info)
         .map_err(|error| refusal(format!("invalid input frame sequence: {error}")))?;
     seektable_valid(input, &file, total, info.max_block_size)
         .map_err(|error| refusal(format!("invalid input SEEKTABLE: {error}")))?;
@@ -913,7 +1106,7 @@ fn rewrite(input: &[u8], strip_metadata: bool) -> Result<Option<RewrittenFlac>> 
         .saturating_sub(MARKER.len() as u64)
         .saturating_sub(target_metadata_len);
     let Some((mut spool, starts, info_bytes)) =
-        encode_frames(input, info, original_md5, frame_limit)?
+        encode_frames(input, file.frame_start, info, original_md5, frame_limit)?
     else {
         return Ok(None);
     };
@@ -991,9 +1184,9 @@ pub fn verify(original: &[u8], candidate: &[u8], options: &Options) -> Result<()
     {
         return Err(Error::verify("FLAC STREAMINFO sample identity changed"));
     }
-    validate_frame_sequence(original, left_info)
+    validate_frame_sequence(original, left.frame_start, left_info)
         .map_err(|error| Error::verify(format!("original FLAC frame sequence: {error}")))?;
-    validate_frame_sequence(candidate, right_info)
+    validate_frame_sequence(candidate, right.frame_start, right_info)
         .map_err(|error| Error::verify(format!("candidate FLAC frame sequence: {error}")))?;
     compare_metadata(original, &left, candidate, &right, options.strip_metadata)?;
     if candidate.len() == original.len()
@@ -1023,8 +1216,21 @@ mod tests {
     use flacenc::source::MemSource;
 
     fn sample_flac(with_seek: bool, verbatim: bool) -> Vec<u8> {
+        let block_size = if verbatim {
+            2048
+        } else {
+            flacenc::config::Encoder::default().block_size
+        };
+        sample_flac_with_samples(8192, block_size, with_seek, verbatim)
+    }
+
+    fn sample_flac_with_samples(
+        samples_per_channel: usize,
+        block_size: usize,
+        with_seek: bool,
+        verbatim: bool,
+    ) -> Vec<u8> {
         let channels = 2;
-        let samples_per_channel = 8192;
         let mut pcm = Vec::with_capacity(samples_per_channel * channels);
         for sample in 0..samples_per_channel {
             let left = (((sample * 31) % 257) as i32 - 128) * 127;
@@ -1034,8 +1240,8 @@ mod tests {
         }
         let mut encoder = flacenc::config::Encoder::default();
         encoder.multithread = false;
+        encoder.block_size = block_size;
         if verbatim {
-            encoder.block_size = 2048;
             encoder.subframe_coding.use_constant = false;
             encoder.subframe_coding.use_fixed = false;
             encoder.subframe_coding.use_lpc = false;
@@ -1069,6 +1275,215 @@ mod tests {
         let mut sink = ByteSink::new();
         stream.write(&mut sink).unwrap();
         sink.as_slice().to_vec()
+    }
+
+    fn test_options() -> Options {
+        Options {
+            zopfli: false,
+            max_pixels: 1,
+            max_uncompressed: 1,
+            max_ratio: 1,
+            strip_metadata: false,
+            nested: false,
+            max_depth: 0,
+            depth: 0,
+            allow: crate::formats::Allow::default(),
+            fits_tile: false,
+        }
+    }
+
+    fn frame_spans(input: &[u8]) -> Vec<(usize, usize)> {
+        let file = parse(input).unwrap();
+        let audio = &input[file.frame_start..];
+        let mut cursor = Cursor::new(audio);
+        let mut spans = Vec::new();
+        let mut reuse = Vec::new();
+        loop {
+            let start = cursor.position() as usize;
+            let Some(frame) = read_decoded_frame(&mut cursor, reuse).unwrap() else {
+                break;
+            };
+            let end = cursor.position() as usize;
+            spans.push((file.frame_start + start, file.frame_start + end));
+            reuse = frame.block.into_buffer();
+        }
+        spans
+    }
+
+    fn encode_flac_number(number: u64) -> Vec<u8> {
+        let length = if number <= 0x7f {
+            1
+        } else if number <= 0x7ff {
+            2
+        } else if number <= 0xffff {
+            3
+        } else if number <= 0x1f_ffff {
+            4
+        } else if number <= 0x3ff_ffff {
+            5
+        } else if number <= 0x7fff_ffff {
+            6
+        } else {
+            7
+        };
+        if length == 1 {
+            return vec![number as u8];
+        }
+        let prefix: u8 = [0, 0, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe][length];
+        let leading_bits = 7 - length;
+        let leading_mask = (1u8 << leading_bits) - 1;
+        let first = prefix | ((number >> (6 * (length - 1))) as u8 & leading_mask);
+        let mut encoded = vec![first];
+        for index in (0..length - 1).rev() {
+            encoded.push(0x80 | ((number >> (index * 6)) as u8 & 0x3f));
+        }
+        encoded
+    }
+
+    fn flac_crc16(bytes: &[u8]) -> u16 {
+        let mut crc = 0u16;
+        for &byte in bytes {
+            crc ^= u16::from(byte) << 8;
+            for _ in 0..8 {
+                crc = if crc & 0x8000 != 0 {
+                    (crc << 1) ^ 0x8005
+                } else {
+                    crc << 1
+                };
+            }
+        }
+        crc
+    }
+
+    fn rewrite_frame_number(frame: &[u8], number: u64, variable_blocking: bool) -> Vec<u8> {
+        let header = frame_header(frame, 0).unwrap();
+        let mut rewritten = frame[..header.number_start].to_vec();
+        rewritten[1] = (rewritten[1] & !1) | u8::from(variable_blocking);
+        rewritten.extend_from_slice(&encode_flac_number(number));
+        rewritten.extend_from_slice(
+            &frame[header.number_start + header.number_len..header.crc_index],
+        );
+        let crc_index = rewritten.len();
+        rewritten.push(flac_crc8(&rewritten[..crc_index]));
+        rewritten.extend_from_slice(&frame[header.crc_index + 1..frame.len() - 2]);
+        rewritten.extend_from_slice(&flac_crc16(&rewritten).to_be_bytes());
+        rewritten
+    }
+
+    fn fixed_as_variable(input: &[u8]) -> Vec<u8> {
+        let file = parse(input).unwrap();
+        let mut rewritten = input[..file.frame_start].to_vec();
+        let mut sample = 0u64;
+        for (start, end) in frame_spans(input) {
+            let frame = &input[start..end];
+            let header = frame_header(frame, 0).unwrap();
+            assert!(!header.variable_blocking);
+            rewritten.extend_from_slice(&rewrite_frame_number(frame, sample, true));
+            sample += u64::from(header.block_size);
+        }
+        rewritten
+    }
+
+    fn mutate_frame_number(input: &[u8], frame_index: usize, number: u64) -> Vec<u8> {
+        let file = parse(input).unwrap();
+        let mut rewritten = input[..file.frame_start].to_vec();
+        for (index, (start, end)) in frame_spans(input).into_iter().enumerate() {
+            let frame = &input[start..end];
+            if index == frame_index {
+                let header = frame_header(frame, 0).unwrap();
+                rewritten.extend_from_slice(&rewrite_frame_number(
+                    frame,
+                    number,
+                    header.variable_blocking,
+                ));
+            } else {
+                rewritten.extend_from_slice(frame);
+            }
+        }
+        rewritten
+    }
+
+    #[test]
+    fn fixed_block_short_final_frame_is_valid_for_input_and_candidate() {
+        let input = sample_flac_with_samples(5000, 2048, true, true);
+        let file = parse(&input).unwrap();
+        let info = decode_info(&input).unwrap();
+        assert_eq!(info.min_block_size, 904);
+        assert_eq!(info.max_block_size, 2048);
+        assert_eq!(frame_spans(&input).len(), 3);
+        validate_frame_sequence(&input, file.frame_start, info).unwrap();
+
+        let options = test_options();
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&input, &mut candidate, &options).unwrap(),
+            Cand::Written(_)
+        ));
+        verify(&input, &candidate, &options).unwrap();
+    }
+
+    #[test]
+    fn variable_block_input_with_contiguous_sample_numbers_is_valid() {
+        let fixed = sample_flac_with_samples(5000, 2048, false, true);
+        let input = fixed_as_variable(&fixed);
+        let file = parse(&input).unwrap();
+        let info = decode_info(&input).unwrap();
+        assert!(frame_header(&input[file.frame_start..], 0)
+            .unwrap()
+            .variable_blocking);
+        validate_frame_sequence(&input, file.frame_start, info).unwrap();
+
+        let options = test_options();
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&input, &mut candidate, &options).unwrap(),
+            Cand::Written(_)
+        ));
+        verify(&input, &candidate, &options).unwrap();
+    }
+
+    #[test]
+    fn sequence_gap_and_overlap_controls_fail_input_and_candidate_verification() {
+        let fixed = sample_flac_with_samples(5000, 2048, false, true);
+        let variable = fixed_as_variable(&fixed);
+        let options = test_options();
+
+        for (name, input, wrong_numbers) in [
+            ("fixed", fixed.as_slice(), [3u64, 0u64]),
+            ("variable", variable.as_slice(), [2049u64, 0u64]),
+        ] {
+            for wrong_number in wrong_numbers {
+                let bad = mutate_frame_number(input, 1, wrong_number);
+                let file = parse(&bad).unwrap();
+                let info = decode_info(&bad).unwrap();
+                let parse_error = validate_frame_sequence(&bad, file.frame_start, info)
+                    .expect_err("a coded gap or overlap must be rejected");
+                assert!(
+                    parse_error.to_string().contains("gap or overlap"),
+                    "{name}: {parse_error}"
+                );
+
+                let mut rejected_candidate = Vec::new();
+                let optimize_error = optimize(&bad, &mut rejected_candidate, &options)
+                    .expect_err("optimizer must refuse the corrupt frame sequence");
+                assert!(
+                    optimize_error.to_string().contains("gap or overlap"),
+                    "{name}: {optimize_error}"
+                );
+            }
+        }
+
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&fixed, &mut candidate, &options).unwrap(),
+            Cand::Written(_)
+        ));
+        for wrong_number in [0u64, 3u64] {
+            let corrupt_candidate = mutate_frame_number(&candidate, 1, wrong_number);
+            let error = verify(&fixed, &corrupt_candidate, &options)
+                .expect_err("candidate verification must reject gap/overlap corruption");
+            assert!(error.to_string().contains("gap or overlap"), "{error}");
+        }
     }
 
     #[test]

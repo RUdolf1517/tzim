@@ -81,11 +81,29 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
             }
         ]
         expanded = {
-            "inputs": [{"id": "pre-registered-skip", "fetch_status": "fetched"}],
+            "inputs": [{
+                "id": "pre-registered-skip",
+                "fetch_status": "fetched",
+                "handler_expectation": "valid-input",
+            }],
             "derived_inputs": [],
         }
         aggregate = MEASURE.aggregate_rows(rows, expanded)
         self.assertEqual(aggregate, RECOMPUTE.recompute(rows, expanded))
+        self.assertEqual(
+            aggregate["valid_input_expectation_failures"],
+            [{
+                "id": "pre-registered-skip",
+                "code": "valid_input_expectation_not_met",
+                "expected": "valid-input",
+                "accepted_statuses": ["optimized", "already_optimal"],
+                "observed_status": "skipped",
+            }],
+        )
+        self.assertTrue(any(
+            blocker.get("code") == "valid_input_expectation_not_met"
+            for blocker in aggregate["blockers"]
+        ))
 
         row = {
             **rows[0],
