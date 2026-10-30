@@ -13,13 +13,15 @@ unchanged evidence; the current owner separately authorized the non-default #79 
 threshold or result in §7 has been rewritten.
 
 **Current owner scope and exact-SHA evidence.** #79 is implemented behind the non-default `flac` feature. The
-fixed corpus run at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` retained all 43 frozen rows: 30 valid
-inputs (23 optimized, 7 already optimal), 7 documented refusals, and 6 invalid controls. All 23 optimized
-candidates passed external `flac --test` and `metaflac`, independent PCM comparison, and STREAMINFO-MD5 checks.
-The full 43-row corpus totaled 109,472,390 → 108,727,820 bytes; the 23 optimized inputs totaled 91,284,082 →
-90,539,512 bytes; both views save 744,570 bytes. First-pass time was 6.873 seconds total (109.207 ms/file
-median); the `flac`-only feature build was 836,384 bytes. Exact rows, manifest and commands are in the [run
-report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774) and artifact `flac-corpus-7b82c9edb6e5060bc8ce7ed756caebba91505b5b` (no FLAC bytes). This is measured sample evidence, not full-format admission or release approval.
+latest fixed corpus run at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` retained all 43 frozen rows:
+30 valid inputs (23 optimized, 7 already optimal), 7 documented refusals, and 6 invalid controls. All 23
+optimized candidates passed external `flac --test` and `metaflac`, independent PCM comparison, and
+STREAMINFO-MD5 checks. The full 43-row corpus totaled 109,472,390 → 108,727,820 bytes; the 23 optimized inputs
+totaled 91,284,082 → 90,539,512 bytes; both views save 744,570 bytes. First-pass time was 6.423 seconds total
+(102.31 ms/file median); the `flac`-only feature build was 836,384 bytes. Exact rows, manifest and commands are
+in the [run report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521427672) and artifact
+`flac-corpus-5721867ab1439814cead5645d4f443d8f8876c9c` (no FLAC bytes). The earlier run remains historical.
+This is measured sample evidence, not full-format admission or release approval.
 
 ---
 
@@ -157,8 +159,8 @@ re-quantisation and no colour management anywhere in the chain.
 | Cost | Amount | How it is known |
 | --- | --- | --- |
 | dependencies | 3 direct crates (`flacenc`, `claxon`, `md-5`), 6 with transitive | `cargo tree` when it lands |
-| binary size | `flac`-only build: 836,384 bytes at exact SHA `7b82c9ed` | source-SHA size report [`6520257597`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520257597); this feature-only binary size is not stated as a net delta |
-| encoder speed | 6.873 seconds total first-pass time; median 109.207 ms/file | fixed 43-row corpus report [`6520214774`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774) |
+| binary size | `flac`-only build: 836,384 bytes at exact SHA `5721867a` | source-SHA size report [`6521444478`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521444478); this feature-only binary size is not stated as a net delta |
+| encoder speed | 6.423 seconds total first-pass time; median 102.31 ms/file | fixed 43-row corpus report [`6521427672`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521427672) |
 | memory | one decoded pass per file, bounded by `--max-size` | the existing limit applies unchanged |
 
 `flacenc`'s default features pull `log`, `crossbeam-channel` (for its internal parallelism) and `serde`;

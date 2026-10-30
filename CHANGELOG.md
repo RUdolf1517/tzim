@@ -15,7 +15,7 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 - **Lossless FLAC frame re-encoding behind the non-default `flac` feature** (#79). The handler uses independent
   Claxon PCM/STREAMINFO verification and remaps seekpoints while retaining metadata. At exact source SHA
-  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, the frozen 43-row sample optimized 23 valid files; all 23 passed
+  `5721867ab1439814cead5645d4f443d8f8876c9c`, the frozen 43-row sample optimized 23 valid files; all 23 passed
   external `flac --test`, `metaflac`, exact PCM and STREAMINFO-MD5 checks. The full-corpus total is
   109,472,390 → 108,727,820 bytes; the optimized-only rows are 91,284,082 → 90,539,512 bytes; 744,570 saved
   in either denominator. This sample is not full format admission.
@@ -27,10 +27,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 ### Changed
 
 - **#57 fixed PDF sample: original accepted-subset rule applied.** At exact source SHA
-  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, 18 of 21 outputs were accepted and the `faithful_pct` median
-  (flate2 level 9) was 0.00038990779980227345%, below the registered 1% refusal bar. The pre-registered result
+  `5721867ab1439814cead5645d4f443d8f8876c9c`, 18 of 21 outputs were accepted and the `faithful_pct` median
+  (flate2 level 9) was 0.0003428000748065941%, below the registered 1% refusal bar. The pre-registered result
   is **refused after measurement**. The permitted-qpdf and forbidden-repack distributions, all raw rows, and
-  qpdf/MuPDF checks are in [PDF audit §11](docs/pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
+  qpdf/MuPDF checks are in [PDF audit §12](docs/pdf-audit.md#12-pr-84-corrected-exact-head-57-sample); §11
+  preserves the earlier run.
 - **#59 fixed FITS survey: corrected reader path preserves threshold blockers.** The a1 default-checksum
   `funpack` result is superseded as an instrument outcome and is not evidence of 14 candidate content failures.
   Literal-header comparisons now use `funpack -C` and require an external integer-only CFITSIO positive control

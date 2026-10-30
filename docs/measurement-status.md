@@ -7,70 +7,79 @@ This is a living management checklist, not a completed execution audit or a rele
 
 The owner-fixed #57/#59 source identities and protocol are in PR comment
 [6498702204](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204). The fixed-manifest workflows
-retain every row and do not select, drop, repair, or substitute inputs based on size or gain. The first complete
-measurement pass ran at exact source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` in
-[workflow `41038741167`](https://github.com/RUdolf1517/tzim/actions/runs/41038741167). These results are exact
-for that SHA. The documentation commit below changes Markdown-derived PDF inputs; the required post-documentation
-run is reported separately on the PR and must not be conflated with this immutable snapshot. No baseline,
-threshold, old aggregate, #78 policy, or #82/#83 behavior was changed.
+retain every row and do not select, drop, repair, or substitute inputs based on size or gain. The original run at
+exact source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` remains historical. The corrected reader-mode run at
+exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` reran all 14 #59 products and all 21 #57 outputs in
+[workflow `41047304719`](https://github.com/RUdolf1517/tzim/actions/runs/41047304719); its exact results and raw
+artifacts are linked below. This document itself is a Markdown-derived #57 PDF input, so any subsequent exact-head
+run is a separate immutable snapshot and must not be conflated with SHA `5721867`. No baseline, threshold, old
+aggregate, #78 policy, or #82/#83 behavior was changed.
 
-- **#57 — fixed sample measured; original threshold applied.** All 21 registered outputs were generated and
-  retained (six documents through all three named producers plus three pinned scan-derived PDFs): 18 accepted,
-  3 refused as `incremental_update`. The accepted-subset `faithful_pct` distribution was n=18, median
-  0.00038990779980227345%, Q1 0.0%, Q3 0.19344060494152818%, share-positive 72.22%. Permitted-qpdf and
-  forbidden-repack distributions are in [PDF audit §11](pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
-  The pre-registered rule was **applied and returned refused after measurement** because the faithful median is
-  below 1%. Tzim's separate result was 12 optimized rows and 3,565 bytes saved from 72,982,531 optimized-input
-  bytes; this optimized-only median was not substituted for the registered metric. There were zero qpdf
-  candidate-check failures and zero registered render differences. The exact report is
-  [comment `6520274047`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520274047).
-- **#59 — fixed survey measured; threshold not applied.** The frozen 14-product TESS/GALEX/ROSAT set and its
-  Tier-2 distribution are unchanged. The a1 report used default-checksum `funpack`; its 14/14 literal-header /
-  storage-array outcome is superseded as an instrument result and is not evidence of candidate content failures.
-  The corrected path uses `funpack -C` for every literal comparison and requires an external integer-only CFITSIO
-  positive control through the same comparator before attributing candidate differences. It retains structured
-  per-HDU equality, mismatch classes, card indices, keywords, first-difference offsets, and exact 80-column cards;
-  checksum cards are compared literally. The four TESS `fitsverify -l` checksum warnings remain blockers, so the
-  registered threshold stays **not applied**. Tzim independently skipped all 14 rows unchanged; no input repair
-  or FITS-byte upload occurred and the ROSAT boundary was preserved. The a1 report remains historical; see
-  [corrected FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol), [historical audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), and [historical a1 comment `6520583133`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133).
-- **#79 — fixed FLAC corpus evidence recorded.** The 43-row manifest SHA-256 remains
-  `fe3e15d22d098744bee1955a026c537cc077331b89765a698ddfb6c169de71be`; the run-specific expanded-manifest
-  SHA-256 is `225cb1b592da64008f9c0e5679bdb898aa943751579c9b03c93257fcdc58615c`. Counts were 30 valid inputs
+- **#57 — fixed sample measured; original threshold applied and refused after measurement.** At exact source
+  SHA `5721867ab1439814cead5645d4f443d8f8876c9c`, all 21 pre-registered outputs were retained: 18 accepted and
+  3 refused as `incremental_update`. The registered accepted-subset `faithful_pct` distribution (flate2 level 9)
+  was n=18, median 0.0003428000748065941%, Q1 0.0%, Q3 0.20546883358771292%, share-positive 72.22%; the
+  registered refusal bar remains 1%. The original rule was **applied and returned refused after measurement**.
+  Tzim optimized 12/21 rows and saved 3,670 bytes from 76,721,560 optimized-input bytes; this separate
+  optimized-only metric was not substituted. Qpdf candidate-check failures and registered render differences were
+  both zero. The exact report is [comment `6521481242`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521481242).
+- **#59 — corrected fixed survey measured; threshold not applied.** At exact SHA
+  `5721867ab1439814cead5645d4f443d8f8876c9c`, all 14 frozen TESS/GALEX/ROSAT products downloaded and measured;
+  Tier 2 remained n=14 with median 30.42168674698795%, Q1 29.518072289156628%, Q3 64.63408680369086%, and
+  100% positive share. Tier 1 is explicitly empty, not 0%. The real integer-only CFITSIO `fpack` →
+  `fitsverify -l` → `funpack -C` positive control passed through the same literal-header/storage-array comparator;
+  attribution was enabled, and no fpack float-array oracle was used. The corrected round trips found 20
+  header-only HDU failures and 2,412 differing header cards, with no storage-payload mismatches. The independent
+  `fitsverify -l` counts remain 4 failed TESS candidates, 4 inherited-warning GALEX candidates, and 6 passed
+  ROSAT candidates. Thus 0/14 reference candidates passed and the registered threshold stayed **not applied**.
+  Tzim independently skipped all 14 rows unchanged; no input repair or FITS-byte upload occurred and the ROSAT
+  boundary was preserved. The a1 default-checksum outcome remains historical and is superseded only as an
+  instrument result. See [corrected FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol),
+  [historical audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), [corrected report comment
+  `6521475591`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521475591), and [historical a1 comment
+  `6520583133`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133).
+- **#79 — fixed FLAC corpus evidence recorded.** The exact-SHA run at
+  `5721867ab1439814cead5645d4f443d8f8876c9c` retained all 43 rows; the run-specific expanded-manifest SHA-256
+  was `6a1eb219e87b993e12b3efe1ac0c97407422c9edf9270576c5d3fea7cd6109ac`. Counts were 30 valid inputs
   (23 optimized, 7 already optimal), 7 documented refusals and 6 invalid controls. All 23 candidates passed
   external `flac --test`, `metaflac`, exact PCM comparison, and STREAMINFO-MD5 checks. Whole-corpus bytes were
   109,472,390 → 108,727,820; optimized-only bytes were 91,284,082 → 90,539,512; saved 744,570. First-pass
-  time was 6.873 seconds total (median 109.207 ms/file). The `flac`-only feature build was 836,384 bytes.
-  Exact report: [comment `6520214774`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520214774).
+  time was 6.423 seconds total (median 102.31 ms/file). The `flac`-only feature build was 836,384 bytes.
+  Exact report: [comment `6521427672`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521427672).
 - **#80 — implementation remains separately authorized and non-default.** The PDF handler supports the narrow
   classic-xref/xref-stream paths, preserves existing `/ObjStm` bytes, validates type-2 members and bounds
   decoded object streams at 8 MiB. It does not wait for #57. The #57 sample's refused result does not alter
   the owner's separate opt-in implementation decision. All-feature and feature-specific CI tests passed; no
   full PDF admission or release-default claim is made.
 
-**Checks and remaining limits at this SHA.** PR CI run `41038741139` passed the platform matrix, all-feature
-Rust tests, Clippy, MSRV, package, size, and documentation-link checks; its Astropy FITS oracle passed. Fixed
-run `41038741167` passed PDF generation, qpdf/MuPDF measurement and independent recomputation, and all-feature
-Rust tests, but the #59 reference-candidate gate correctly made the aggregate run fail. The fixed FLAC run
-`41038741487`, fuzz `41038741155`, corpus `41038741154`, third-party `41038741314`, lockfile `41038735328`, and
-HEASARC `41038741101` completed successfully. #78's external Astropy EXTNAMX fixture and final evidence-bundle /
-repro jobs were skipped; #78 remains open. `measure-repro` run
-[41038741066](https://github.com/RUdolf1517/tzim/actions/runs/41038741066) failed at this SHA: the historical
-FITS totals were Astropy 780→675 KiB, CFITSIO 60→678 KiB, Drizzlepac 3.3→14.8 MiB, Reproject 2.0→1.8 MiB,
-and total 17.8→17.9 MiB (counts/commits reproduced). Historical PDF median/Q1/Q3 and repack median reproduced,
-but the mean was 0.4216836773% vs 0.39%, share-positive 69.3756% vs 68%, qpdf mean 1.65% vs 1.68%, and render
-pages 168 vs 173; five old Zopfli cells remain unavailable because their per-file sample was not retained.
-These are historical-reproduction differences, not the fixed #57/#59 run results; no baseline or threshold was
-changed. The local sandbox still lacks Rust/Cargo and HEASARC tools; pinned CI performed the measurements. A
-green CI status alone is not treated as proof of acceptance.
+**Checks and remaining limits for the corrected SHA.** PR CI run `41047304771` passed the platform matrix,
+all-feature Rust tests, Clippy, MSRV, package, size, and documentation-link checks. Fixed run `41047304719`
+passed all generation, measurement, and independent recomputation steps; its final #59 gate failed because no
+reference candidate passed, with the four TESS checksum warnings retained as blockers. Fixed #57 applied the
+original rule and returned refused after measurement. Fixed FLAC run `41047304729`, fuzz `41047304764`, corpus
+`41047304732`, third-party `41047304845`, lockfile `41047299106`, and the HEASARC negative-control gate
+`41047304801` completed successfully. #78 remains open; no result here closes it.
+
+The unrelated historical `measure-repro` check
+[41047304810](https://github.com/RUdolf1517/tzim/actions/runs/41047304810) failed on the published-versus-measured
+differences, not on the fixed #57/#59 gates: FITS totals were Astropy 780→675 KiB, CFITSIO 60→678 KiB,
+Drizzlepac 3.3→14.8 MiB, Reproject 2.0→1.8 MiB, and total 17.8→17.9 MiB (counts/commits reproduced). Historical
+PDF median/Q1/Q3 and repack median reproduced, but mean was 0.4216836773% vs 0.39%, share-positive 69.3756% vs
+68%, qpdf mean 1.65% vs 1.68%, and render pages 168 vs 173; five old Zopfli cells remain unavailable because
+their per-file sample was not retained. No baseline or threshold was changed. The local sandbox lacks Rust/Cargo
+and HEASARC tools; pinned CI performed those measurements. A green CI status alone is not treated as proof of
+acceptance.
 
 ## Evidence and limits
 
 The historical 2,208-file PDF and 178-file FITS execution details below remain attributed to the earlier
-handover; their historical per-file artifacts were not retained. This is distinct from the actual fixed #57/#59
-runs at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, whose raw rows, reports, commands, environments and
-independent aggregates are attached to the workflow and linked above. The ordinary fixture gates and JPEG
-benchmark remain separate evidence; they do not turn the failed #59 reference-candidate gate into a pass.
+handover; their historical per-file artifacts were not retained. The #57/#59 reports at `7b82c9ed` and the a1
+report remain historical, with a1's default-checksum `funpack` outcome superseded as an instrument result. The
+corrected fixed #57/#59 run at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` retains raw rows, commands,
+environments, candidate identities and independent aggregates in the workflow reports linked above. Its #59
+positive control passed and the header-only candidate failures are separately attributable; the four TESS
+`fitsverify -l` checksum warnings still block the threshold. Ordinary fixture gates and JPEG benchmark remain
+separate evidence and do not turn that failed reference-candidate gate into a pass.
 
 The current instruments are linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
 [FITS §8.1](fits-audit.md#81-what-was-actually-run-and-with-what):
@@ -83,8 +92,12 @@ The current instruments are linked in [PDF §9.1](pdf-audit.md#91-what-was-run) 
 The old blob labels `1677d63` and `2978fe4` above the historical aggregates refer to earlier script versions;
 they are not the current fixed-sample instrument identities. The current #59 report records Python 3.12.15,
 NumPy 2.4.6, Astropy 8.0.2 and pinned CFITSIO 4.7.0 source; #57 records pinned qpdf 12.4.2 and its MuPDF
-render tool. The exact raw command arguments and stdout/stderr are retained in the workflow artifacts. The
-133,704-byte #59 evidence artifact has SHA-256 `0d7599db4ac4edf833eeff67038bceadfe9a69f78e2d82606a776d3f3b054ba4`; a local download attempt ended in Azure Blob `EOF`, so its ZIP contents remain uninspected in this sandbox. The report comment itself retains the complete 14-row source/candidate identities and summarized command outcomes.
+render tool. The exact raw command arguments, stdout/stderr and full per-HDU mismatch cards are retained in the workflow
+artifacts. Corrected #59 evidence artifact `fixed-fits-evidence` (run `41047304719`, artifact ID `12972563926`)
+is 992,236 bytes with SHA-256
+`b046406504dc474587a32f7300d09d41910c4b4912db9cd23f113511e0642160`. Its local download attempt ended in Azure
+Blob `EOF`, so ZIP contents remain uninspected in this sandbox; the report comment and §12 retain the complete
+14-row source/candidate identities and summarized outcomes. The artifact contains no FITS bytes.
 
 ## Independent FITS review handoff
 
@@ -158,9 +171,9 @@ separately, and the final release inventory must name the actual release SHA.
 
 | Issue / requirement | Available evidence in this iteration | Open gap / disposition |
 | --- | --- | --- |
-| #57: exact source set | Owner-fixed 21-output set; exact run `41038741167` at source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, manifest SHA `8b4705e6…` | 18 accepted, 3 refused; `faithful_pct` median 0.00038990779980227345%; original threshold applied and returned refusal. Permitted-qpdf/repack distributions, raw commands, qpdf checks, renders and independent recomputation are retained. The post-documentation rerun is separately reported; do not replace the registered metric with Tzim-only gain |
-| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; the a1 default-checksum `funpack` result is historical and superseded as an instrument outcome | The four independent TESS `fitsverify -l` checksum warnings remain blockers, so threshold **not applied**. Re-run the exact 14 rows with `funpack -C` and an external integer-only positive control through the same literal-header/storage-array comparator; retain exact candidate identities, structured diagnostics, raw rows and commands without FITS bytes. Do not use the old a1 14/14 mismatch as candidate-content evidence; unchanged Tzim skips remain distinct |
-| #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seekpoint mapping, and regression tests behind `flac`; fixed 43-row run `41038741487` at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` | 23 optimized, 7 already optimal, 7 documented refusals, 6 invalid controls; all 23 optimized rows passed external tools, exact PCM and STREAMINFO-MD5. Saved 744,570 bytes; whole-corpus and optimized-only labels are both recorded. Fuzz, feature-size and timing evidence are linked; broader admission/review remains separate |
+| #57: exact source set | Owner-fixed 21-output set; exact run `41047304719` at source SHA `5721867ab1439814cead5645d4f443d8f8876c9c`, manifest SHA `d179ff1b…` | 18 accepted, 3 refused; registered `faithful_pct` median 0.0003428000748065941%; original threshold applied and returned refusal. Permitted-qpdf/repack distributions, raw commands, qpdf checks, renders and independent recomputation are retained. The rule and disposition are unchanged; never replace the registered metric with Tzim-only gain |
+| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; corrected run `41047304719` at source SHA `5721867ab1439814cead5645d4f443d8f8876c9c`, manifest SHA `b4a621dd…` | The positive control passed. All 14 candidates were measured with `funpack -C`; 20 header-only HDU failures (2,412 card differences), 0 payload-mismatch HDUs, and 0/14 full-gate passes. The four independent TESS `fitsverify -l` checksum warnings remain blockers, so threshold **not applied**. Raw rows and exact candidate identities are retained without FITS bytes. The a1 default-checksum result is superseded as an instrument outcome, not evidence of candidate content failure; unchanged Tzim skips remain distinct |
+| #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seekpoint mapping, and regression tests behind `flac`; fixed 43-row run `41047304729` at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` | 23 optimized, 7 already optimal, 7 documented refusals, 6 invalid controls; all 23 optimized rows passed external tools, exact PCM and STREAMINFO-MD5. Saved 744,570 bytes; whole-corpus and optimized-only labels are both recorded. Fuzz, feature-size and timing evidence are linked; broader admission/review remains separate |
 | #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, tests, behind `pdf` | Implementation is independent of #57 and remains owner-authorized/non-default. #57's original rule refused the fixed sample; qpdf/MuPDF evidence and all-feature tests passed. No default enablement or full PDF-admission claim |
 | #78 and #82/#83 | #78 HEASARC run `41038741101` passed; its external Astropy EXTNAMX fixture and final evidence/repro jobs were skipped. #82/#83 code and owner decisions were unchanged | Keep #78 open pending its missing evidence/manager review; preserve #82/#83. No size threshold, baseline, prompt, or release default was changed |
 | #70: FITS implementation | PR #69 implementation and existing `fits` feature remain opt-in | This #59 measurement work does not close #70 or make a full FITS-admission claim |

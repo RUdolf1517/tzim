@@ -451,25 +451,74 @@ report and raw structured diagnostics are recorded in §12; no FITS bytes are up
 
 ## 12. Corrected #59 reader-mode protocol
 
-This correction changes the `funpack` reader mode and diagnostics, not the pre-registered acceptance protocol,
-source identities, sample, threshold, or raw-row retention. The corrected fixed-sample run retains all 14 exact
-TESS, GALEX and ROSAT product rows and the Astropy reference-candidate byte counts/SHA-256 values used for the
-measurement. It does not repair or substitute inputs, normalize headers, remove checksum cards, or upload FITS
-bytes; the ROSAT permission boundary remains unchanged.
+### Exact-SHA measurement and gated disposition
 
-Every reconstruction whose header is compared literally uses `funpack -C`: each exact Astropy Tier-2 reference
-candidate is reconstructed against its source, and each optimized Tzim candidate path reconstructs both source
-and candidate before comparison. The mode is recorded in the raw row, tool-command log, positive-control record,
-aggregate and report. The positive control is a real pinned-CFITSIO `fpack` → `fitsverify -l` → `funpack -C`
-round trip through the same exact comparator, using an integer-only fixture. It must pass before candidate header
-or payload differences are attributed to the survey candidates; `fpack` is not used as a float-array correctness
-oracle. The existing negative controls remain intact.
+The correction changes the `funpack` reader mode and diagnostics, not the pre-registered acceptance protocol,
+source identities, sample, threshold, or raw-row retention. The corrected fixed-sample run used exact source SHA
+`5721867ab1439814cead5645d4f443d8f8876c9c`, workflow
+[41047304719](https://github.com/RUdolf1517/tzim/actions/runs/41047304719), and frozen 14-product manifest
+SHA-256 `b4a621ddcf0d1a76dae7f8d14f8f5323e2b0f299227ed98b96a2ed3b753f70c5`. All 14 exact TESS, GALEX and ROSAT
+products downloaded and measured; no input was repaired, substituted, or selected by gain. Input byte counts and
+SHA-256 values match the previous report. Candidate hashes below are the exact identities emitted for this run;
+the a1 identities remain in historical comment
+[6520583133](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133).
 
-Each comparison records per-HDU exact 80-column header-record equality and exact storage-payload equality,
-including shape and HDU type. Mismatch records distinguish `header_only`, `payload_only`, `combined`, and
-HDU-structure failures; header mismatches include the HDU/card index, keyword, first differing byte offsets,
-and exact before/after cards. The complete structured records are in `reference-hdu-diagnostics.jsonl` and
-`raw-rows.jsonl`; only hashes, sizes, cards and tool output are retained, never FITS payload bytes. The four
-TESS `fitsverify -l` checksum warnings remain independent candidate blockers, so the registered threshold stays
-`not_applied` unless all required candidate gates pass. Exact corrected per-row results and the final-SHA artifact
-are linked from the PR #84 report; no manager/owner protocol choice is being requested.
+Tier 2 Astropy candidates remained n=14, median 30.42168674698795%, Q1 29.518072289156628%, Q3
+64.63408680369086%, share-positive 100%. Tier 1 was empty (n=0, not 0%). The existing instrument counts were
+Tier 1 comparator n=0, Tier 2 reference n=14, refused n=0, and not-measured n=0.
+
+The external positive control **passed**: pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → the same
+literal-header/storage-array comparator, with an integer-only fixture. The record explicitly states
+`fpack_float_array_oracle_used=false`; `fpack` is not a float-array correctness oracle. Attribution was therefore
+enabled for candidate differences. The four TESS `fitsverify -l` checksum-agreement warnings remain blockers;
+all other `fitsverify -l` outcomes are four GALEX inherited-warning passes and six clean ROSAT passes. The 14
+reference-candidate reconstructions had **20 header-only HDU failures and 2,412 changed header cards**, with **0
+payload-mismatch HDUs** and **0 HDU-count mismatches**. No candidate had a payload difference in this comparison.
+The full reference-candidate gate passed 0/14, so the registered threshold is **not applied**. Tzim skipped all
+14 rows unchanged; direct source-versus-unchanged comparisons passed 14/14, and optimized-candidate `funpack`
+comparisons were not applicable. This distinct Tzim result does not validate the reference candidates.
+
+### Exact reference-candidate identities and outcomes
+
+| Fixed product ID | Candidate bytes / SHA-256 | `fitsverify -l` | `funpack -C` exact header / payload |
+| --- | --- | --- | --- |
+| `tess-s1-c1-ccd1-calibrated` | 26,242,560 / `0793ca87c6cfc5cc61a4a76ddeb63361926997de714b89776c711cabb209188e` | FAIL, exit 1; new checksum warning | header-only, 3 HDUs |
+| `tess-s1-c1-ccd1-uncalibrated` | 8,280,000 / `05e5ad6471861965a735342be572f58f61f843f13ffeb8c458cde60e71907c0a` | FAIL, exit 1; new checksum warning | header-only, 2 HDUs |
+| `tess-s1-c4-ccd2-calibrated` | 27,089,280 / `6e71c80f5276d005b2beafaef157c83d1aff15cb931c310f6000e66ebf66a1bb` | FAIL, exit 1; new checksum warning | header-only, 3 HDUs |
+| `tess-s1-c4-ccd2-uncalibrated` | 9,192,960 / `725cf687e9feec7d9930e4eacf14f379ad76e56cf517069a827b2c72e5cb2642` | FAIL, exit 1; new checksum warning | header-only, 2 HDUs |
+| `galex-tile-01-MISDR1_18916_0459-fd-int` | 15,693,120 / `995e30ac661c54f63eb2570aafcb7578f1c524d7aab98d893760fdd49d355026` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-02-MISDR1_18916_0459-nd-int` | 20,862,720 / `703e73cb18271b8212f666204c17d39d346dbbd513709878a9112dfca06d154d` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-03-MISWZS03_18917_0284-fd-int` | 6,825,600 / `2404adb17c9c96ea08f995e9d276bb04483dfd8dc01c60afcf6295b38d5dc880` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-04-MISWZS03_18917_0284-nd-int` | 15,782,400 / `67a1f16d87e719aeedf694c7d32b916b91c7367550c9eb794a69e1c3fba4ea13` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `rosat-rass-c` | 328,320 / `0fa9541cab6be0c9bec02df0a34997ce05715d7255632c26f7a7db53eba03f0b` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-m` | 336,960 / `866a3082fce9df240a271f4875bb36846212cd22204cb28f81b1f6a39b3a2f8c` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-ij` | 339,840 / `c5aae8836cc662d846b600e76bc705160dd161e818d99d4400e94cf452b94995` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-c` | 336,960 / `38f73cbd8a55bdfb959ed1b4f3370ddaf7c46404f8de32a9daf6973e08f2bdcc` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-m` | 336,960 / `d6fe05e0f567a2ec50c566963011f845a4bd1bd43e02a5ae86c39761e1d79616` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-ij` | 336,960 / `12fad6ec5652e35e159f4f55452cf839c8549daca8ff1b762f480fb6a515b338` | PASS, exit 0 | header-only, 1 HDU |
+
+The four GALEX candidates have only the same deprecated-`EPOCH` warning as their sources; they are inherited-
+warning outcomes, not exit-zero checks. The four TESS candidates have a new checksum-agreement warning. The six
+ROSAT candidates pass `fitsverify -l` with exit 0; their source-side deprecated-`BLOCKED` warnings are unchanged
+source diagnostics. Each structured per-HDU row records exact header-record equality and storage-payload equality and separates
+`header_only`, `payload_only`, and `combined` failures; HDU-type and HDU-count mismatches are reported separately.
+All 20 failing candidate HDUs are classified `header_only`; the aggregate reports 2,412 card mismatches. Exact
+per-mismatch `hdu_index`, `card_index`, keyword, first differing card/header/file byte offsets, and exact
+before/after 80-column cards are retained without truncation in the artifact's
+`run/reference-hdu-diagnostics.jsonl` and `run/raw-rows.jsonl`.
+
+Every reconstruction whose header is compared literally uses `funpack -C`: each exact Astropy reference candidate
+is reconstructed against its source, and each optimized Tzim candidate path reconstructs both source and candidate
+before comparison. The command, mode and output hashes are recorded in rows and tool logs. Each per-HDU result
+records exact header-record equality and exact storage-payload equality, including shape and HDU type; the
+negative controls remain intact. There was no checksum-card filtering, header normalization, scaling removal, or
+other repair. The artifact has no FITS bytes or payload data: `fixed-fits-evidence` ID `12972563926`, size
+992,236 bytes, SHA-256 `b046406504dc474587a32f7300d09d41910c4b4912db9cd23f113511e0642160`. A local artifact download
+returned Azure Blob `EOF`; the run's report comment
+[6521475591](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521475591) retains the complete row table,
+and the 90-day artifact retains the full structured card records. No FITS bytes were uploaded; the ROSAT permission
+boundary was preserved.
+
+The earlier owner-decision request based on the default-checksum comparison is withdrawn; no owner protocol
+choice is pending. The corrected threshold remains `not_applied` because required candidate gates fail, including
+the four independent TESS checksum warnings. #70/full FITS admission remains separate.

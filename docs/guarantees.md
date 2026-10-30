@@ -728,10 +728,10 @@ format admission and release claims remain separate.** The audit behind the hist
 [flac-audit.md](flac-audit.md): its 0.4% musical-material result, 0% at `flac -8`, and estimated +150…300 KiB
 cost remain unchanged historical evidence. The owner separately authorized #79 despite that result.
 
-**Fixed-corpus evidence at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`:** the 43-row corpus had 23
+**Fixed-corpus evidence at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c`:** the 43-row corpus had 23
 optimized and 7 already-optimal valid inputs, 7 documented refusals and 6 invalid controls. All 23 optimized
 candidates passed external `flac`/`metaflac`, exact PCM, and STREAMINFO-MD5 checks; total saved bytes were
-744,570. First-pass time was 6.873 seconds, and the feature-only build measured 836,384 bytes. These fixed rows
+744,570. First-pass time was 6.423 seconds, and the feature-only build measured 836,384 bytes. These fixed rows
 are evidence for that subset, not full format admission or release approval. The exact report and artifact limits
 are in [measurement-status.md](measurement-status.md).
 
@@ -915,10 +915,10 @@ the same reasoning.
 **Implementation status: present behind the non-default `pdf` feature in this unreleased PR branch; no
 release-default or full-admission claim is made.** The 2,208-file historical audit in
 [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance) remains
-unchanged. The fixed #57 21-output sample at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` produced an
-accepted-subset `faithful_pct` median of 0.00038990779980227345%; the original rule was applied and returned
+unchanged. The fixed #57 21-output sample at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` produced an
+accepted-subset `faithful_pct` median of 0.0003428000748065941%; the original rule was applied and returned
 **refused after measurement** (<1% refusal bar). The permitted-qpdf and forbidden-repack distributions, qpdf
-checks and MuPDF render results are in [pdf-audit §11](pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
+checks and MuPDF render results are in [pdf-audit §12](pdf-audit.md#12-pr-84-corrected-exact-head-57-sample).
 This measurement decision does not change the owner's separate #80 authorization for a non-default
 implementation. The historical 20.1% forbidden-repacking number remains outside this contract: flattening
 revisions, regenerating object streams and renumbering objects is a different risk class, not a recompress.
