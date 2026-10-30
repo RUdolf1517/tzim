@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   windows-installer:
@@ -39,20 +40,41 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          "RUN_ID=$env:GITHUB_RUN_ID" | Set-Content -Path artifacts\run-identity.txt
-          "RUN_ATTEMPT=$env:GITHUB_RUN_ATTEMPT" | Add-Content -Path artifacts\run-identity.txt
-          "HEAD_SHA=$env:GITHUB_SHA" | Add-Content -Path artifacts\run-identity.txt
-          $PSVersionTable | Out-String | Tee-Object -FilePath artifacts\powershell-version.txt
-          winget.exe --version 2>&1 | Tee-Object -FilePath artifacts\winget-version.txt
-          if ($LASTEXITCODE -ne 0) { throw "winget --version failed with exit code $LASTEXITCODE" }
-          python --version 2>&1 | Tee-Object -FilePath artifacts\python-version.txt
-          if ($LASTEXITCODE -ne 0) { throw "python --version failed with exit code $LASTEXITCODE" }
+          Start-Transcript -Path artifacts\windows-environment-transcript.txt -Force | Out-Null
+          try {
+            "RUN_ID=$env:GITHUB_RUN_ID" | Set-Content -Path artifacts\run-identity.txt
+            "RUN_ATTEMPT=$env:GITHUB_RUN_ATTEMPT" | Add-Content -Path artifacts\run-identity.txt
+            "HEAD_SHA=$env:GITHUB_SHA" | Add-Content -Path artifacts\run-identity.txt
+            $PSVersionTable | Out-String | Tee-Object -FilePath artifacts\powershell-version.txt
+            winget.exe --version 2>&1 | Tee-Object -FilePath artifacts\winget-version.txt
+            if ($LASTEXITCODE -ne 0) { throw "winget --version failed with exit code $LASTEXITCODE" }
+            python --version 2>&1 | Tee-Object -FilePath artifacts\python-version.txt
+            if ($LASTEXITCODE -ne 0) { throw "python --version failed with exit code $LASTEXITCODE" }
+          }
+          finally {
+            Stop-Transcript | Out-Null
+          }
 
       - name: Run Windows installer integration and winget install
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           & .\packaging\windows\tests\Install.Integration.ps1
+
+      - name: Publish Windows integration failure log to the pull request
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          log_file="$RUNNER_TEMP/windows-installer-failure.log"
+          : > "$log_file"
+          for file in artifacts/*.txt artifacts/*.log; do
+            [ -f "$file" ] || continue
+            printf '\n--- %s ---\n' "$file" >> "$log_file"
+            cat "$file" >> "$log_file"
+          done
+          bash .github/scripts/ci-report.sh "$log_file" windows-installer
 
       - name: Summarize evidence location and run identity
         if: always()

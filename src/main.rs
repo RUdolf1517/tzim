@@ -26,7 +26,7 @@ fn main() -> ExitCode {
         Ok(Command::Help) => emit(|out| write!(out, "{}", cli::HELP)),
         Ok(Command::Version) => emit(|out| writeln!(out, "tzim {}", env!("CARGO_PKG_VERSION"))),
         Ok(Command::Formats) => emit(print_formats),
-        Ok(Command::Capabilities) => emit(report::print_capabilities),
+        Ok(Command::Capabilities) => emit(|out| report::print_capabilities(out)),
         Ok(Command::Info) => emit(print_info),
         Ok(Command::CheckDeps) => emit(print_check_deps),
         Ok(Command::Optimize(args)) => ExitCode::from(run_optimize(&args) as u8),

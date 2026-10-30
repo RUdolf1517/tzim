@@ -174,7 +174,7 @@ impl Outcome {
     }
 
     fn reason_code(&self) -> Option<ReasonCode> {
-        self.reason_code.or_else(|| match self.status {
+        self.reason_code.or(match self.status {
             Status::Unsupported => Some(ReasonCode::UnsupportedFormat),
             Status::Skipped => Some(ReasonCode::SkippedUnclassified),
             Status::Failed => Some(ReasonCode::FailedUnclassified),
@@ -485,7 +485,7 @@ pub fn print_capabilities<W: Write + ?Sized>(out: &mut W) -> io::Result<()> {
     line.push_str("],\"default_enabled_formats\":[");
     let default_enabled_formats = formats::default_enabled_names();
     push_string_array(&mut line, &default_enabled_formats);
-    line.push_str("]");
+    line.push(']');
 
     line.push_str(",\"selection_flags\":[{\"flag\":\"--formats\",\"semantics\":\"allowlist\",");
     line.push_str("\"scope\":\"compiled_formats\",\"default_set\":\"default_enabled_formats\",");
