@@ -864,10 +864,7 @@ fn validate_frame_sequence(
     let mut cursor = Cursor::new(audio);
     let mut sequence = FrameSequence::default();
     let mut reuse = Vec::new();
-    loop {
-        let Some(frame) = read_decoded_frame(&mut cursor, reuse)? else {
-            break;
-        };
+    while let Some(frame) = read_decoded_frame(&mut cursor, reuse)? {
         sequence.observe(&frame, info.channels as usize, info.max_block_size)?;
         reuse = frame.block.into_buffer();
     }
@@ -1290,14 +1287,12 @@ mod tests {
         let mut cursor = Cursor::new(audio);
         let mut spans = Vec::new();
         let mut reuse = Vec::new();
-        loop {
-            let start = cursor.position() as usize;
-            let Some(frame) = read_decoded_frame(&mut cursor, reuse).unwrap() else {
-                break;
-            };
+        let mut start = cursor.position() as usize;
+        while let Some(frame) = read_decoded_frame(&mut cursor, reuse).unwrap() {
             let end = cursor.position() as usize;
             spans.push((file.frame_start + start, file.frame_start + end));
             reuse = frame.block.into_buffer();
+            start = end;
         }
         spans
     }
