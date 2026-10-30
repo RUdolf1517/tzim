@@ -1,0 +1,132 @@
+name: fixed FLAC corpus
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/formats/flac.rs"
+      - "src/formats/mod.rs"
+      - "src/detect.rs"
+      - "src/fuzz_api.rs"
+      - "tests/**"
+      - ".github/data/flac-corpus.json"
+      - ".github/scripts/flac-corpus-measure.py"
+      - ".github/scripts/recompute_flac_corpus.py"
+      - ".github/scripts/test_flac_corpus_manifest.py"
+      - ".github/scripts/test_flac_corpus_measure.py"
+      - ".github/workflows/flac-corpus.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  corpus:
+    name: measure fixed FLAC decoder-testbench set
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install external FLAC reference tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends flac
+          flac --version
+          metaflac --version
+
+      - name: Check the pre-registered manifest and independent MD5 rules
+        run: |
+          python3 .github/scripts/test_flac_corpus_manifest.py
+          python3 .github/scripts/test_flac_corpus_measure.py
+
+      - name: Build the actual FLAC-only release binary
+        run: cargo build --release --locked --no-default-features --features flac --bin tzim
+
+      - name: Download, freeze and measure every registered input
+        id: measure
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          python3 .github/scripts/flac-corpus-measure.py \
+            --manifest .github/data/flac-corpus.json \
+            --tzim target/release/tzim \
+            --work-root "${RUNNER_TEMP}/flac-work" \
+            --evidence-dir "${RUNNER_TEMP}/flac-evidence" \
+            2>&1 | tee "${RUNNER_TEMP}/flac-runner.log"
+
+      - name: Independently recompute all FLAC aggregates
+        id: recompute
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 .github/scripts/recompute_flac_corpus.py \
+            --evidence-dir "${RUNNER_TEMP}/flac-evidence" \
+            2>&1 | tee "${RUNNER_TEMP}/flac-recompute.log"
+
+      - name: Retain provenance, raw rows and tool outputs (no FLAC corpus bytes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flac-corpus-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/flac-evidence/
+            ${{ runner.temp }}/flac-runner.log
+            ${{ runner.temp }}/flac-recompute.log
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Publish the exact-head FLAC corpus report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/flac-report.md"
+          {
+            echo "# FLAC corpus report"
+            echo
+            echo "- Source SHA: \`${SOURCE_SHA}\`"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Raw rows, frozen manifest and tool output: artifact \`flac-corpus-${SOURCE_SHA}\` (no FLAC bytes)."
+            echo "- This is measurement evidence, not an acceptance claim based only on a green job."
+            echo
+            if [[ -f "${RUNNER_TEMP}/flac-evidence/summary.md" ]]; then
+              cat "${RUNNER_TEMP}/flac-evidence/summary.md"
+            else
+              echo "No summary was produced; the bounded runner diagnostics below are included because hosted artifact downloads are not always available."
+              echo
+              echo "- Measurement step outcome: \`${{ steps.measure.outcome }}\`; recomputation step outcome: \`${{ steps.recompute.outcome }}\`."
+              for log in "${RUNNER_TEMP}/flac-runner.log" "${RUNNER_TEMP}/flac-recompute.log"; do
+                if [[ -f "$log" ]]; then
+                  echo
+                  echo "### $(basename "$log") (last 40 lines)"
+                  echo '```text'
+                  tail -n 40 "$log" | cut -c1-1200
+                  echo '```'
+                fi
+              done
+            fi
+          } > "$report"
+          bash .github/scripts/ci-report.sh "$report" flac-corpus report full
+
+      - name: Fail if measurement or independent recomputation failed
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ steps.measure.outcome }}" != "success" \
+            || "${{ steps.recompute.outcome }}" != "success" ]]; then
+            exit 1
+          fi

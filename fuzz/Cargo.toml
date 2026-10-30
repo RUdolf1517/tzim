@@ -25,7 +25,7 @@ default-features = false
 # Every handler, so that `roundtrip`/`strip` reach the real code for a detected
 # format instead of the `internal` arm. tiff and zlib were missing, which meant
 # two parsers were never fuzzed (#36).
-features = ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib", "fuzz-api"]
+features = ["png", "gzip", "zip", "ico", "jpeg-v1", "tiff", "zlib", "flac", "pdf", "fuzz-api"]
 
 [workspace]
 members = ["."]

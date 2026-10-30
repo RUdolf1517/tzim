@@ -1,6 +1,6 @@
 # FLAC: the audit behind the contract
 
-Related: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) · [formats](formats.md) ·
+Related: [guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [roadmap](roadmap.md)
 
 This is stage 1 for FLAC — the audit that a contract is allowed to follow. It exists because the format
@@ -8,10 +8,20 @@ queue in the roadmap says "contract before code", and a contract written without
 wish list: FLAC is the one format in the queue where the *lossless* part is easy and the *verifiable* part
 is the whole problem.
 
-**Status: refused after measurement (§7).** No FLAC code exists, the contract in
-[guarantees §4.9](guarantees.md#49-flac--refused-after-measurement) stays on record, and the binary does not
-claim the format. The reason is not difficulty: it is that the format has almost nothing left to give, and the
-encoder to collect it costs a quarter of the binary. §7 has the numbers.
+**Historical status: refused after measurement (§7).** That refusal and its historical gain/cost figures remain
+unchanged evidence; the current owner separately authorized the non-default #79 implementation. No historical
+threshold or result in §7 has been rewritten.
+
+**Current owner scope and exact-SHA evidence.** #79 is implemented behind the non-default `flac` feature. The
+latest fixed corpus run at exact SHA `5967e318951f9c3945f0c256c3095b347483e234` retained all 43 frozen rows:
+30 valid inputs (23 optimized, 7 already optimal), 7 documented refusals, and 6 invalid controls. All 23
+optimized candidates passed external `flac --test` and `metaflac`, independent PCM comparison, and
+STREAMINFO-MD5 checks. The full 43-row corpus totaled 109,472,390 → 108,727,820 bytes; the 23 optimized inputs
+totaled 91,284,082 → 90,539,512 bytes; both views save 744,570 bytes. First-pass time was 6.371 seconds total
+(102.685 ms/file median); the `flac`-only feature build was 836,384 bytes. Exact rows, manifest and commands are
+in the [run report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521735772) and artifact
+`flac-corpus-5967e318951f9c3945f0c256c3095b347483e234` (no FLAC bytes). The earlier run remains historical.
+This is measured sample evidence, not full-format admission or release approval.
 
 ---
 
@@ -149,8 +159,8 @@ re-quantisation and no colour management anywhere in the chain.
 | Cost | Amount | How it is known |
 | --- | --- | --- |
 | dependencies | 3 direct crates (`flacenc`, `claxon`, `md-5`), 6 with transitive | `cargo tree` when it lands |
-| binary size | not measured yet | the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) will get a `flac` column; the budget in §1 is not raised in advance |
-| encoder speed | not measured yet | `flacenc` searches LPC orders and Rice partitions; the real-file corpus run will show it |
+| binary size | `flac`-only build: 836,384 bytes at exact SHA `5967e318` | source-SHA size report [`6521758214`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521758214); this feature-only binary size is not stated as a net delta |
+| encoder speed | 6.371 seconds total first-pass time; median 102.685 ms/file | fixed 43-row corpus report [`6521735772`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521735772) |
 | memory | one decoded pass per file, bounded by `--max-size` | the existing limit applies unchanged |
 
 `flacenc`'s default features pull `log`, `crossbeam-channel` (for its internal parallelism) and `serde`;
@@ -203,10 +213,11 @@ of a 30 MB track. Metadata removal is not a reason to support a format.
 
 ### 7.3 What happens to the work that was done
 
-The contract stays ([guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)). It cost nothing to
-write, it is correct, and if the calculus ever changes — an encoder with a materially better search, or a
-FLAC subset nobody has covered — the analysis does not have to start over. `docs/formats.md` records the
-format as **refused**, not as "research", because a queue that never shrinks is not a queue.
+The contract stays ([guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in)). At the time of this
+audit the disposition was to refuse the format; the owner later superseded that decision with #79's opt-in
+implementation scope. The analysis and measured numbers remain historical context, not a veto on #79 and not
+current size/speed evidence. Until #79's independent runtime verification and acceptance evidence pass, the
+format remains unsupported in the binary.
 
 The queue that remains:
 

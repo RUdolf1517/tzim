@@ -2,12 +2,14 @@
 """FITS tile compression, checked by a reader written by someone else (#70).
 
 `docs/fits-audit.md` §4 gates Tier 2 on `fitsverify` accepting the output and
-`funpack` producing a header that diffs clean. Neither tool is installable in
-this environment, so this script uses the substitute the audit itself names in
-§8.1 and does not hide: **`astropy`, which is CFITSIO underneath** — the same
-tile decoder `fpack` and `funpack` call. What it proves is that a second
-implementation reads the file and sees the same numbers; what it does not prove
-is `fitsverify`'s own structural lint, which has still not run anywhere.
+`funpack` producing a header that diffs clean. This script uses Astropy's own
+`astropy.io.fits` compressed-image reader as a separate implementation: its
+`GZIP_1` and `GZIP_2` paths use Python's `gzip` plus Astropy's own GZIP2 byte
+shuffle, not a call to CFITSIO's `funpack`. Some other Astropy codecs wrap
+CFITSIO-derived C routines, but tzim writes only these GZIP codecs. The Astropy
+read proves that a second implementation sees the same numbers; it does not
+prove `fitsverify`'s structural lint or substitute for the separate HEASARC
+`fitsverify`/`funpack -C` gate.
 
     python3 -m pip install numpy astropy
     python3 .github/scripts/fits-oracle.py --binary target/release/tzim
@@ -38,7 +40,7 @@ CARD = 80
 
 
 # Registered compression types are convention-recognized independently of
-# whether a particular oracle build can decode them. Astropy/CFITSIO currently
+# whether a particular Astropy build can decode them. Astropy currently
 # decodes these five types; any future registered type absent from this set is
 # reported as "not evaluated", never as a convention failure.
 REGISTERED_CODECS = {"GZIP_1", "GZIP_2", "RICE_1", "PLIO_1", "HCOMPRESS_1"}
@@ -698,7 +700,7 @@ def main():
     print()
     print("%d fixture(s), %d failure(s), %d codec check(s) not evaluated" %
           (len(cases), failures, not_evaluated_count))
-    print("read back by astropy %s (CFITSIO underneath); fitsverify has not run"
+    print("read back by astropy.io.fits %s; CFITSIO fitsverify/funpack gate is separate"
           % astropy.__version__)
     return 1 if failures else 0
 

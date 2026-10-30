@@ -38,7 +38,13 @@ Homebrew formula and the Linux packages install, so all four channels describe t
 that disagreed with `--help` would be a second source of truth, and this project does not keep one.
 `tests/packaging.rs` fails when an option in `--help` is missing from the man page or from any completion. The
 fuzz entry points are behind a `fuzz-api` feature that no release enables; `--all-features` would put them in
-the binary. JPEG still has to be enabled at run time with `--formats jpeg`.
+the binary.
+
+The release default includes the eligible baseline sequential JPEG subset and its independent V1 pixel
+verification; users do not need to name JPEG with `--formats`. `--formats` is an allowlist for narrowing the
+handlers in a run (`--formats png` excludes JPEG). Progressive and arithmetic-coded JPEG are not included in
+the supported subset. FLAC and PDF remain separate non-default opt-in features. FITS is also non-default, and
+requires both a build with `--features fits` and the explicit `--fits-tile` run option.
 
 Asset names are the Rust target triples and carry no version. That is deliberate: it makes
 `https://github.com/RUdolf1517/tzim/releases/latest/download/<asset>` a stable URL, which is what
@@ -142,15 +148,41 @@ files before anything is touched.
 
 ## 5. Release process
 
-1. `ci` must be green on `main`, including all three operating systems.
-2. The version in `Cargo.toml` and the top `CHANGELOG.md` section are updated in the same pull request.
-3. A GitHub release is created from a tag on `main`. Publishing it triggers
-   `.github/workflows/release.yml`, which builds the three archives and the two Linux packages,
-   smoke-tests each binary (`--version`, `--list-formats`), and uploads everything with `SHA256SUMS`.
-4. A follow-up pull request pins the artifacts: the SHA-256 of the macOS and Linux archives into
-   `Formula/tzim.rb`, and every `version` field in it is bumped in the same commit. Until that commit lands,
-   `brew install` serves the previous release — the tap never points at a version whose hashes are invented.
-5. The release notes state plainly what the release does **not** do: which formats are refused, which
+1. **Run final gates on one exact commit.** `ci` must be green on `main`, including all three operating
+   systems. Manually dispatch `.github/workflows/fits-heasarc.yml` with the full 40-character
+   release-candidate SHA (leave the `bundle` input enabled). Confirm the requested SHA equals the
+   checked-out SHA in both gate records and the wrapper record;
+   retain the run ID/URL, toolchain versions, corpus provenance, raw logs, per-file results, checksums and
+   negative controls. A `DIFFERENT` measurement comparison remains a failed gate: the wrapper and evidence
+   bundle never promote it to success.
+2. **Create a Draft Release and attach the evidence.** Use a tag on `main`, download
+   `final-sha-evidence-bundle` from that exact-SHA run, and verify it before attaching the archive and its
+   sidecars to the draft:
+
+   ```sh
+   sha256sum -c evidence-bundle.tar.gz.sha256
+   tar xzf evidence-bundle.tar.gz
+   ( cd evidence && sha256sum -c SHA256SUMS )
+   ```
+
+   Inspect `evidence/bundle-manifest.json`, `evidence/source-inventory.json`, the gate summaries, and
+   per-file records. Confirm the embedded gate outcomes and both checked-out SHAs before publishing.
+3. **Review, then publish.** The release owner reviews the draft and its evidence, including any non-green
+   gate result under the existing release policy. Publishing is not implied by a successful artifact upload
+   or by the bundle's internal self-check.
+4. **Let the published-release workflow produce the binaries.** Publishing triggers
+   `.github/workflows/release.yml`, which builds the three archives and two Linux packages, smoke-tests each
+   binary (`--version`, `--list-formats`), and uploads the artifacts with `SHA256SUMS`. Do not upload
+   binaries or checksums by hand.
+5. **Verify the published assets.** Download the actual binaries and `SHA256SUMS` from the published
+   Release, run `sha256sum -c SHA256SUMS`, and check the expected version and format list from the downloaded
+   executable. The workflow's pre-upload smoke tests do not replace verifying the assets users will download.
+6. **Update Homebrew only after verification.** Open a follow-up pull request that pins the SHA-256 of the
+   actual macOS and Linux archives into `Formula/tzim.rb` and bumps every `version` field in the same commit.
+   Until that commit lands, `brew install` serves the previous release; the tap never points at a version
+   whose hashes are invented.
+7. The release notes state plainly what the release does **not** do: which formats are refused, which
    guarantees are not claimed, and which numbers are unmeasured (see [benchmarks](benchmarks.md)).
 
-A release is never cut from a red build, and artifacts are never uploaded by hand.
+A release is never cut from a red build, a `DIFFERENT` measurement is never relabelled as success, and
+release assets are never uploaded by hand.

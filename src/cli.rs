@@ -133,11 +133,12 @@ OPTIONS:
         --nested               also optimize supported files inside archives
         --max-depth <N>        nesting depth limit (default: 3)
         --formats <LIST>       only process these formats: png, gzip, zip, ico,
-                               jpeg, tiff, zlib, fits; JPEG is off unless named
-                               here, and FITS does nothing without --fits-tile
-        --fits-tile            FITS: rewrite an uncompressed image HDU as a
-                               tile-compressed binary table. Off by default: a
-                               reader that indexes NAXIS1 sees a different file
+                               jpeg, tiff, zlib, fits, flac, pdf; default builds
+                               enable JPEG V1; FLAC/PDF are optional features;
+                               FITS needs --fits-tile
+        --fits-tile            FITS tile compression; single-file TTY asks
+                               after verification (default No); otherwise
+                               explicit opt-in.
         --zopfli               use the slower, stronger encoder
         --follow-symlinks      resolve and follow symbolic links
         --allow-hardlinks      process files with more than one hard link
@@ -467,9 +468,11 @@ mod tests {
         let args = parse_ok(&["--formats", "jpeg,png", "x.jpg"]);
         assert!(args.allow.jpeg && args.allow.png);
         assert!(!args.allow.zip && !args.allow.ico && !args.allow.gzip);
-        // JPEG is off unless it is named.
+        // Release and all-feature builds include `jpeg-v1`; codec-only builds
+        // retain the explicit allowlist requirement.
         let plain = parse_ok(&["x.jpg"]);
-        assert!(!plain.allow.jpeg && plain.allow.png);
+        assert_eq!(plain.allow.jpeg, cfg!(feature = "jpeg-v1"));
+        assert!(plain.allow.png);
     }
 
     #[test]

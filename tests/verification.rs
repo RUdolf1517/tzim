@@ -58,6 +58,8 @@ fn options(strip_metadata: bool) -> Options {
             tiff: true,
             zlib: true,
             fits: true,
+            flac: true,
+            pdf: true,
         },
     }
 }

@@ -407,6 +407,7 @@ fn info_names_the_jpeg_verification_level_of_this_build() {
     assert_eq!(code, 0, "{stderr}");
     if cfg!(feature = "jpeg-v1") {
         assert!(stdout.contains("independent decoder (V1)"), "{stdout}");
+        assert!(stdout.contains("enabled by default"), "{stdout}");
     } else if cfg!(feature = "jpeg") {
         assert!(
             stdout.contains("the codec in this build only (V3)"),
@@ -1785,7 +1786,7 @@ fn nested_does_not_touch_signed_archives() {
 }
 
 // ---------------------------------------------------------------------------
-// JPEG (v0.4, opt-in)
+// JPEG (v0.4; default V1 build since #82)
 // ---------------------------------------------------------------------------
 
 fn has(haystack: &[u8], needle: &[u8]) -> bool {
@@ -1820,9 +1821,32 @@ fn jpeg_baseline_is_optimized_and_then_stable() {
     assert_eq!(std::fs::read(&path).unwrap(), after);
 }
 
+#[cfg(feature = "jpeg-v1")]
 #[test]
-fn jpeg_is_inert_without_the_formats_flag() {
-    let ws = Workspace::new("jpeg-opt-in");
+fn jpeg_is_enabled_by_default_but_formats_remains_an_allowlist() {
+    let ws = Workspace::new("jpeg-default");
+    let original = build_jpeg(32, 32, 1);
+    let path = ws.write("photo.jpg", &original);
+
+    let (code, stdout, stderr) = run(&["photo.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    let optimized = std::fs::read(&path).unwrap();
+    assert!(
+        optimized.len() < original.len(),
+        "default build did not optimize JPEG"
+    );
+
+    let excluded = ws.write("excluded.jpg", &original);
+    let (code, stdout, stderr) = run(&["--formats", "png", "excluded.jpg"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("not enabled"), "{stdout}");
+    assert_eq!(std::fs::read(excluded).unwrap(), original);
+}
+
+#[cfg(all(feature = "jpeg", not(feature = "jpeg-v1")))]
+#[test]
+fn jpeg_without_the_independent_verifier_remains_opt_in() {
+    let ws = Workspace::new("jpeg-v3-only");
     let original = build_jpeg(32, 32, 1);
     let path = ws.write("photo.jpg", &original);
 
@@ -3835,26 +3859,52 @@ mod fits_tests {
         assert!(problems.is_empty(), "{}", problems.join("\n"));
     }
 
-    /// A file whose image is already compressed with a codec this build does not
-    /// have: `skipped` with the reason, never a rewrite, never an error.
+    /// Unsupported compressed-image codecs are named in the refusal and never
+    /// rewrite the source. The HCOMPRESS card deliberately extends through the
+    /// full 20-column value field, as it does in the HEASARC fixture.
     #[test]
-    fn fits_an_unsupported_tile_codec_is_skipped() {
-        let ws = Workspace::new("fits-rice");
+    fn fits_unsupported_tile_codecs_are_named_and_preserved() {
         let axis = [64usize, 40];
         let data = fits_samples(16, &axis);
         let tiles: Vec<Vec<u8>> = data.chunks(128).map(|tile| tile.to_vec()).collect();
-        // A FITS file that begins with a BINTABLE is not a FITS file: the
-        // primary HDU is what detection sees, so the fixture has one even
-        // though it holds nothing.
-        let mut original = fits_empty_primary();
-        original.extend_from_slice(&fits_compressed_image(16, &axis, "RICE_1", &tiles));
-        let path = ws.write("rice.fits", &original);
 
-        let (code, stdout, stderr) = run(&["--fits-tile", "rice.fits"], &ws.path);
-        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-        assert!(stdout.contains("skipped"), "{stdout}");
-        assert!(stdout.contains("RICE_1"), "{stdout}");
-        assert_eq!(std::fs::read(&path).unwrap(), original);
+        for codec in ["RICE_1", "PLIO_1", "HCOMPRESS_1"] {
+            let ws = Workspace::new(&format!("fits-unsupported-{}", codec.to_lowercase()));
+            let mut compressed = fits_compressed_image(16, &axis, codec, &tiles);
+            if codec == "HCOMPRESS_1" {
+                let expected_card = fits_card_raw("ZCMPTYPE= 'HCOMPRESS_1         '");
+                let header_cards = compressed[..FITS_RECORD].as_chunks::<80>().0;
+                let card_index = header_cards
+                    .iter()
+                    .position(|card| &card[..8] == b"ZCMPTYPE")
+                    .expect("the compressed image has a ZCMPTYPE card");
+                let start = card_index * 80;
+                compressed[start..start + 80].copy_from_slice(&expected_card);
+                assert_eq!(&compressed[start..start + 80], expected_card.as_slice());
+            }
+
+            // A FITS file that begins with a BINTABLE is not a FITS file: the
+            // primary HDU is what detection sees, so the fixture has one even
+            // though it holds nothing. These payloads are not claimed to be
+            // real streams for the declared, unsupported codecs.
+            let mut original = fits_empty_primary();
+            original.extend_from_slice(&compressed);
+            let name = format!("{}.fits", codec.to_lowercase());
+            let path = ws.write(&name, &original);
+
+            let (code, stdout, stderr) = run(&["--fits-tile", &name], &ws.path);
+            assert_eq!(code, 0, "{codec}: stdout={stdout} stderr={stderr}");
+            assert!(stdout.contains("skipped"), "{codec}: {stdout}");
+            assert!(
+                stdout.contains(codec),
+                "{codec} was missing from refusal: {stdout}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                original,
+                "{codec} refusal must preserve the input byte-for-byte"
+            );
+        }
     }
 
     /// The number the audit asks for and the contract requires: a file that

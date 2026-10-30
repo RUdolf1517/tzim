@@ -11,6 +11,76 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-30
+
+### Added
+
+- **Lossless FLAC frame re-encoding behind the non-default `flac` feature** (#79). The handler uses independent
+  Claxon PCM/STREAMINFO verification and remaps seekpoints while retaining metadata. At the reviewed exact
+  source SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, the frozen 43-row sample optimized 23 valid files; all
+  23 passed external `flac --test`, `metaflac`, exact PCM and STREAMINFO-MD5 checks. The full-corpus total is
+  109,472,390 → 108,727,820 bytes; the optimized-only rows are 91,284,082 → 90,539,512 bytes; 744,570 saved
+  in either denominator. This is sample evidence, not full format admission ([exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524900373)).
+- **Narrow PDF FlateDecode recompression behind the non-default `pdf` feature** (#80). The implementation
+  preserves object/xref structure and existing `/ObjStm` bytes, and does not repack or flatten revisions. It
+  remains opt-in and separate from the #57 measurement disposition; this is not full PDF admission.
+
+### Changed
+
+- **#57 fixed PDF sample: refused after measurement under the original registered rule.** At reviewed exact
+  source SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, 18 of 21 outputs were accepted for the measured subset
+  and three were refused as `incremental_update`. The accepted-subset `faithful_pct` median was
+  0.00034122090736326286% (Q1 0%, Q3 0.205778828129944%; 72.22% positive), below the registered 1% refusal
+  bar. The pre-registered result is **refused after measurement**—not a green admission result. See the
+  [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6525030959) and
+  [PDF audit §13](docs/pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31); earlier runs remain in §§11–12.
+- **#59 fixed FITS survey: threshold not applied; the four TESS blockers remain.** The corrected path uses
+  `funpack -C` and an external integer-only CFITSIO positive control through the same strict literal-header and
+  storage-array comparison. At reviewed exact source SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, the
+  reference-candidate gate accepted 0/14; Tzim's strict-preservation gate passed 14/14. Across the fixed
+  reference comparison, cards-through-actual-END equality was 0/20, payload mismatches were 0, and diagnostics
+  retained 94 changed, 66 dropped and 12 inserted cards. Four independent TESS `fitsverify -l` checksum warnings
+  remain blockers, so the registered threshold is **not applied**. This is not a green reference-candidate
+  claim. No inputs were repaired or FITS bytes uploaded. See the
+  [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524986515),
+  [FITS audit §12](docs/fits-audit.md#12-corrected-59-reader-mode-protocol), and §11 for the historical report.
+- **Eligible baseline JPEG is included in the release default with independent V1 verification** (#82). The
+  default feature set includes `jpeg-v1`; the exact coefficient, marker and refusal checks remain, with an
+  independent decoder comparing original and candidate pixels before atomic replacement. `--formats` is an
+  allowlist for narrowing handlers, not a JPEG opt-in: for example, `--formats png` excludes JPEG. Only the
+  supported baseline sequential subset is included; progressive JPEG support is not claimed. The decoder uses
+  the measured `opt-level = "s"` package override, and the owner-authorized 1,082,208-byte stripped-musl ceiling
+  remains in force; final-SHA size/performance evidence is kept separate from the earlier exact-head report.
+- **`--fits-tile` has a FITS-only default-No TTY confirmation** (#83). For a single direct file, Tzim stages and
+  fully verifies the ordinary candidate before asking; only `y`/`yes` reaches atomic replacement. Decline,
+  EOF, invalid input or prompt I/O failure preserves the original and removes the temporary. Noninteractive,
+  JSON, batch, nested and dry-run paths do not prompt; the existing flag remains explicit consent there.
+
+### Fixed
+
+- **FITS rewriting declines valid images outside the verified writer subset.** The parser still recognizes
+  `BITPIX = 64` and `NAXIS` through 999, while rewrite eligibility is limited to `BITPIX` 8, 16, 32, −32 and
+  −64 with rank at most 6; per-HDU mixed-file behavior is unchanged. The residual HEASARC matrix covers both
+  PRIMARY and IMAGE roles, adds positive rank-4/rank-6 cases, and records byte-identical refusals for
+  `BITPIX = 64` and ranks 7, 99 and 999, retaining source `fitsverify` observations without treating them as
+  candidate acceptance (rewritten candidates remain strict, with no warning allowlist). The THEAP fixture uses
+  a valid variable-length byte-array descriptor and heap. Run evidence records a PR-head SHA separately from the
+  test-merge SHA and validates their parent relationship. Astropy's GZIP_1/GZIP_2 oracle is documented as its
+  own reader path, distinct from CFITSIO `funpack`.
+
+### Evidence and limits
+
+- The separate `measure-repro` report at reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60` remains a
+  failure on published-versus-measured differences; no baseline or threshold was changed to hide it. FITS corpus
+  differences include Astropy 780 vs 675 KiB, CFITSIO 60 vs 678 KiB, Drizzlepac 3.3 vs 14.8 MiB, reproject 2.0
+  vs 1.8 MiB, and a total of 17.8 vs 17.9 MiB. PDF differences include mean faithful gain 0.39% vs
+  0.4216836773%, positive share 68% vs 69.3756194252%, qpdf mean 1.68% vs 1.6538774233%, and the sampled
+  render-page count 173 vs 168. Five historical Zopfli side-table cells (sample count, median, Q1, Q3 and
+  positive share) are unavailable because the original per-file rows were not retained. No replacement sample
+  was reconstructed. The fresh release-candidate evidence is identified separately by its exact SHA.
+- FLAC and PDF remain separate non-default opt-in features. FITS remains non-default and requires `--fits-tile`.
+  These fixed samples do not establish full-format admission or universal stability; no such claims are made.
+
 ## [0.14.0] - 2026-10-27
 
 ### Added
@@ -90,7 +160,7 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   and so measures more than the contract allows. `qpdf --check` passed on all 1 009 candidates and 173 rendered
   pages from 140 files were pixel-identical, so nothing was refused for unsoundness: it was refused for being a
   rounding error. What repacking would buy is **20.1 %**, which is the price of the invariant stated in bytes.
-  [guarantees §4.11](docs/guarantees.md#411-pdf--refused-after-measurement) keeps the contract and names it
+  [guarantees §4.11](docs/guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) keeps the contract and names it
   refused, as FLAC's did.
 - **FITS implementation is opt-in; the historical audit is retained with limits** (#59).
   [fits-audit §8](docs/fits-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) measured 178 files from
@@ -156,7 +226,7 @@ under *Changed* below.
   original untouched. If the independent decoder cannot read the *original*, the file is `skipped` with that
   reason, because an oracle that cannot read a file is not a verdict about it. The feature is separate from
   `jpeg` and the whole comparison can be removed with one flag ([dependencies
-  §2.10](docs/dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)).
+  §2.10](docs/dependencies.md#210-jpeg-decoder--the-independent-pixel-check-for-jpeg)).
 - **A third-party verification job** (issue #54): Pillow for PNG/JPEG/TIFF/ICO, the standard library's `zlib`
   for gzip and zlib streams, `zipfile` for archives — on the downloaded corpus, comparing pixel data, mode
   and dimensions for images and decompressed bytes for everything else, with the library versions printed.
@@ -576,7 +646,7 @@ work. The corpus still writes 379 177 bytes.
   ANSI sequences are detected and left alone.
 - **A progress line** on stderr for runs that take longer than a moment: ASCII frames, the file counter,
   the clock and the running total. Drawn only when stderr is a terminal; `--no-progress` turns it off.
-- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--refused-after-measurement)),
+- **The FLAC contract** ([guarantees §4.9](docs/guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in)),
   written before any code as every contract here is, with the audit behind it in
   [docs/flac-audit.md](docs/flac-audit.md). No FLAC support is claimed: the handler and its tests do not
   exist, and the implementation is blocked on three crates that have not been approved.
@@ -609,7 +679,7 @@ work. The corpus still writes 379 177 bytes.
 
 - The example in [cli §3](docs/cli.md#3-human-output) showed one decimal and a percentage in the summary,
   neither of which the program has ever printed. The text now matches the binary.
-- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-crates-it-would-have-needed)
+- [dependencies §2.7–2.8](docs/dependencies.md#27-flac-the-opt-in-dependency-set-authorized-by-79)
   record the FLAC crates that are not added and why colour and progress are not dependencies.
 
 ## [0.7.1] - 2026-10-25 — the same binary, 124 KiB lighter

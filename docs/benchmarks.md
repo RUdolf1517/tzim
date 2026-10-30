@@ -11,29 +11,36 @@ an estimate.
 
 | Field | Value |
 | --- | --- |
-| Commit | v0.13.0 — `ci` job `binary size`, the run that measured the feature matrix in [size-budget §3](size-budget.md#3-feature-matrix) |
+| Commit | Historical pre-#82 default — v0.13.0 `ci` job `binary size` |
 | Target | `x86_64-unknown-linux-musl` (static-pie, no libc dependency, no interpreter) |
-| Profile | `--release`, `opt-level = "s"` for this crate, `3` for the codecs, default features (PNG, APNG, gzip, ZIP, ICO/CUR, JPEG, TIFF, zlib, Zopfli) |
-| Features in the binary | every runtime feature; `fuzz-api` is excluded by construction and `jpeg-v1` is off by default |
-| **Size** | **979 808 bytes (956 KiB)** |
+| Profile | `--release`, `opt-level = "s"` for this crate, `3` for the codecs, pre-#82 default features |
+| Features in the binary | `fuzz-api` is excluded by construction; `jpeg-v1` was off in that historical default |
+| **Size** | **979 808 bytes (956 KiB)** — historical only, not the #82 measurement |
 | Change from v0.12.1 | **−69 632 bytes (−68 KiB)** |
 | Normal dependency lines (`cargo tree`, de-duplicated, Linux target) | 14 (was 19) |
-| Gate | 979 808 bytes, exactly — [size-budget §1](size-budget.md#1-budget) |
+| Gate | Historical pre-#82 gate: 979 808 bytes; #82 has its fixed **1,082,208-byte** ceiling |
 
-**The 68 KiB came back from the progress line.** v0.12.1 carried `indicatif` and `console` — 96 KiB, a tenth
-of the binary — and v0.13 draws the same line in `src/progress.rs` for nothing
+**Historical v0.13 context:** the 68 KiB came back from the progress line. v0.12.1 carried `indicatif` and
+`console` — 96 KiB, a tenth of the binary — and v0.13 drew the same line in `src/progress.rs` for nothing
 ([dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)). Five dependency lines left
 the tree with them.
 
-The other half of the release is a decoder that is **not** in this number: `jpeg-v1`, the independent JPEG
-verifier, measures **+118 784 bytes** (116 KiB) and therefore ships off ([dependencies
-§2.10](dependencies.md#210-jpeg-decoder--the-second-opinion-on-a-jpeg-candidate)). It was approved on the
-condition that the shipping binary does not grow past 1 049 440 bytes, and it does not fit even with the 96 KiB
-that was freed; the condition was kept and the feature is a flag.
+In that historical default, `jpeg-v1` was omitted; the earlier `+118 784` bytes was measured at the ordinary
+release profile. The subsequent dependency-specific `opt-level = "s"` measurement and the owner-authorized
+#82 ceiling are recorded in [size-budget §1](size-budget.md#1-budget). The old `1 049 440` condition and the
+old 979 808-byte gate are historical, not current.
 
-The measured build is the released one: default features. `--all-features` now includes a `fuzz-api`
-feature that exists only to expose the parsers to the fuzz targets, and compiling it into the measured
-binary would measure code that never ships.
+**Current #82 evidence:** the `binary size` and `JPEG default runtime cost` jobs publish a report for each source
+SHA and retain 90-day artifacts. The size report includes the stripped-binary byte count/hash and complete feature
+matrix; the runtime report includes the pre-registered input-manifest hash, environment and binary identities,
+per-file rows/refusals, raw per-run timing/RSS, and independently recomputed aggregates. Artifacts are named
+`size-<source SHA>` and `jpeg-runtime-<source SHA>`. Evidence is head-specific: after any source change, use only
+the reports and artifacts for that exact SHA. The fixed size ceiling remains **1,082,208 bytes**; no threshold
+adjustment is permitted.
+
+The historical measured build was the release default at that time. `--all-features` includes a `fuzz-api`
+feature that exists only to expose parsers to the fuzz targets, and compiling it into a published binary would
+measure code that never ships.
 
 Growth by version. **No new dependency lines at any step until v0.10.0**, which adds the progress line's
 five on Linux — the first dependency granted since v0.1. The JPEG handler in v0.4 adds code rather than a

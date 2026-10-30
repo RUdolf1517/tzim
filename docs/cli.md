@@ -101,9 +101,9 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
-| `--memory-budget <BYTES>` | derived from the ceilings: `4 × --max-size + 8 × --max-pixels + --max-uncompressed` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
-| `--formats <LIST>` | all except `jpeg` | only process these formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`); naming `jpeg` is the only way to enable it |
-| `--fits-tile` | off | FITS: rewrite an uncompressed image HDU as a tile-compressed binary table (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off, one tile per row, every other HDU copied verbatim). Off because it turns an `IMAGE` extension into a `BINTABLE`; without it the handler refuses and says why. The handler is compiled in only with the `fits` cargo feature, so a `default` build answers `unsupported` — see §4.12 of [guarantees](guarantees.md) |
+| `--memory-budget <BYTES>` | derived from the ceilings: `6 × --max-size + 8 × --max-pixels + --max-uncompressed + 128 MiB` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| `--formats <LIST>` | all handlers enabled by this build's default policy (baseline JPEG when `jpeg-v1` is compiled; FITS still needs `--fits-tile`) | only process the named formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`, `flac`, `pdf` when compiled); it is an allowlist, so `--formats png` excludes JPEG even in the default build |
+| `--fits-tile` | off | FITS: rewrite an uncompressed image HDU as a tile-compressed binary table (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off, one tile per row, every other HDU copied verbatim). In an interactive single-file TTY run, the candidate is fully verified before a default-No confirmation; elsewhere this flag is the explicit non-interactive opt-in. The handler is compiled in only with the `fits` cargo feature, so a `default` build answers `unsupported` — see §4.12 of [guarantees](guarantees.md) |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |
 | `--nested` | off | also optimize supported files stored inside archives |
 | `--max-depth <N>` | `3` | how deep `--nested` may recurse (`0` is rejected) |
@@ -119,6 +119,22 @@ reproducible and diffable.
 | `-h, --help` | — | the full text of §2; exits `0` |
 | `-V, --version` | — | one line, `tzim <version>`; exits `0` |
 
+### FITS tile confirmation
+
+`--fits-tile` remains the only confirmation-enabled transformation. For one direct regular-file path on a TTY,
+when `--fits-tile` is set, the input is eligible and the ordinary candidate verification succeeds, Tzim asks on
+stderr whether to change the `IMAGE` HDU into a tile-compressed `BINTABLE`. The default answer is No; only `y`
+or `yes` proceeds to the normal atomic install. No, EOF, a closed input, an invalid answer, or a prompt I/O error
+reports `skipped` and leaves the original byte-identical; the staged temporary is removed.
+
+No prompt is shown for non-TTY or JSON output, `--dry-run`, recursive or multi-file/batch runs,
+nested work, a filtered-out format, a safety-skipped hard link, an unknown/refused input, or a failed
+candidate/verifier. `--quiet` does not turn the confirmation into an implicit Yes; an eligible TTY run
+still asks for consent. Those cases never wait for input. `--jobs` does not change the single-file path: the eligible
+file is processed synchronously on the main thread even if a larger worker count was requested. In non-TTY
+runs `--fits-tile` itself is the explicit opt-in and uses the same verified pipeline. `--formats` remains an
+allowlist, not a force switch; it cannot make an unknown or refused FITS file eligible. No other format prompts.
+
 `--include` and `--exclude` take extension lists (`png,gz`), not glob patterns. Globs are deliberately not
 implemented: shell globbing already exists, and a second pattern language is a second set of edge cases.
 
@@ -132,7 +148,7 @@ implemented: shell globbing already exists, and a second pattern language is a s
 | JPEG | `APP1` (Exif/XMP), `APP13` (Photoshop), `COM` | `APP0`, `APP2` (ICC), `APP14`, other `APPn`, tables, coefficients |
 | ICO | nothing of its own; embedded PNGs follow the PNG rule | directory, bitmaps |
 | zlib | nothing: no name, no comment, no timestamp in the header | the header, the trailer, the payload |
-| FLAC (if ever implemented) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
+| FLAC (when the non-default `flac` feature is compiled) | `VORBIS_COMMENT`, `PICTURE`, `PADDING` | `STREAMINFO`, `SEEKTABLE`, `CUESHEET`, `APPLICATION` |
 | TIFF | `DocumentName` (269), `ImageDescription` (270), `Make` (271), `Model` (272), `Software` (305), `DateTime` (306), `Artist` (315), `HostComputer` (316), `InkNames` (333), `Copyright` (33432), IPTC, Photoshop, `UserComment`, `ImageSourceData`, Windows XP tags, GDAL metadata (42112) | colour and geometry tags, resolution, `Orientation`, ICC (`34675`), strips, GDAL nodata (`42113`), unknown tags |
 
 With the flag the acceptance rule becomes "never larger" rather than "strictly smaller": zeroing a
@@ -171,7 +187,7 @@ receipt.bin      -      unsupported: zlib: nothing decodes behind the header; ei
 Exit `0`, and the file is byte-identical afterwards. A `.zlib` that decoded at least one byte and then broke
 is `failed` with exit `1` — that is corruption, and the two cases are never merged.
 
-All options above are frozen from v0.3; the JPEG switch is the only behavioural change in v0.4.
+The `--formats` syntax is unchanged. Under #82, release-default builds include the independent JPEG V1 verifier and enable eligible baseline JPEGs without an explicit flag; `--formats` remains an allowlist, not an addition.
 
 ---
 
@@ -291,7 +307,7 @@ Statuses in dry-run: `would_optimize` (a smaller verified candidate exists — o
 | maximum file size | 2 GiB | protects against accidental huge inputs; raising it is one flag |
 | maximum pixels | 100 MPix | a decoded RGBA buffer at this size is already ~400 MiB |
 | jobs | 4 (2 with `--zopfli`) | bounds how many files are in flight; it does **not** bound memory — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
-| memory budget, per file | the sum of the other ceilings | bounds the bytes one job may cost; a file above it is skipped before it is read |
+| memory budget, per file | `6 × max-size + 8 × max-pixels + max-uncompressed + 128 MiB` | bounds the bytes one job may cost, including PDF and FLAC scratch; a file above it is skipped before it is read |
 | recursion | off | an explicit flag is safer than a surprise tree walk |
 | symlink following | off | avoids surprising writes and infinite walks |
 | hard-linked files | skipped | replacement would break the link for other paths |

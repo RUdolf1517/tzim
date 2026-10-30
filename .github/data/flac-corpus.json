@@ -1,0 +1,464 @@
+{
+  "schema": 1,
+  "corpus": {
+    "repository": "ietf-wg-cellar/flac-test-files",
+    "commit": "aa7b0c6cf32994c106ae517a08134c28a96ff5b2",
+    "license": "CC0-1.0",
+    "license_path": "LICENSE.txt",
+    "author": "Martijn van Beurden",
+    "upstream_collection": "FLAC decoder testbench",
+    "repository_url": "https://github.com/ietf-wg-cellar/flac-test-files/tree/aa7b0c6cf32994c106ae517a08134c28a96ff5b2"
+  },
+  "inputs": [
+    {
+      "id": "subset-01-blocksize-4096",
+      "kind": "subset",
+      "path": "subset/01 - blocksize 4096.flac",
+      "size": 549954,
+      "git_blob_sha1": "0eca2c9b61224964bdfe088c5f01a0904887c6f9",
+      "sha256": "02c7e60ae7788c2cb6898a0a46985d759f1e62482ddd965a374dfd09a2a8390f",
+      "purpose": "baseline 44.1 kHz stereo, ordinary subset block size",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-11-rice-partition-order-8",
+      "kind": "subset",
+      "path": "subset/11 - partition order 8.flac",
+      "size": 510583,
+      "git_blob_sha1": "941862e7dcf361124f59e70a5b5202b61e5e5be6",
+      "sha256": "07596315fc9b297702984deab49041f4695e1482ec3e1d081888d1bf13198e53",
+      "purpose": "maximum allowed Rice partition order",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-15-verbatim-subframes",
+      "kind": "subset",
+      "path": "subset/15 - only verbatim subframes.flac",
+      "size": 889862,
+      "git_blob_sha1": "37093644d046890190b7a3a511590e063de5d639",
+      "sha256": "80459f8ad5a9c7edf081a10f9269c55c29136749021e5a55483bc173aaaa82b0",
+      "purpose": "verbatim-only frame coding",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-23-8-bit",
+      "kind": "subset",
+      "path": "subset/23 - 8 bit per sample.flac",
+      "size": 181470,
+      "git_blob_sha1": "a36391332a21478d27625e5931f06ec2808977f8",
+      "sha256": "d72ad54e1d0ebe5d65b1b1addd13ee873d38c58cb3357774a1943ced2d984cf9",
+      "purpose": "8-bit PCM",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-22-12-bit",
+      "kind": "subset",
+      "path": "subset/22 - 12 bit per sample.flac",
+      "size": 277942,
+      "git_blob_sha1": "137aae0856f7d70a7efb07dba3af2891542e0ad9",
+      "sha256": "d9c385129c4253da4c0de34ed5b163b404523aa971773277b8b74ef92f7d4f44",
+      "purpose": "valid 12-bit source, outside current encoder subset",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "subset-28-high-resolution-24-bit",
+      "kind": "subset",
+      "path": "subset/28 - high resolution audio, default settings.flac",
+      "size": 3476937,
+      "git_blob_sha1": "4adc0019fd91d7f06cd58c8ab2c9c84ce57e40f0",
+      "sha256": "62322a5c7821081bae99cc1a3f398f177a17cf9312131a5fbcfcc2ee38539346",
+      "purpose": "high-resolution 24-bit source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-29-high-resolution-blocksize-16384",
+      "kind": "subset",
+      "path": "subset/29 - high resolution audio, blocksize 16384.flac",
+      "size": 3265142,
+      "git_blob_sha1": "022de6fe80e3498c392b6837059a908558af07fa",
+      "sha256": "7551605d8a90a7e74e788b31273493ce5e24059d839b1d44dbad89cf9fb132a5",
+      "purpose": "24-bit source with a large frame block size",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-37-20-bit",
+      "kind": "subset",
+      "path": "subset/37 - 20 bit per sample.flac",
+      "size": 2385998,
+      "git_blob_sha1": "c137fc3112e9e258dcabb6536cf6fa7f1ebff97c",
+      "sha256": "8d8c0526b7823099974a348a6ae80eff9c7eeb4be4e3da270e8e2e9e45d74b3c",
+      "purpose": "valid 20-bit source, outside current encoder subset",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "subset-38-3-channel",
+      "kind": "subset",
+      "path": "subset/38 - 3 channels (3.0).flac",
+      "size": 63893,
+      "git_blob_sha1": "bf75b7ea5ef0546206593345fda604973458f48a",
+      "sha256": "44d14d0efa374049fd9f56aaee3a068a30045e62a571df574c7b824ae596a3cf",
+      "purpose": "three-channel source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-39-4-channel",
+      "kind": "subset",
+      "path": "subset/39 - 4 channels (4.0).flac",
+      "size": 94931,
+      "git_blob_sha1": "61d43efef4bfa5345d4c710080f4c61a128aa081",
+      "sha256": "ac670ce52561023dca32f7bd20fbe94c1e1459f06188cd0f870801ea5fb23cee",
+      "purpose": "four-channel source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-41-6-channel",
+      "kind": "subset",
+      "path": "subset/41 - 6 channels (5.1).flac",
+      "size": 171527,
+      "git_blob_sha1": "dfbd28dc69efe0be9160c7f0f03a66f209c99093",
+      "sha256": "c12650fda54a384abf017d4b931491de043eaa7a815ae74c7a9b49d4087d6193",
+      "purpose": "six-channel source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-43-8-channel",
+      "kind": "subset",
+      "path": "subset/43 - 8 channels (7.1).flac",
+      "size": 233560,
+      "git_blob_sha1": "61985e0141eb862ce76f3b852d0d0d0a48e433c1",
+      "sha256": "9c39ff436f316b3a8e72200c8f38af2d9ef15418c25be555aa621d0c793a6254",
+      "purpose": "eight-channel source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-53-cuesheet-many-indexes",
+      "kind": "subset",
+      "path": "subset/53 - CUESHEET with very many indexes.flac",
+      "size": 4452249,
+      "git_blob_sha1": "806a15ae83ad67e5b86df3f746359a1fd5e1bfc1",
+      "sha256": "513fad18578f3225fae5de1bda8f700415be6fd8aa1e7af533b5eb796ed2d461",
+      "purpose": "large valid CUESHEET metadata block",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-48-extreme-seektable",
+      "kind": "subset",
+      "path": "subset/48 - Extremely large SEEKTABLE.flac",
+      "size": 17171497,
+      "git_blob_sha1": "4284389826dd3b4a2ac09474e488b1d746f20a3f",
+      "sha256": "4417aca6b5f90971c50c28766d2f32b3acaa7f9f9667bd313336242dae8b2531",
+      "purpose": "extremely large SEEKTABLE metadata block",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-49-extreme-padding",
+      "kind": "subset",
+      "path": "subset/49 - Extremely large PADDING.flac",
+      "size": 17155326,
+      "git_blob_sha1": "a2a393ee0d948d94974c6d8e1ae95714fff8eca2",
+      "sha256": "7bc44fa2754536279fde4f8fb31d824f43b8d0b3f93d27d055d209682914f20e",
+      "purpose": "extremely large PADDING metadata block",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-50-extreme-picture",
+      "kind": "subset",
+      "path": "subset/50 - Extremely large PICTURE.flac",
+      "size": 16317700,
+      "git_blob_sha1": "f355fff091786be3ebffdf4dbdcec900a2df1b39",
+      "sha256": "1f04f237d74836104993a8072d4223e84a5d3bd76fbc44555c221c7e69a23594",
+      "purpose": "extremely large PICTURE metadata block",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-51-extreme-vorbiscomment",
+      "kind": "subset",
+      "path": "subset/51 - Extremely large VORBISCOMMENT.flac",
+      "size": 17221398,
+      "git_blob_sha1": "df59ea081ee6c988350796f352ab8fe60fbb5e59",
+      "sha256": "033160e8124ed287b0b5d615c94ac4139477e47d6e4059b1c19b7141566f5ef9",
+      "purpose": "extremely large VORBIS_COMMENT metadata block",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-56-jpeg-picture",
+      "kind": "subset",
+      "path": "subset/56 - JPG PICTURE.flac",
+      "size": 708441,
+      "git_blob_sha1": "78594af04332a27088b1f373084a4526b5c73003",
+      "sha256": "5cebe7a3710cf8924bd2913854e9ca60b4cd53cfee5a3af0c3c73fddc1888963",
+      "purpose": "JPEG PICTURE metadata preservation",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-57-png-picture",
+      "kind": "subset",
+      "path": "subset/57 - PNG PICTURE.flac",
+      "size": 754157,
+      "git_blob_sha1": "5c154555ad2126deb313826fc4239a08498d480c",
+      "sha256": "c6abff7f8bb63c2821bd21dd9052c543f10ba0be878e83cb419c248f14f72697",
+      "purpose": "PNG PICTURE metadata preservation",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-60-mono",
+      "kind": "subset",
+      "path": "subset/60 - mono audio.flac",
+      "size": 47782,
+      "git_blob_sha1": "9ca8a6721a5e9192ec74d97c61d7c57ce80379f0",
+      "sha256": "20539fbbd6ae28cea2b2182a4c60c6c70cbb710a136199fc83200c4e5fa00b1c",
+      "purpose": "mono source",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-61-predictor-overflow-16",
+      "kind": "subset",
+      "path": "subset/61 - predictor overflow check, 16-bit.flac",
+      "size": 117020,
+      "git_blob_sha1": "47884ed395612edec08cd461b3bb19ce50deef75",
+      "sha256": "9b15791a8b8ca14a6b9a2374ecf7c34be25bc7b9e64fa600eb5f7608194b0b61",
+      "purpose": "16-bit predictor edge case",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-63-predictor-overflow-24",
+      "kind": "subset",
+      "path": "subset/63 - predictor overflow check, 24-bit.flac",
+      "size": 204107,
+      "git_blob_sha1": "3a74029394c46c9b7663f11f0bfe337e9bf2b107",
+      "sha256": "d5e072373f2d9e80ca2e49b7dd349ebd4340929143d7e5f2c154a97f04755c38",
+      "purpose": "24-bit predictor edge case",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-24-variable-blocksize-flake",
+      "kind": "subset",
+      "path": "subset/24 - variable blocksize file created with flake revision 264.flac",
+      "size": 2321064,
+      "git_blob_sha1": "ea64d9a93990e017e0e360acb58986c1e962b1a1",
+      "sha256": "c6664710c935e4d862ab04f146ddd7f6df9e2278b651c17a432934e61488eaf7",
+      "purpose": "variable-blocksize stream produced by Flake r264",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-26-variable-blocksize-cuetools",
+      "kind": "subset",
+      "path": "subset/26 - variable blocksize file created with CUETools.Flake 2.1.6.flac",
+      "size": 2263171,
+      "git_blob_sha1": "fc494b95aad51010d275e9ff416b29df4e313f03",
+      "sha256": "355ddbac0f596623f805c3d3ff8cf4ba25d3a13c9d61e63719a8d02ebb647c19",
+      "purpose": "variable-blocksize stream produced by CUETools.Flake",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-45-unknown-total-samples",
+      "kind": "subset",
+      "path": "subset/45 - no total number of samples set.flac",
+      "size": 562343,
+      "git_blob_sha1": "e1395751a17a371b0e50e2cbc4f9418667aaa8fa",
+      "sha256": "336a18eb7a78f7fc0ab34980348e2895bc3f82db440a2430d9f92e996f889f9a",
+      "purpose": "valid source with unknown total sample count",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "subset-46-unknown-frame-sizes",
+      "kind": "subset",
+      "path": "subset/46 - no min-max framesize set.flac",
+      "size": 424137,
+      "git_blob_sha1": "257c7477b6fc62dd1c2968bfe716728328e31f74",
+      "sha256": "9dc39732ce17815832790901b768bb50cd5ff0cd21b28a123c1cabc16ed776cc",
+      "purpose": "valid source with unknown min/max frame sizes",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "subset-47-streaminfo-only",
+      "kind": "subset",
+      "path": "subset/47 - only STREAMINFO.flac",
+      "size": 333761,
+      "git_blob_sha1": "6c23ecc74752dcc2c81e86bf7c123f29441f42e2",
+      "sha256": "9a62c79f634849e74cb2183f9e3a9bd284f51e2591c553008d3e6449967eef85",
+      "purpose": "minimal STREAMINFO-only metadata",
+      "handler_expectation": "valid-input"
+    },
+    {
+      "id": "uncommon-01-changing-samplerate",
+      "kind": "uncommon",
+      "path": "uncommon/01 - changing samplerate.flac",
+      "size": 1086457,
+      "git_blob_sha1": "7cd773b7014fb64f46c2a6e9a1ae40cd497d209f",
+      "sha256": "9fa8f7c57186be8708f42620885a71d4c4871767ff55cfe063eb1cf3bad8d0a5",
+      "purpose": "valid uncommon stream whose sample rate changes",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "uncommon-02-increasing-channels",
+      "kind": "uncommon",
+      "path": "uncommon/02 - increasing number of channels.flac",
+      "size": 263297,
+      "git_blob_sha1": "7967165d73f5cc07929cd237f8a86574e924656b",
+      "sha256": "fe70d5e324bea56e9569d4ff9d4b6fa9c33d3f763e7fec5b1f27904e648a0482",
+      "purpose": "valid uncommon stream whose channel count changes",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "uncommon-04-changing-bitdepth",
+      "kind": "uncommon",
+      "path": "uncommon/04 - changing bitdepth.flac",
+      "size": 280877,
+      "git_blob_sha1": "c62f76de47686192b2536f3f1db0f25325f3990a",
+      "sha256": "f614382d8bd33b881668f2384dff03478ec2f863cb7069c42120cf8586c145b7",
+      "purpose": "valid uncommon stream whose bit depth changes",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "uncommon-05-32-bit",
+      "kind": "uncommon",
+      "path": "uncommon/05 - 32bps audio.flac",
+      "size": 2923933,
+      "git_blob_sha1": "1e40f606efb33dd64a881dc1b6183f4e0d6c2aeb",
+      "sha256": "de71cbd81f0be1743fc8264f159a521dfc1d92a5e2056c30a64d66001e055eec",
+      "purpose": "valid uncommon 32-bit source, outside current encoder subset",
+      "handler_expectation": "documented-refusal"
+    },
+    {
+      "id": "faulty-01-wrong-max-blocksize",
+      "kind": "faulty",
+      "path": "faulty/01 - wrong max blocksize.flac",
+      "size": 108081,
+      "git_blob_sha1": "93846999e576f00616a4801f2935ca53166a3f7d",
+      "sha256": "7abd0c6062b33949cc646bc887b5267d698ec8aff9cd8d8c2f270d40b7b63615",
+      "purpose": "invalid STREAMINFO max block size",
+      "handler_expectation": "invalid-control"
+    },
+    {
+      "id": "faulty-03-wrong-bit-depth",
+      "kind": "faulty",
+      "path": "faulty/03 - wrong bit depth.flac",
+      "size": 79044,
+      "git_blob_sha1": "564b7923361d41ebbd881bd7ad22a80708108913",
+      "sha256": "6d3258785ae23fe90958a7bd8eab8443d07d28f456b5d49b908772fa2f803a22",
+      "purpose": "invalid STREAMINFO bit depth",
+      "handler_expectation": "invalid-control"
+    },
+    {
+      "id": "faulty-05-wrong-total-samples",
+      "kind": "faulty",
+      "path": "faulty/05 - wrong total number of samples.flac",
+      "size": 107083,
+      "git_blob_sha1": "974f6d9c10703f729d06c8c9482dce77cdf93536",
+      "sha256": "92f98457511f2f9413445f2fb3e236ae92eab86c38e0082dfbe9dd96d01ba92c",
+      "purpose": "invalid STREAMINFO total sample count",
+      "handler_expectation": "invalid-control"
+    },
+    {
+      "id": "faulty-06-missing-streaminfo",
+      "kind": "faulty",
+      "path": "faulty/06 - missing streaminfo metadata block.flac",
+      "size": 61974,
+      "git_blob_sha1": "f681fd80383724f662e7882b58e14c5e5fed2b63",
+      "sha256": "53aed5e7fde7a652b82ba06a8382b2612b02ebbde7b0d2016276644d17cc76cd",
+      "purpose": "missing mandatory STREAMINFO block",
+      "handler_expectation": "invalid-control"
+    },
+    {
+      "id": "faulty-10-invalid-vorbis-comment",
+      "kind": "faulty",
+      "path": "faulty/10 - invalid vorbis comment metadata block.flac",
+      "size": 113105,
+      "git_blob_sha1": "e13aaf5b449f4be4ea517239af4ee9cb56f493b5",
+      "sha256": "c79b0514a61634035a5653c5493797bbd1fcc78982116e4d429630e9e462d29b",
+      "purpose": "malformed VORBIS_COMMENT block",
+      "handler_expectation": "invalid-control"
+    },
+    {
+      "id": "faulty-11-bad-metadata-length",
+      "kind": "faulty",
+      "path": "faulty/11 - incorrect metadata block length.flac",
+      "size": 53885,
+      "git_blob_sha1": "04989f49bba9b7d5f53df40ee228f14a6eef7a86",
+      "sha256": "3732151ba8c4e66a785165aa75a444aad814c16807ddc97b793811376acacfd6",
+      "purpose": "metadata block length extends into unrelated bytes",
+      "handler_expectation": "invalid-control"
+    }
+  ],
+  "derived_levels": [
+    0,
+    5,
+    8
+  ],
+  "coverage": [
+    "8-, 16-, and 24-bit decoded PCM",
+    "mono, stereo, and 3-, 4-, 6-, and 8-channel audio",
+    "reference encoder levels 0, 5, and 8 derived before measurement from pinned 16-bit and 24-bit parent FLACs",
+    "variable-blocksize and predictor/Rice-partition frame coding",
+    "PADDING, SEEKTABLE, PICTURE, VORBIS_COMMENT, CUESHEET, APPLICATION, and STREAMINFO metadata cases",
+    "valid but unsupported bit depths, unknown sample count, and uncommon streams",
+    "corrupt STREAMINFO, missing STREAMINFO, malformed VORBIS_COMMENT, and malformed metadata length"
+  ],
+  "derived_inputs": [
+    {
+      "id": "reference-16-stereo-level-0",
+      "parent_id": "subset-01-blocksize-4096",
+      "flac_compression_level": 0,
+      "sample_format": "16-bit, stereo, 44.1 kHz",
+      "purpose": "fixed external-reference encoder level 0; generated and SHA-frozen before Tzim measurement"
+    },
+    {
+      "id": "reference-16-stereo-level-5",
+      "parent_id": "subset-01-blocksize-4096",
+      "flac_compression_level": 5,
+      "sample_format": "16-bit, stereo, 44.1 kHz",
+      "purpose": "fixed external-reference encoder level 5; generated and SHA-frozen before Tzim measurement"
+    },
+    {
+      "id": "reference-16-stereo-level-8",
+      "parent_id": "subset-01-blocksize-4096",
+      "flac_compression_level": 8,
+      "sample_format": "16-bit, stereo, 44.1 kHz",
+      "purpose": "fixed external-reference encoder level 8; generated and SHA-frozen before Tzim measurement"
+    },
+    {
+      "id": "reference-24-bit-level-0",
+      "parent_id": "subset-28-high-resolution-24-bit",
+      "flac_compression_level": 0,
+      "sample_format": "24-bit stereo, 96 kHz",
+      "purpose": "fixed external-reference encoder level 0; generated and SHA-frozen before Tzim measurement"
+    },
+    {
+      "id": "reference-24-bit-level-5",
+      "parent_id": "subset-28-high-resolution-24-bit",
+      "flac_compression_level": 5,
+      "sample_format": "24-bit stereo, 96 kHz",
+      "purpose": "fixed external-reference encoder level 5; generated and SHA-frozen before Tzim measurement"
+    },
+    {
+      "id": "reference-24-bit-level-8",
+      "parent_id": "subset-28-high-resolution-24-bit",
+      "flac_compression_level": 8,
+      "sample_format": "24-bit stereo, 96 kHz",
+      "purpose": "fixed external-reference encoder level 8; generated and SHA-frozen before Tzim measurement"
+    }
+  ],
+  "derived_sources": [
+    {
+      "id": "reference-16-stereo-level",
+      "parent_id": "subset-01-blocksize-4096",
+      "sample_format": "16-bit, stereo, 44.1 kHz"
+    },
+    {
+      "id": "reference-24-bit-level",
+      "parent_id": "subset-28-high-resolution-24-bit",
+      "sample_format": "24-bit stereo, 96 kHz"
+    }
+  ],
+  "fuzz_seed_ids": [
+    "subset-01-blocksize-4096",
+    "subset-23-8-bit",
+    "subset-63-predictor-overflow-24",
+    "subset-38-3-channel",
+    "subset-53-cuesheet-many-indexes",
+    "subset-56-jpeg-picture",
+    "faulty-01-wrong-max-blocksize",
+    "faulty-11-bad-metadata-length"
+  ]
+}

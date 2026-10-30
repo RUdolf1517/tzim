@@ -20,6 +20,8 @@ Formats are detected by **content**, never by file name:
 | ZIP | `50 4B 03 04` (local header) or `50 4B 05 06` (empty archive) |
 | zlib | `CM = 8`, `CINFO ≤ 7`, `FDICT = 0`, and the two bytes big-endian divisible by 31 (RFC 1950 §2.2) |
 | FITS | `SIMPLE  =` in the first nine bytes, the value `T`, and a file that is a whole number of 2880-byte records |
+| FLAC | `fLaC` at byte zero |
+| PDF | `%PDF-` within the first 1024 bytes; the handler validates the version, xref and object structure |
 | ICO / CUR | `00 00 01 00` / `00 00 02 00` plus a valid directory |
 
 The extension is used only for two things: the `--include` / `--exclude` filters, and human-readable
@@ -42,11 +44,12 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | ICO / CUR | v0.3 | implemented | Optimize embedded PNGs | equals the embedded PNG gain | medium | [§4.4](guarantees.md#44-ico--cur--v03) |
 | APNG | v0.3 | implemented | Recompress all frames | as PNG, proportional to frame data | medium | [§4.5](guarantees.md#45-apng--v03) |
 | Nested (`--nested`) | v0.3 | implemented, opt-in | Optimize supported files inside archives | additive | medium | [§4.6](guarantees.md#46-nested-containers-v03-opt-in) |
-| JPEG (opt-in) | v0.4 | implemented | Entropy re-encoding with optimal Huffman tables; coefficients and markers untouched | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-opt-in) |
+| JPEG (baseline, default) | v0.4 / #82 | implemented | Entropy re-encoding with optimal Huffman tables; exact DCT-coefficient comparison plus independent V1 pixel check; markers preserved | typically 1–3 %, sometimes 0 | high | [§4.7](guarantees.md#47-jpeg--v04-baseline-default) |
 | TIFF | v0.7 | implemented | Deflate strip recompression, or Deflate for uncompressed strips; tags, entry order and byte order untouched | 5–30 % on uncompressed scans; 0–5 % on already-Deflate ones; nothing for LZW or `FillOrder 2` | high | [§4.8](guarantees.md#48-tiff-classic-baseline-strips--v07) |
 | zlib (`.zlib`, `.zz`) | v0.9 | implemented | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | 0–10 %, depends on the level that wrote the file | medium | [§4.10](guarantees.md#410-zlib-rfc-1950--v09) |
-| FITS (opt-in) | v0.14 | implemented in v0.14.0, behind the `fits` feature and `--fits-tile` | An uncompressed image HDU becomes a tile-compressed `BINTABLE` (`ZIMAGE`, `GZIP_1`/`GZIP_2`, quantisation off, one tile per row); every other HDU copied verbatim | Historical audit only; no current release/performance claim. Non-smaller candidates are left alone | high for the accepted subset; full admission remains open | [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) |
-| FLAC | — | **refused after measurement** | Would re-encode losslessly, but a stronger encoder buys 0.4 % and costs a quarter of the binary | 0–0.4 % | — | [§4.9](guarantees.md#49-flac--refused-after-measurement) |
+| FITS (opt-in) | v0.14 / #59 | implemented in v0.14.0, behind the `fits` feature and `--fits-tile` | An uncompressed image HDU becomes a tile-compressed `BINTABLE` (`ZIMAGE`, `GZIP_1`/`GZIP_2`, quantisation off, one tile per row); every other HDU copied verbatim. A single-file TTY run asks default No after verification; scripted use of the flag remains explicit consent | The a1 default-checksum `funpack` outcome is superseded and is not candidate-content evidence. The corrected #59 gate uses `funpack -C`, an external integer-only positive control through the same literal-header/storage-array comparator, and structured per-HDU diagnostics. Four TESS `fitsverify -l` checksum warnings remain blockers; threshold stays not applied and all 14 Tzim rows stay skipped/unchanged | high for the implemented subset; full admission remains open and the #59 gate is blocked | [§4.12](guarantees.md#412-fits--tile-compressed-image-hdus-v014-opt-in) · [status](measurement-status.md) |
+| FLAC (opt-in) | #79 | **implemented in this unreleased branch behind the non-default `flac` feature; fixed-corpus evidence recorded, full format admission remains separate** | Re-encode supported audio with flacenc; verify exact PCM, STREAMINFO and remapped seekpoints with independent Claxon; metadata is retained unless explicitly stripped | At exact SHA `5967e318951f9c3945f0c256c3095b347483e234`, 23/30 valid rows optimized; all 23 passed external `flac`/`metaflac`, PCM, and STREAMINFO-MD5 checks. Saved 744,570 bytes; whole-corpus and optimized-only denominators are distinguished in [status](measurement-status.md) | high for the measured subset; broader format admission/review remains open | [§4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in) |
+| PDF (opt-in) | #57 / #80 | **implemented in this unreleased branch behind the non-default `pdf` feature; #57 threshold applied and refused** | Recompress only smaller eligible FlateDecode streams; preserve object IDs/order, xref semantics, object streams and all non-target bytes; no repacking | At exact SHA `5967e318951f9c3945f0c256c3095b347483e234`, 18/21 fixed outputs were accepted; the original accepted-subset `faithful_pct` median was 0.00034127460376596526%, below the 1% refusal bar. Permitted-qpdf and forbidden-repack distributions are published in [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31); the qpdf/MuPDF checks passed | high for the narrow implementation; the threshold result does not revoke the separate owner-authorized non-default #80 implementation | [§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) |
 
 ### ZIP-based formats covered by the ZIP handler
 
@@ -117,11 +120,21 @@ If any item is missing, the format stays out. There is no "experimental support"
 
 ## 5. Refused formats
 
-Refusals are permanent design decisions, not a backlog. Each has a reason that follows from the invariant.
+A recorded refusal remains policy unless the owner authorizes a follow-up. #79 and #80 are authorized
+implementation tracks and their handlers are present in this unreleased branch behind non-default features;
+that implementation status does not constitute full format admission or performance acceptance. The #57/#59
+fixed-manifest results are now recorded separately: #57 applied its original rule and refused the measured
+sample, while #59's threshold remains **not applied**. The a1 `funpack` comparison omitted `-C`, so its 14/14
+header/payload outcome is superseded as an instrument result, not evidence of candidate content failure. The
+corrected reader path uses `funpack -C`, an external integer-only positive control through the same literal
+comparison path, and structured per-HDU diagnostics. Four TESS `fitsverify -l` checksum warnings remain blockers;
+no owner protocol decision is pending. Neither result changes the fixed inputs or the separate #80 implementation
+authorization. The reader-mode details are in [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol);
+§11 preserves the historical comparison. Every actual refusal still has a reason that follows from the invariant.
 
 | Format | Why Tzim refuses |
 | --- | --- |
-| **PDF** | **Refused after measurement** ([audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)). The narrow slice — recompress `FlateDecode` payloads inside a preserved object graph — takes **45.7 %** of a 2 208-file corpus, so the shape is not the obstacle; the gain is. Median **0.08 %** per file (0.15 % with `zopfli`, 0.59 % with the loosest instrument) against a pre-registered bar of 1 %, for 40–70 KiB of binary and 1 500–2 500 lines. What repacking would buy is **20.1 %**, and repacking — flattening revisions, regenerating object streams — is a rewrite with a different risk class, not a recompress. Contract kept in [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement). |
+| **PDF outside the narrow handler subset / without the `pdf` feature** | **Not handled by default.** The #80 implementation in this unreleased branch rewrites only a bounded single-revision classic-xref or supported xref-stream subset. It does not repack object graphs, flatten revisions, or claim full PDF admission. The fixed #57 sample applied the original accepted-subset `faithful_pct` rule and was refused because its median was below 1%; the separately owner-authorized #80 implementation remains non-default. The old 2 208-file audit and thresholds are retained as historical evidence, and qpdf repacking remains forbidden. See [PDF audit §11](pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample) and [guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in). |
 | **DICOM** | Never refused — never examined, until now. The question this row used to ask (is the dictionary or the refusal list the larger cost?) is answered in [dicom-audit](dicom-audit.md): the dictionary is, it is **5 189 entries measured**, and it is needed by exactly one of three tiers. Under measurement is a recompress-only slice — a data set already compressed as Deflated Explicit VR Little Endian, whose stream is **raw DEFLATE (RFC 1951), not zlib**, and therefore carries no checksum — specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented), with the decision rule fixed before the numbers. Until that run exists, the format is not supported. |
 | **WebP (lossless)** | No mature pure-Rust lossless encoder exists; a C dependency breaks static cross-platform builds. Re-encoding could also change the bitstream in ways we cannot independently verify sample-by-sample without the same library that produced it. |
 | **AVIF / HEIC / JPEG XL** | Same as WebP: no verifiable pure-Rust lossless re-encoder. Lossless JPEG transcoding to JXL is a format change (G2), which Tzim does not do. |
@@ -165,7 +178,8 @@ Why the order in the roadmap is PNG → gzip → ZIP → ICO/APNG → JPEG:
    contract is the hardest to get right, so it ships after the replacement pipeline is proven.
 4. **ICO and APNG** reuse the PNG engine and add coverage cheaply.
 5. **JPEG** is the most common image format, but the gain is small and the codec risk is the highest. It
-   ships last, opt-in, with pixel-level verification.
+   shipped last with pixel-level verification; #82 later admitted that verified baseline subset to the
+   release default within the unchanged binary-size ceiling.
 
 Documents and PDF are excluded not because they are unpopular, but because "popular" and "safe to rewrite"
 are different properties, and only the second one matters here.

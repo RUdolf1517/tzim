@@ -3,9 +3,9 @@
 
 `docs/fits-audit.md` §8.3 and `docs/guarantees.md` §4.12 both say the FITS
 handler may not be released before the HEASARC tools have accepted its output.
-The `fits oracle (astropy)` job reads candidates back with CFITSIO through
-`astropy`, which is a second implementation for the arrays but is not that gate.
-This script is the gate.
+The `fits oracle (astropy)` job uses Astropy's own `astropy.io.fits` reader
+for the GZIP_1/GZIP_2 arrays; it does not call CFITSIO's `funpack`. This script
+is the separate HEASARC gate and runs `fitsverify` plus CFITSIO `funpack -C`.
 
 Everything is **standard library only**. That is deliberate: a FITS parser
 written here shares no code with the crate under test and none with the tools
@@ -17,10 +17,13 @@ between two uncompressed FITS files.
 What it proves, and what it cannot
 ----------------------------------
 * `fitsverify -l` exits with **the number of errors plus warnings** (read from
-  `utilities/fitsverify.c`, which prints that sentence itself), so any non-zero
-  status is a failure. The allowlist of tolerated warnings is **empty**; a
-  warning that turns out to be intrinsic to the format is a contract question
-  for the owner, and the full output is in the evidence.
+  `utilities/fitsverify.c`, which prints that sentence itself). Every registered
+  rewritten candidate and every registered positive original must exit 0; the
+  tolerated warning allowlist is **empty**. The named HDRLET preservation-only
+  case compares against its own original `fitsverify` baseline instead. For
+  explicitly unsupported no-rewrite inputs, the original's output and exit are
+  retained as diagnostic evidence only: no candidate is submitted for
+  acceptance, and this does not relax candidate checks.
 * `funpack` is the reference *reader* of the compressed convention. If it can
   reconstruct the array and the header, a reader written by someone else
   understood the file.
@@ -45,6 +48,7 @@ import gzip
 import difflib
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -67,6 +71,10 @@ ASTROPY_DOUBLE_EXT_BYTES = 11520
 
 #: Card widths by BITPIX, in bytes per sample.
 SAMPLE_BYTES = {8: 1, 16: 2, 32: 4, 64: 8, -32: 4, -64: 8}
+
+RESIDUAL_REQUIRED_BITPIX = [-64, -32, 8, 16, 32]
+RESIDUAL_REQUIRED_NAXIS = [1, 3, 4, 6]
+RESIDUAL_REQUIRED_ROLES = ["IMAGE", "PRIMARY"]
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +215,61 @@ def empty_primary() -> bytes:
     return header_bytes(cards)
 
 
+def simple_false_hdu(bitpix, axes, data):
+    """A deliberately nonconforming primary used for fail-closed preservation."""
+    cards = [
+        bool_card("SIMPLE", False),
+        int_card("BITPIX", bitpix),
+        int_card("NAXIS", len(axes)),
+    ]
+    cards.extend(int_card("NAXIS%d" % i, axis) for i, axis in enumerate(axes, 1))
+    cards.append(bool_card("EXTEND", True))
+    return header_bytes(cards) + pad_data(data)
+
+
+def random_groups_hdu():
+    """A small, structurally sized random-groups primary (which tzim must refuse)."""
+    axes = [0, 64]
+    bitpix = 16
+    pcount = 2
+    gcount = 4
+    sample_bytes = abs(bitpix) // 8
+    byte_count = (math.prod(axes[1:]) + pcount) * gcount * sample_bytes
+    cards = [
+        bool_card("SIMPLE", True),
+        int_card("BITPIX", bitpix),
+        int_card("NAXIS", len(axes)),
+        int_card("NAXIS1", axes[0]),
+        int_card("NAXIS2", axes[1]),
+        bool_card("GROUPS", True),
+        int_card("PCOUNT", pcount),
+        int_card("GCOUNT", gcount),
+        bool_card("EXTEND", True),
+    ]
+    return header_bytes(cards) + pad_data(b"\0" * byte_count)
+
+
+def binary_table_with_theap():
+    """A valid non-target BINTABLE with a non-default heap start."""
+    cards = [
+        string_card("XTENSION", "BINTABLE"),
+        int_card("BITPIX", 8),
+        int_card("NAXIS", 2),
+        int_card("NAXIS1", 8),
+        int_card("NAXIS2", 2),
+        int_card("PCOUNT", 8),
+        int_card("GCOUNT", 1),
+        int_card("TFIELDS", 1),
+        string_card("TTYPE1", "PAYLOAD"),
+        # CFITSIO funpack writes TFORM strings padded to eight characters inside
+        # quotes. Preserve the logical value 1PB(4) but match that literal form.
+        string_card("TFORM1", "1PB(4)  "),
+        int_card("THEAP", 16),
+    ]
+    data = struct.pack(">II", 4, 0) + struct.pack(">II", 4, 4) + b"HEAPDATA"
+    return header_bytes(cards) + pad_data(data)
+
+
 # --- the reader ------------------------------------------------------------
 
 
@@ -303,8 +366,9 @@ def parse(raw: bytes):
             raise ValueError("HDU at %d has no BITPIX or NAXIS" % start)
         if bitpix not in SAMPLE_BYTES:
             raise ValueError("HDU at %d has unsupported BITPIX %d" % (start, bitpix))
+        axes = probe.axes()
         count = 1
-        for axis in probe.axes():
+        for axis in axes:
             count *= axis
         pcount_text = probe.value("PCOUNT")
         pcount = probe.int("PCOUNT")
@@ -322,6 +386,14 @@ def parse(raw: bytes):
             gcount = 1
         if gcount <= 0:
             raise ValueError("HDU at %d has a non-positive GCOUNT" % start)
+        random_groups = probe.value("GROUPS") == "T"
+        if random_groups:
+            if probe.value("SIMPLE") != "T" or naxis < 2 or not axes or axes[0] != 0:
+                raise ValueError("HDU at %d has malformed random-groups axes" % start)
+            group_samples = 1
+            for axis in axes[1:]:
+                group_samples *= axis
+            count = group_samples
         length = 0 if naxis == 0 else SAMPLE_BYTES[bitpix] * (count + pcount) * gcount
         data_start = end_at
         data_end = data_start + length
@@ -380,6 +452,106 @@ def float64_pattern(rows, columns):
     return struct.pack(
         ">%dd" % (rows * columns), *[((i // 4) % 89) / 3.0 for i in range(rows * columns)]
     )
+
+
+def integer_pattern_bitpix(bitpix, samples):
+    """Deterministic, compressible FITS storage bytes for every integer BITPIX."""
+    if bitpix not in (8, 16, 32, 64):
+        raise ValueError("integer pattern requires BITPIX 8, 16, 32 or 64")
+    if samples < 0:
+        raise ValueError("sample count cannot be negative")
+    period = 251 * 4
+    if bitpix == 8:
+        block = bytes(((index // 4) % 251) for index in range(period))
+    else:
+        code = {16: "h", 32: "i", 64: "q"}[bitpix]
+        values = [((index // 4) % 251) - 125 for index in range(period)]
+        block = struct.pack(">%d%s" % (period, code), *values)
+    width = bitpix // 8
+    return block * (samples // period) + block[: (samples % period) * width]
+
+
+def float32_residual_specials(samples):
+    """IEEE-754 float32 storage with zeros, infinities, NaNs and subnormals."""
+    special_words = (
+        0x00000000,  # +0.0
+        0x80000000,  # -0.0
+        0x7F800000,  # +infinity
+        0xFF800000,  # -infinity
+        0x7FC00001,  # quiet NaN, payload 1
+        0x7FC00002,  # quiet NaN, payload 2
+        0xFFC00001,  # negative quiet NaN, payload 1
+        0xFFC00002,  # negative quiet NaN, payload 2
+        0x00000001,  # smallest positive subnormal
+        0x80000001,  # smallest negative subnormal
+    )
+    out = bytearray()
+    for index in range(samples):
+        if index % 10 == 0:
+            out.extend(struct.pack(">I", special_words[(index // 10) % len(special_words)]))
+        else:
+            out.extend(struct.pack(">f", ((index // 4) % 97) / 7.0))
+    return bytes(out)
+
+
+def float64_residual_specials(samples):
+    """IEEE-754 float64 storage with bit-distinct specials and subnormals."""
+    special_words = (
+        0x0000000000000000,  # +0.0
+        0x8000000000000000,  # -0.0
+        0x7FF0000000000000,  # +infinity
+        0xFFF0000000000000,  # -infinity
+        0x7FF8000000000001,  # quiet NaN, payload 1
+        0x7FF8000000000002,  # quiet NaN, payload 2
+        0xFFF8000000000001,  # negative quiet NaN, payload 1
+        0xFFF8000000000002,  # negative quiet NaN, payload 2
+        0x0000000000000001,  # smallest positive subnormal
+        0x8000000000000001,  # smallest negative subnormal
+    )
+    out = bytearray()
+    for index in range(samples):
+        if index % 10 == 0:
+            out.extend(struct.pack(">Q", special_words[(index // 10) % len(special_words)]))
+        else:
+            out.extend(struct.pack(">d", ((index // 4) % 89) / 3.0))
+    return bytes(out)
+
+
+def float_specials_present(data, bitpix):
+    """Presence checks over storage words, with no float conversion/arithmetic."""
+    if bitpix == -32:
+        words = {
+            "positive_zero": [bytes.fromhex("00000000")],
+            "negative_zero": [bytes.fromhex("80000000")],
+            "positive_infinity": [bytes.fromhex("7f800000")],
+            "negative_infinity": [bytes.fromhex("ff800000")],
+            "distinct_nan_payloads": [
+                bytes.fromhex("7fc00001"),
+                bytes.fromhex("7fc00002"),
+                bytes.fromhex("ffc00001"),
+                bytes.fromhex("ffc00002"),
+            ],
+            "positive_subnormal": [bytes.fromhex("00000001")],
+            "negative_subnormal": [bytes.fromhex("80000001")],
+        }
+    elif bitpix == -64:
+        words = {
+            "positive_zero": [bytes.fromhex("0000000000000000")],
+            "negative_zero": [bytes.fromhex("8000000000000000")],
+            "positive_infinity": [bytes.fromhex("7ff0000000000000")],
+            "negative_infinity": [bytes.fromhex("fff0000000000000")],
+            "distinct_nan_payloads": [
+                bytes.fromhex("7ff8000000000001"),
+                bytes.fromhex("7ff8000000000002"),
+                bytes.fromhex("fff8000000000001"),
+                bytes.fromhex("fff8000000000002"),
+            ],
+            "positive_subnormal": [bytes.fromhex("0000000000000001")],
+            "negative_subnormal": [bytes.fromhex("8000000000000001")],
+        }
+    else:
+        return {}
+    return {name: all(word in data for word in values) for name, values in words.items()}
 
 
 def build_fixtures(root):
@@ -516,7 +688,17 @@ def build_fixtures(root):
             verbatim=["HDRLET", "BINTABLE"],
             diagnostics="compare_original",
             skip_funpack=True,
-            why="HDRLET is not registered in fitsverify; preserve it exactly and compare the per-file diagnostic baseline without making it the first compressed-HDU traversal control",
+            skip_funpack_exception=dict(
+                name="HDRLET preservation-only exception",
+                omitted_checks=["CFITSIO funpack -C read-back", "exact array read-back"],
+            ),
+            contract_expectation=(
+                "Preserve every non-target HDU byte-for-byte and compare candidate fitsverify "
+                "diagnostics with this input's inherited per-file baseline; still require a strictly "
+                "smaller whole file and a second --fits-tile run that returns already_optimal with "
+                "unchanged bytes. This HEASARC fixture has no funpack -C or exact array read-back."
+            ),
+            why="HDRLET is a named preservation-only exception, not a registered candidate acceptance row",
         )
     )
 
@@ -670,6 +852,260 @@ def build_fixtures(root):
                 "size is not needed to assert that externally visible contract."
             ),
             why="§4.12: unchanged + already_optimal when the strict whole-file candidate is not smaller",
+        )
+    )
+
+    # Residual #78 matrix rows: these are additive to the fixtures already
+    # independently checked in run 40551071072. In residual scope, the gate runs
+    # only these exact missing rows and their controls, not the confirmed fixtures.
+    residual_matrix = [
+        (
+            "residual_bitpix8_naxis1_primary.fits",
+            8,
+            [32768],
+            "PRIMARY",
+            integer_pattern_bitpix(8, 32768),
+        ),
+        (
+            "residual_bitpix32_naxis3_image.fits",
+            32,
+            [64, 32, 16],
+            "IMAGE",
+            integer_pattern_bitpix(32, 64 * 32 * 16),
+        ),
+        (
+            "residual_bitpix32_naxis4_primary.fits",
+            32,
+            [64, 32, 16, 2],
+            "PRIMARY",
+            integer_pattern_bitpix(32, 64 * 32 * 16 * 2),
+        ),
+        (
+            "residual_float32_naxis1_image.fits",
+            -32,
+            [16384],
+            "IMAGE",
+            float32_residual_specials(16384),
+        ),
+        (
+            "residual_float64_naxis3_primary.fits",
+            -64,
+            [64, 8, 4],
+            "PRIMARY",
+            float64_residual_specials(64 * 8 * 4),
+        ),
+        (
+            "residual_bitpix16_naxis6_primary.fits",
+            16,
+            [1048576] + [1] * 5,
+            "PRIMARY",
+            integer_pattern_bitpix(16, 1048576),
+        ),
+    ]
+    for name, bitpix, axes, role, data in residual_matrix:
+        image = image_hdu(bitpix, axes, data, primary=(role == "PRIMARY"))
+        blob = image if role == "PRIMARY" else empty_primary() + image
+        write(name, blob)
+        cases.append(
+            dict(
+                name=name,
+                expect="rewritten",
+                images=1,
+                hdu_delta=1 if role == "PRIMARY" else 0,
+                residual_only=True,
+                matrix=dict(
+                    role=role,
+                    bitpix=bitpix,
+                    naxis=len(axes),
+                    floating_storage=(
+                        [
+                            "positive_zero",
+                            "negative_zero",
+                            "positive_infinity",
+                            "negative_infinity",
+                            "distinct_nan_payloads",
+                            "positive_subnormal",
+                            "negative_subnormal",
+                        ]
+                        if bitpix < 0
+                        else []
+                    ),
+                ),
+                input_case=(
+                    "Deterministic, generated issue #78 residual row: %s image, BITPIX=%d, "
+                    "NAXIS=%d; not a corpus measurement input."
+                    % (role, bitpix, len(axes))
+                ),
+                why=(
+                    "issue #78 residual actual-binary rewrite matrix: all five values in the "
+                    "BITPIX tile-rewrite subset, boundary ranks 1/3/4/6, and both primary and "
+                    "IMAGE-extension rewrites"
+                ),
+            )
+        )
+
+    residual_untouched = [
+        (
+            "residual_simple_false.fits",
+            simple_false_hdu(16, [128, 64], int16_pattern(64, 128)),
+            "SIMPLE = F is refused and must remain byte-identical",
+        ),
+        (
+            "residual_random_groups.fits",
+            random_groups_hdu(),
+            "GROUPS = T random-groups primary is refused and must remain byte-identical",
+        ),
+        (
+            "residual_pcount_image.fits",
+            image_hdu(
+                16,
+                [128, 64],
+                int16_pattern(64, 128) + b"\0\0",
+                extra=[int_card("PCOUNT", 1)],
+                primary=True,
+            ),
+            "nonzero PCOUNT on an ordinary image is refused and preserved",
+        ),
+        (
+            "residual_gcount_image.fits",
+            image_hdu(
+                16,
+                [128, 64],
+                int16_pattern(64, 128) * 2,
+                extra=[int_card("GCOUNT", 2)],
+                primary=True,
+            ),
+            "non-identity GCOUNT on an ordinary image is refused and preserved",
+        ),
+        (
+            "residual_bitpix64_naxis4_primary.fits",
+            image_hdu(
+                64,
+                [64, 8, 4, 2],
+                integer_pattern_bitpix(64, 64 * 8 * 4 * 2),
+                primary=True,
+            ),
+            "standard-valid BITPIX=64 is parsed but outside this build's tile-rewrite subset",
+        ),
+        (
+            "residual_bitpix16_naxis7_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 6,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=7 is parsed but exceeds this build's tile-rewrite limit of 6",
+        ),
+        (
+            "residual_bitpix16_naxis99_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 98,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=99 is parsed but exceeds this build's tile-rewrite limit of 6",
+        ),
+        (
+            "residual_bitpix16_naxis999_primary.fits",
+            image_hdu(
+                16,
+                [1048576] + [1] * 998,
+                integer_pattern_bitpix(16, 1048576),
+                primary=True,
+            ),
+            "standard-valid NAXIS=999 is parsed but exceeds this build's tile-rewrite limit of 6",
+        ),
+        (
+            "residual_bzero_scaled.fits",
+            image_hdu(
+                16,
+                [64, 128],
+                int16_pattern(64, 128),
+                extra=[int_card("BSCALE", 1), int_card("BZERO", 100)],
+                primary=True,
+            ),
+            "non-identity BZERO is refused independently of BSCALE",
+        ),
+    ]
+    for name, blob, why in residual_untouched:
+        write(name, blob)
+        case = dict(
+            name=name,
+            expect="untouched",
+            status="skipped",
+            residual_only=True,
+            input_case="Deterministic issue #78 refusal fixture; not a corpus measurement input.",
+            why=why,
+        )
+        refusal_notes = {
+            "residual_bitpix64_naxis4_primary.fits": (
+                "BITPIX 64 is outside this build's tile-rewrite subset"
+            ),
+            "residual_bitpix16_naxis7_primary.fits": (
+                "NAXIS = 7 exceeds this build's tile-rewrite limit of 6"
+            ),
+            "residual_bitpix16_naxis99_primary.fits": (
+                "NAXIS = 99 exceeds this build's tile-rewrite limit of 6"
+            ),
+            "residual_bitpix16_naxis999_primary.fits": (
+                "NAXIS = 999 exceeds this build's tile-rewrite limit of 6"
+            ),
+        }
+        if name in refusal_notes:
+            case["required_note"] = refusal_notes[name]
+            case["diagnostics"] = "record_only"
+        cases.append(case)
+
+    for codec in ("PLIO_1", "HCOMPRESS_1"):
+        name = "residual_unsupported_%s.fits" % codec.lower()
+        blob = empty_primary() + tiles_fixture(
+            codec, [struct.pack(">16h", *([0] * 16))], per_sample=2
+        )
+        write(name, blob)
+        cases.append(
+            dict(
+                name=name,
+                expect="untouched",
+                status="skipped",
+                residual_only=True,
+                required_note=codec,
+                input_case=(
+                    "Deterministic ZIMAGE refusal fixture with registered but unsupported "
+                    "%s codec; its payload is not claimed to be a real %s stream."
+                    % (codec, codec)
+                ),
+                why="unsupported codec %s is refused without rewriting the source" % codec,
+            )
+        )
+
+    theap_name = "residual_theap_non_target.fits"
+    theap_blob = (
+        empty_primary()
+        + image_hdu(
+            16,
+            [64, 128],
+            int16_pattern(64, 128),
+            extra=[string_card("EXTNAME", "SCI")],
+        )
+        + binary_table_with_theap()
+    )
+    write(theap_name, theap_blob)
+    cases.append(
+        dict(
+            name=theap_name,
+            expect="mixed",
+            images=1,
+            hdu_delta=0,
+            verbatim=["BINTABLE"],
+            diagnostics="registered",
+            residual_only=True,
+            input_case=(
+                "Eligible IMAGE extension followed by a valid non-target BINTABLE whose "
+                "THEAP is 16 bytes after its header and whose 8-byte heap is explicit."
+            ),
+            why="a non-target BINTABLE with THEAP must remain byte-identical across rewrite",
         )
     )
 
@@ -965,6 +1401,45 @@ def hdu_layout(hdus):
     return rows
 
 
+def source_image_matrix(hdus):
+    """Compact actual input identity for image roles, BITPIX and NAXIS rank."""
+    rows = []
+    for index, hdu in enumerate(hdus):
+        if hdu.kind() in ("PRIMARY", "IMAGE") and hdu.axes():
+            rows.append(
+                dict(
+                    hdu=index,
+                    role=hdu.kind(),
+                    bitpix=hdu.int("BITPIX"),
+                    naxis=hdu.int("NAXIS"),
+                    axes=hdu.axes(),
+                )
+            )
+    return rows
+
+
+def candidate_image_matrix(hdus):
+    """Compressed-image identity from the generated ZIMAGE headers."""
+    rows = []
+    for index, hdu in enumerate(hdus):
+        if hdu.value("ZIMAGE") != "T":
+            continue
+        role = "PRIMARY" if hdu.value("ZSIMPLE") == "T" else hdu.text("ZTENSION")
+        naxis = hdu.int("ZNAXIS")
+        axes = [hdu.int("ZNAXIS%d" % axis) for axis in range(1, (naxis or 0) + 1)]
+        rows.append(
+            dict(
+                hdu=index,
+                role=role,
+                bitpix=hdu.int("ZBITPIX"),
+                naxis=naxis,
+                axes=axes,
+                codec=hdu.text("ZCMPTYPE"),
+            )
+        )
+    return rows
+
+
 def literal_card_diff(original_hdu, reconstructed_hdu):
     """A sequence diff of complete 80-column cards, including comments and order.
 
@@ -1109,11 +1584,19 @@ def inflate_tiles(path):
             continue
         rows = hdu.int("NAXIS2") or 0
         heap_len = hdu.int("PCOUNT") or 0
-        heap = hdu.data[8 * rows:8 * rows + heap_len]
+        descriptor_bytes = 8 * rows
+        if descriptor_bytes + heap_len != len(hdu.data):
+            raise ValueError("ZIMAGE row descriptors and PCOUNT do not match the table data length")
+        heap = hdu.data[descriptor_bytes:descriptor_bytes + heap_len]
         floating = (hdu.int("ZBITPIX") or 0) < 0
         per_sample = abs(hdu.int("ZBITPIX") or 8) // 8
         for row in range(rows):
             length, offset = struct.unpack(">II", hdu.data[row * 8:row * 8 + 8])
+            if length == 0 or offset > heap_len or length > heap_len - offset:
+                raise ValueError(
+                    "ZIMAGE descriptor %d lies outside its heap (count=%d, offset=%d, heap=%d)"
+                    % (row, length, offset, heap_len)
+                )
             tile = gzip.decompress(heap[offset:offset + length])
             out += unshuffle(tile, per_sample) if floating else tile
     return bytes(out)
@@ -1167,6 +1650,143 @@ def broken_structure(candidate_path, out_path):
                     open(out_path, "wb").write(bytes(raw))
                     return dict(card=card.decode("ascii").rstrip(), replacement="NAXIS1 = 16 (TFORM1 says 8)")
     raise RuntimeError("no ZIMAGE table to break in %s" % candidate_path)
+
+
+def _header_size(hdu):
+    """Number of bytes occupied by the parsed cards through the END record."""
+    return ((len(hdu.cards) + 1) * CARD + RECORD - 1) // RECORD * RECORD
+
+
+def _replace_header_card(header, keyword, replacement):
+    """Replace one card in a header bytearray, retaining an exact 80-byte card."""
+    if len(replacement) != CARD:
+        raise ValueError("replacement card must be exactly 80 bytes")
+    for offset in range(0, len(header), CARD):
+        if bytes(header[offset:offset + 8]).strip() == keyword.encode("ascii"):
+            previous = bytes(header[offset:offset + CARD])
+            header[offset:offset + CARD] = replacement
+            return previous
+    raise ValueError("no %s card in ZIMAGE table" % keyword)
+
+
+def mutate_zimage_candidate(
+    candidate_path,
+    out_path,
+    *,
+    descriptor_mutator=None,
+    payload_mutator=None,
+    compressed_member_mutator=None,
+    card_replacements=None,
+):
+    """Create one controlled ZIMAGE mutation while preserving all other HDUs.
+
+    Pixel mutators see the unshuffled FITS storage bytes. Compressed-member
+    mutators see the exact gzip bytes. Descriptor and card mutations are applied
+    without repairing the defect, so the shared external acceptance path sees
+    exactly the damage under test.
+    """
+    with open(candidate_path, "rb") as handle:
+        raw = handle.read()
+    hdus = parse(raw)
+    chunks = []
+    changed = False
+    details = {}
+    for hdu in hdus:
+        if hdu.value("ZIMAGE") != "T" or changed:
+            chunks.append(hdu.raw)
+            continue
+        rows = hdu.int("NAXIS2") or 0
+        pcount = hdu.int("PCOUNT") or 0
+        descriptor_bytes = bytearray(hdu.data[:8 * rows])
+        heap = hdu.data[8 * rows:8 * rows + pcount]
+        if len(descriptor_bytes) != 8 * rows or len(heap) != pcount:
+            raise ValueError("ZIMAGE row descriptors or heap are truncated")
+        if descriptor_mutator is not None:
+            details["descriptor"] = descriptor_mutator(descriptor_bytes, heap, rows)
+        if payload_mutator is not None or compressed_member_mutator is not None:
+            new_members = []
+            floating = (hdu.int("ZBITPIX") or 0) < 0
+            per_sample = abs(hdu.int("ZBITPIX") or 8) // 8
+            for row in range(rows):
+                length, offset = struct.unpack(">II", descriptor_bytes[row * 8:row * 8 + 8])
+                member = heap[offset:offset + length]
+                if offset + length > len(heap) or len(member) != length:
+                    raise ValueError("source ZIMAGE descriptor lies outside its heap")
+                if row == 0 and compressed_member_mutator is not None:
+                    member, detail = compressed_member_mutator(member)
+                    details["compressed_member"] = detail
+                elif row == 0 and payload_mutator is not None:
+                    shuffled = gzip.decompress(member)
+                    payload = unshuffle(shuffled, per_sample) if floating else shuffled
+                    payload, detail = payload_mutator(payload, hdu.int("ZBITPIX"))
+                    shuffled = shuffle(payload, per_sample) if floating else payload
+                    member = gzip.compress(shuffled, mtime=0)
+                    details["pixel_payload"] = detail
+                new_members.append(member)
+            descriptors = bytearray()
+            new_heap = bytearray()
+            for member in new_members:
+                descriptors.extend(struct.pack(">II", len(member), len(new_heap)))
+                new_heap.extend(member)
+            descriptor_bytes = descriptors
+            heap = bytes(new_heap)
+        header_size = _header_size(hdu)
+        header = bytearray(hdu.raw[:header_size])
+        for keyword, replacement in (card_replacements or {}).items():
+            previous = _replace_header_card(header, keyword, replacement)
+            details.setdefault("cards", {})[keyword] = dict(
+                original=previous.decode("ascii", "replace").rstrip(),
+                replacement=replacement.decode("ascii", "replace").rstrip(),
+            )
+        if descriptor_mutator is None:
+            _replace_header_card(header, "PCOUNT", int_card("PCOUNT", len(heap)))
+            max_length = max(
+                (struct.unpack(">II", descriptor_bytes[row * 8:row * 8 + 8])[0]
+                 for row in range(rows)),
+                default=0,
+            )
+            old_tform = hdu.text("TFORM1") or ""
+            match = re.search(r"1PB\((\d+)\)", old_tform)
+            old_limit = int(match.group(1)) if match else 0
+            if max_length > old_limit:
+                _replace_header_card(
+                    header,
+                    "TFORM1",
+                    _card("%-8s= '%s'" % ("TFORM1", "1PB(%d)" % max_length)),
+                )
+        data = bytes(descriptor_bytes) + bytes(heap)
+        chunks.append(bytes(header) + pad_data(data))
+        changed = True
+    if not changed:
+        raise RuntimeError("no ZIMAGE table to mutate in %s" % candidate_path)
+    result = b"".join(chunks)
+    with open(out_path, "wb") as handle:
+        handle.write(result)
+    details["candidate_bytes"] = len(result)
+    details["candidate_sha256"] = hashlib.sha256(result).hexdigest()
+    return details
+
+
+def _mutate_float_word(payload, bitpix, old_word, new_word):
+    width = abs(bitpix) // 8
+    if bitpix not in (-32, -64):
+        raise ValueError("float storage mutation requires BITPIX -32 or -64")
+    if len(old_word) != width or len(new_word) != width:
+        raise ValueError("float words must match BITPIX sample width")
+    offset = payload.find(old_word)
+    if offset < 0:
+        raise ValueError("requested floating-point storage word was not found")
+    changed = payload[:offset] + new_word + payload[offset + width:]
+    return changed, dict(bitpix=bitpix, byte_offset=offset, before=old_word.hex(), after=new_word.hex())
+
+
+def _damage_gzip_crc(member):
+    if len(member) < 8:
+        raise ValueError("gzip member is shorter than its trailer")
+    damaged = bytearray(member)
+    crc_at = len(damaged) - 8
+    damaged[crc_at] ^= 1
+    return bytes(damaged), dict(crc32_byte=crc_at, bit_mask=1)
 
 
 # ---------------------------------------------------------------------------
@@ -1278,6 +1898,47 @@ def safe_inflate_tiles(path, evidence, evidence_tag):
         return None, refusal
 
 
+FUNPACK_SKIP_REQUIRED_OMISSIONS = (
+    "CFITSIO funpack -C read-back",
+    "exact array read-back",
+)
+
+
+def funpack_skip_exception_problems(cases):
+    """Reject unnamed funpack skips or exceptions that hide omitted checks."""
+    problems = []
+    for case in cases:
+        if not case.get("skip_funpack"):
+            continue
+        fixture = case.get("name", "<unnamed fixture>")
+        exception = case.get("skip_funpack_exception")
+        if not isinstance(exception, dict):
+            problems.append(
+                "%s sets skip_funpack without a named exception listing omitted checks"
+                % fixture
+            )
+            continue
+        name = exception.get("name")
+        if not isinstance(name, str) or not name.strip():
+            problems.append("%s skip_funpack exception has no name" % fixture)
+        omitted = exception.get("omitted_checks")
+        if not isinstance(omitted, (list, tuple)) or any(
+            not isinstance(item, str) or not item.strip() for item in omitted
+        ):
+            problems.append(
+                "%s skip_funpack exception must list omitted checks as non-empty strings"
+                % fixture
+            )
+            continue
+        missing = [item for item in FUNPACK_SKIP_REQUIRED_OMISSIONS if item not in omitted]
+        if missing:
+            problems.append(
+                "%s skip_funpack exception %r does not list omitted checks: %s"
+                % (fixture, name or "unnamed", ", ".join(missing))
+            )
+    return problems
+
+
 def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence, evidence_tag):
     """Implementation for the guarded candidate acceptance entry point."""
     with open(original_path, "rb") as handle:
@@ -1312,6 +1973,8 @@ def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence
     result = dict(
         candidate_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
         bytes=dict(before=len(original_bytes), after=len(candidate_bytes)),
+        source_matrix=source_image_matrix(before),
+        candidate_matrix=candidate_image_matrix(candidate),
         problems=[],
     )
     required_card_checks = {}
@@ -1446,7 +2109,16 @@ def _check_candidate_impl(original_path, candidate_path, case, scratch, evidence
             )
 
     if case.get("skip_funpack"):
-        result["funpack"] = "not run: HDRLET case is a byte-preservation and external-baseline test"
+        exception_problems = funpack_skip_exception_problems([case])
+        if exception_problems:
+            result["problems"].extend(exception_problems)
+            result["accepted"] = False
+            return result
+        exception = case["skip_funpack_exception"]
+        omitted = list(exception["omitted_checks"])
+        result["funpack"] = "not run: %s" % exception["name"]
+        result["omitted_checks"] = omitted
+        result["array_checks"] = []
         result["accepted"] = not result["problems"]
         return result
 
@@ -1562,7 +2234,7 @@ def check_candidate(original_path, candidate_path, case, scratch, evidence, evid
 def check_fixture(binary, case, root, scratch, evidence):
     """Run tzim on one input, then use the shared candidate acceptance path."""
     path = os.path.join(root, case["name"])
-    original_bytes = open(path, "rb").read()
+    original_bytes = _read_bytes(path)
     before = parse(original_bytes)
     kept = os.path.join(scratch, "original-" + case["name"])
     with open(kept, "wb") as handle:
@@ -1573,12 +2245,42 @@ def check_fixture(binary, case, root, scratch, evidence):
         name=case["name"],
         why=case["why"],
         expect=case["expect"],
+        expected_status=case.get("status"),
         input_case=case.get("input_case"),
         contract_expectation=case.get("contract_expectation"),
+        skip_funpack_exception=case.get("skip_funpack_exception"),
         input_sha256=input_sha,
         original=kept,
+        source_matrix=source_image_matrix(before),
         problems=[],
     )
+    expected_matrix = case.get("matrix")
+    if expected_matrix and expected_matrix.get("floating_storage"):
+        source_image = next(
+            (
+                hdu
+                for hdu in before
+                if hdu.kind() == expected_matrix["role"]
+                and hdu.int("BITPIX") == expected_matrix["bitpix"]
+                and hdu.int("NAXIS") == expected_matrix["naxis"]
+            ),
+            None,
+        )
+        result["floating_storage"] = (
+            float_specials_present(source_image.data, expected_matrix["bitpix"])
+            if source_image is not None
+            else {}
+        )
+        missing_specials = [
+            name
+            for name in expected_matrix["floating_storage"]
+            if not result["floating_storage"].get(name, False)
+        ]
+        if missing_specials:
+            result["problems"].append(
+                "source float fixture is missing storage patterns: %s"
+                % ", ".join(missing_specials)
+            )
     expected_input_bytes = case.get("expected_input_bytes")
     expected_input_sha256 = case.get("expected_input_sha256")
     if expected_input_bytes is not None and len(original_bytes) != expected_input_bytes:
@@ -1594,11 +2296,23 @@ def check_fixture(binary, case, root, scratch, evidence):
         )
         return result
 
+    if case["expect"] == "untouched" and case.get("diagnostics") == "record_only":
+        # These inputs produce no candidate. Keep fitsverify's source diagnostic
+        # as raw evidence, but do not treat it as candidate acceptance or an
+        # allowlisted warning; the refusal contract is status plus exact bytes.
+        verify_code, verify_output = fitsverify(kept, scratch)
+        result["original_fitsverify_mode"] = "record_only"
+        result["original_fitsverify_exit"] = verify_code
+        result["original_fitsverify_diagnostics"] = fitsverify_diagnostics(verify_output)
+        evidence.write_text(
+            "fitsverify-original-%s.txt" % case["name"], verify_output
+        )
+
     code, record, output = tzim_run(binary, path)
     result["tzim_exit"] = code
     result["tzim"] = record
     evidence.write_json("tzim-%s.json" % case["name"], record)
-    candidate_bytes = open(path, "rb").read()
+    candidate_bytes = _read_bytes(path)
     evidence.write_bytes("candidate-" + case["name"], candidate_bytes)
     result["candidate_sha256"] = hashlib.sha256(candidate_bytes).hexdigest()
     result["bytes"] = dict(before=len(original_bytes), after=len(candidate_bytes))
@@ -1611,6 +2325,13 @@ def check_fixture(binary, case, root, scratch, evidence):
         expected_status = case.get("status")
         if expected_status and status != expected_status:
             result["problems"].append("status is %r, expected %r" % (status, expected_status))
+        required_note = case.get("required_note")
+        actual_note = (record or {}).get("note") or ""
+        if required_note and required_note not in actual_note:
+            result["problems"].append(
+                "refusal note %r does not contain required text %r"
+                % (actual_note, required_note)
+            )
         if candidate_bytes != original_bytes:
             result["problems"].append("a file that must not be rewritten was rewritten")
         required = case.get("required_card_counts", {})
@@ -1654,6 +2375,17 @@ def check_fixture(binary, case, root, scratch, evidence):
             )
         result["problems"].append("the file did not change, so nothing was written%s" % said)
         return result
+    strict_size = len(candidate_bytes) < len(original_bytes)
+    result["strict_size"] = dict(
+        input_bytes=len(original_bytes),
+        candidate_bytes=len(candidate_bytes),
+        improved=strict_size,
+    )
+    if not strict_size:
+        result["problems"].append(
+            "candidate is %d bytes, not strictly smaller than input %d bytes"
+            % (len(candidate_bytes), len(original_bytes))
+        )
     if status != "optimized":
         result["problems"].append("status is %r, expected 'optimized'" % status)
 
@@ -1669,6 +2401,286 @@ def check_fixture(binary, case, root, scratch, evidence):
     result.update({key: value for key, value in acceptance.items() if key != "problems"})
     result["problems"].extend(acceptance["problems"])
     return result
+
+
+def select_fixtures(cases, scope):
+    """Choose a full run or only additive rows missing from the reviewed handoff."""
+    if scope == "full":
+        return list(cases)
+    if scope == "residual":
+        return [case for case in cases if case.get("residual_only")]
+    raise ValueError("unknown FITS evidence scope %r" % scope)
+
+
+def run_identity_is_valid(identity):
+    """Check exact checkout identity and the event-specific PR-head relation."""
+    if identity.get("requested_sha_matches_checkout") is False:
+        return False
+    head = identity.get("pull_request_head_sha")
+    if identity.get("event_name") == "pull_request":
+        return bool(head) and identity.get("pull_request_head_is_parent") is True
+    if head:
+        return identity.get("pull_request_head_is_checked_out") is True
+    return True
+
+
+def run_identity():
+    """Source/run identity shared by the manifest, summary and acceptance record."""
+    parents_text = os.environ.get("CHECKED_OUT_PARENTS", "")
+    parents = parents_text.split()
+    requested_sha = os.environ.get("REQUESTED_SHA", os.environ.get("GITHUB_SHA"))
+    pull_request_head = os.environ.get("PULL_REQUEST_HEAD_SHA", "")
+    checked_out_sha = os.environ.get("CHECKED_OUT_SHA")
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
+    identity = dict(
+        requested_sha=requested_sha,
+        checked_out_sha=checked_out_sha,
+        requested_sha_matches_checkout=(
+            requested_sha == checked_out_sha
+            if requested_sha and checked_out_sha
+            else None
+        ),
+        pull_request_head_sha=pull_request_head,
+        checked_out_parents=parents,
+        pull_request_head_is_parent=(
+            pull_request_head in parents if event_name == "pull_request" else None
+        ),
+        pull_request_head_is_checked_out=(
+            pull_request_head == checked_out_sha if pull_request_head else None
+        ),
+        event_name=event_name,
+        run_id=os.environ.get("GITHUB_RUN_ID"),
+        run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
+        run_url=(
+            "%s/%s/actions/runs/%s"
+            % (
+                os.environ.get("GITHUB_SERVER_URL", "https://github.com"),
+                os.environ.get("GITHUB_REPOSITORY", ""),
+                os.environ.get("GITHUB_RUN_ID", ""),
+            )
+            if os.environ.get("GITHUB_RUN_ID")
+            else None
+        ),
+    )
+    identity["source_identity_valid"] = run_identity_is_valid(identity)
+    return identity
+
+
+def run_identity_relationship(run):
+    """Describe the expected PR-head relationship for the triggering event."""
+    if run.get("event_name") == "pull_request":
+        return "PR head is a recorded parent: `%s`" % run.get(
+            "pull_request_head_is_parent", "not recorded"
+        )
+    if run.get("pull_request_head_sha"):
+        return "PR head equals checked-out SHA: `%s`" % run.get(
+            "pull_request_head_is_checked_out", "not recorded"
+        )
+    return "PR-head relation: not applicable"
+
+
+def acceptance_matrix_summary(cases, fixture_results, scope):
+    """Bind each new matrix row to its raw input, writer result and candidate."""
+    by_name = {result.get("name"): result for result in fixture_results}
+    rows = []
+    for case in cases:
+        expected = case.get("matrix")
+        if not expected:
+            continue
+        result = by_name.get(case["name"], {})
+        identity = (expected["role"], expected["bitpix"], expected["naxis"])
+        source_matches = any(
+            (row.get("role"), row.get("bitpix"), row.get("naxis")) == identity
+            for row in result.get("source_matrix", [])
+        )
+        candidate_matches = any(
+            (row.get("role"), row.get("bitpix"), row.get("naxis")) == identity
+            for row in result.get("candidate_matrix", [])
+        )
+        identity_bound = all(
+            result.get(field)
+            for field in ("input_sha256", "candidate_sha256", "binary_sha256")
+        ) and all(
+            isinstance(value, int) and value > 0
+            for value in ((result.get("bytes") or {}).get("before"),
+                          (result.get("bytes") or {}).get("after"))
+        )
+        row_ok = (
+            identity_bound
+            and source_matches
+            and candidate_matches
+            and result.get("candidate_acceptance") is True
+            and result.get("strict_size", {}).get("improved") is True
+            and not result.get("problems")
+        )
+        rows.append(
+            dict(
+                fixture=case["name"],
+                expected=expected,
+                input_bytes=(result.get("bytes") or {}).get("before"),
+                input_sha256=result.get("input_sha256"),
+                candidate_bytes=(result.get("bytes") or {}).get("after"),
+                candidate_sha256=result.get("candidate_sha256"),
+                binary_sha256=result.get("binary_sha256"),
+                identity_bound=identity_bound,
+                tzim_exit=result.get("tzim_exit"),
+                tzim_status=(result.get("tzim") or {}).get("status"),
+                tzim_note=(result.get("tzim") or {}).get("note"),
+                source_matrix_match=source_matches,
+                candidate_matrix_match=candidate_matches,
+                strict_size=(result.get("strict_size") or {}).get("improved"),
+                independent_acceptance=result.get("candidate_acceptance"),
+                accepted=row_ok,
+                problems=result.get("problems", []),
+            )
+        )
+    declared_bitpix = sorted({row["expected"]["bitpix"] for row in rows})
+    declared_naxis = sorted({row["expected"]["naxis"] for row in rows})
+    declared_roles = sorted({row["expected"]["role"] for row in rows})
+    if scope in ("residual", "full"):
+        expected_bitpix = RESIDUAL_REQUIRED_BITPIX
+        expected_naxis = RESIDUAL_REQUIRED_NAXIS
+        expected_roles = RESIDUAL_REQUIRED_ROLES
+    else:
+        expected_bitpix = declared_bitpix
+        expected_naxis = declared_naxis
+        expected_roles = declared_roles
+
+    coverage_problems = []
+    for label, declared, required in (
+        ("BITPIX", declared_bitpix, expected_bitpix),
+        ("NAXIS", declared_naxis, expected_naxis),
+        ("roles", declared_roles, expected_roles),
+    ):
+        if declared != required:
+            coverage_problems.append(
+                "declared %s coverage %s does not match required %s"
+                % (label, declared, required)
+            )
+
+    accepted_rows = [row for row in rows if row["accepted"]]
+    covered_bitpix = sorted({row["expected"]["bitpix"] for row in accepted_rows})
+    covered_naxis = sorted({row["expected"]["naxis"] for row in accepted_rows})
+    covered_roles = sorted({row["expected"]["role"] for row in accepted_rows})
+    missing = [row["fixture"] for row in rows if not row["accepted"]]
+    missing.extend(coverage_problems)
+    for label, required, covered in (
+        ("BITPIX", expected_bitpix, covered_bitpix),
+        ("NAXIS", expected_naxis, covered_naxis),
+        ("roles", expected_roles, covered_roles),
+    ):
+        missing.extend(
+            "coverage %s=%s" % (label, value)
+            for value in required
+            if value not in covered
+        )
+    identity = run_identity()
+    source_identity_valid = identity["source_identity_valid"]
+    if not source_identity_valid:
+        missing.append("source run identity relationship is invalid")
+    complete = (
+        bool(rows)
+        and not missing
+        and not coverage_problems
+        and source_identity_valid
+        and covered_bitpix == expected_bitpix
+        and covered_naxis == expected_naxis
+        and covered_roles == expected_roles
+    )
+    return dict(
+        schema_version=2,
+        scope=scope,
+        run_identity=identity,
+        requested_sha=identity["requested_sha"],
+        checked_out_sha=identity["checked_out_sha"],
+        requested_sha_matches_checkout=identity["requested_sha_matches_checkout"],
+        pull_request_head_sha=identity["pull_request_head_sha"],
+        checked_out_parents=identity["checked_out_parents"],
+        pull_request_head_is_parent=identity["pull_request_head_is_parent"],
+        pull_request_head_is_checked_out=identity["pull_request_head_is_checked_out"],
+        source_identity_valid=identity["source_identity_valid"],
+        source="issue #78 rewrite matrix; residual scope is additive and does not replay previously confirmed fixtures",
+        inherited_run_id="40551071072",
+        inherited_run_sha="0232d92b3171b4b7af5cdb4910f852a66308e7b4",
+        inherited_run_attempt=1,
+        inherited_run_context_only=True,
+        inherited_run_replayed=False,
+        expected=dict(bitpix=expected_bitpix, naxis=expected_naxis, roles=expected_roles),
+        declared=dict(bitpix=declared_bitpix, naxis=declared_naxis, roles=declared_roles),
+        observed=dict(bitpix=covered_bitpix, naxis=covered_naxis, roles=covered_roles),
+        coverage_problems=coverage_problems,
+        missing=missing,
+        rows=rows,
+        complete=complete,
+    )
+
+
+def corpus_manifest(root, cases, scope="full"):
+    """Hash the exact synthetic and pinned external input fixtures for this run."""
+    fixtures = []
+    for case in cases:
+        path = os.path.join(root, case["name"])
+        with open(path, "rb") as handle:
+            raw = handle.read()
+        fixtures.append(
+            dict(
+                name=case["name"],
+                bytes=len(raw),
+                sha256=hashlib.sha256(raw).hexdigest(),
+                expectation=case.get("expect"),
+                status=case.get("status"),
+                residual_only=bool(case.get("residual_only")),
+                matrix=case.get("matrix"),
+                diagnostics=case.get("diagnostics"),
+                required_note=case.get("required_note"),
+                skip_funpack=bool(case.get("skip_funpack")),
+                skip_funpack_exception=case.get("skip_funpack_exception"),
+                input_case=case.get("input_case"),
+                why=case.get("why"),
+            )
+        )
+    identity = run_identity()
+    return dict(
+        schema_version=3,
+        scope=scope,
+        run_identity=identity,
+        requested_sha=identity["requested_sha"],
+        checked_out_sha=identity["checked_out_sha"],
+        requested_sha_matches_checkout=identity["requested_sha_matches_checkout"],
+        pull_request_head_sha=identity["pull_request_head_sha"],
+        checked_out_parents=identity["checked_out_parents"],
+        pull_request_head_is_parent=identity["pull_request_head_is_parent"],
+        pull_request_head_is_checked_out=identity["pull_request_head_is_checked_out"],
+        source_identity_valid=identity["source_identity_valid"],
+        run_id=os.environ.get("GITHUB_RUN_ID"),
+        run_attempt=os.environ.get("GITHUB_RUN_ATTEMPT"),
+        source="deterministic fixtures generated by fits-heasarc.py",
+        prior_run=dict(
+            run_id="40551071072",
+            sha="0232d92b3171b4b7af5cdb4910f852a66308e7b4",
+            attempt=1,
+            evidence_source="requester-reported exact-SHA handoff; this job does not download or re-transfer it",
+            context_only=True,
+            replayed=False,
+            current_fixture_scope=(
+                "additive #78 rows only" if scope == "residual" else "current full fixture set at this SHA"
+            ),
+            note=(
+                "this job does not replay the inherited workflow run; full scope, if selected, "
+                "runs the current script's fixture set at the current SHA"
+            ),
+        ),
+        external_astropy=dict(
+            repository="astropy/astropy",
+            commit=ASTROPY_COMMIT,
+            archive_sha256=ASTROPY_ARCHIVE_SHA256,
+            selected_path="astropy/io/fits/tests/data/double_ext.fits",
+            selected_sha256=ASTROPY_DOUBLE_EXT_SHA256,
+            selected_bytes=ASTROPY_DOUBLE_EXT_BYTES,
+            included=any(case["name"] == "external_double_ext.fits" for case in cases),
+        ),
+        fixtures=fixtures,
+    )
 
 
 class Evidence:
@@ -1728,14 +2740,26 @@ def render_diagnostics(summary, evidence):
             os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]))
         lines.append("")
 
+    scope = (summary.get("run") or {}).get("scope", "full")
+    lines.append("Evidence scope: `%s`." % scope)
+    binary = summary.get("binary") or {}
+    if binary:
+        lines.append(
+            "Executed binary: `%s`, %s bytes, SHA-256 `%s`."
+            % (binary.get("path", "not recorded"), binary.get("bytes", "not recorded"),
+               binary.get("sha256", "not recorded"))
+        )
+    lines.append("")
+
     lines += ["## Literal 80-column header diffs", ""]
     lines.append(
-        "The comparison is original HDU versus the bytes produced by `tzim` then `funpack -C`. "
-        "It includes every 80-byte card through END, card order, comments, spacing, CHECKSUM, "
-        "DATASUM, EXTEND and ZEXTEND; nothing is normalized or excluded. These diffs diagnose "
-        "the complete round trip and do not by themselves assign a difference to one program. "
-        "The raw source, tzim candidate, full JSON/text diff, and per-tool output are retained in "
-        "the checksummed artifact."
+        "For registered rewritten candidates, the comparison is original HDU versus the bytes "
+        "reconstructed from the `tzim` candidate by `funpack -C`. It includes every 80-byte card "
+        "through END, card order, comments, spacing, CHECKSUM, DATASUM, EXTEND and ZEXTEND; nothing "
+        "is normalized or excluded. These diffs diagnose the complete read-back and do not by "
+        "themselves assign a difference to one program. The HDRLET preservation-only exception "
+        "has no `funpack -C` or array read-back in this artifact. The raw source, tzim candidate, "
+        "full JSON/text diff, and per-tool output are retained in the checksummed artifact."
     )
     lines.append("")
     diffs = [f for f in summary["fixtures"] if f.get("header_diff")]
@@ -1748,6 +2772,140 @@ def render_diagnostics(summary, evidence):
         lines.extend(evidence.read_text("header-diff-%s.txt" % fixture["name"]).rstrip().splitlines())
         lines.append("")
 
+    if scope == "residual":
+        run = summary.get("run") or {}
+        lines.append("## Exact run and issue #78 residual evidence")
+        lines.append("")
+        lines.append(
+            "Requested SHA (test-merge SHA for PR events) `%s`; checked-out SHA `%s`; PR-head SHA `%s`; run `%s`, attempt `%s`."
+            % (run.get("requested_sha", "not recorded"),
+               run.get("checked_out_sha", "not recorded"),
+               run.get("pull_request_head_sha") or "not applicable (non-PR event)",
+               run.get("run_id", "not recorded"),
+               run.get("run_attempt", "not recorded"))
+        )
+        lines.append(
+            "Checked-out commit parents: `%s`; %s."
+            % (
+                " ".join(run.get("checked_out_parents") or []) or "none",
+                run_identity_relationship(run),
+            )
+        )
+        lines.append("Source identity valid: **%s**." % run.get("source_identity_valid", "not recorded"))
+        lines.append(
+            "Run `40551071072` at SHA `0232d92b3171b4b7af5cdb4910f852a66308e7b4` is context only; "
+            "it is neither downloaded nor replayed by this gate. Only the additive missing rows "
+            "selected in `corpus-manifest.json` run at this SHA."
+        )
+        lines.append("")
+        matrix = summary.get("acceptance_matrix") or {}
+        lines.append("Acceptance matrix: `%s`; complete: **%s**; observed coverage: `%s`." % (
+            matrix.get("scope", scope), matrix.get("complete", False),
+            json.dumps(matrix.get("observed", {}), sort_keys=True)))
+        lines.append("")
+        def markdown_cell(value):
+            if isinstance(value, (list, tuple)):
+                value = "; ".join(str(item) for item in value)
+            if value is None or value == "":
+                return "none"
+            return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+
+        lines.append("| fixture | tzim status | tzim note | input SHA-256 | candidate SHA-256 | binary SHA-256 | strict-size | independent acceptance | result | diagnostics |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+        for row in matrix.get("rows", []):
+            lines.append(
+                "| %(fixture)s | %(status)s | %(note)s | `%(input_sha256)s` | `%(candidate_sha256)s` | `%(binary_sha256)s` | "
+                "%(strict_size)s | %(independent_acceptance)s | %(accepted)s | %(problems)s |" % {
+                    "fixture": markdown_cell(row.get("fixture", "?")),
+                    "status": markdown_cell(row.get("tzim_status")),
+                    "note": markdown_cell(row.get("tzim_note")),
+                    "input_sha256": row.get("input_sha256") or "not recorded",
+                    "candidate_sha256": row.get("candidate_sha256") or "not recorded",
+                    "binary_sha256": row.get("binary_sha256") or "not recorded",
+                    "strict_size": row.get("strict_size"),
+                    "independent_acceptance": row.get("independent_acceptance"),
+                    "accepted": row.get("accepted"),
+                    "problems": markdown_cell(row.get("problems") or "none"),
+                }
+            )
+
+        if any(
+            fixture.get("original_fitsverify_mode") == "record_only"
+            for fixture in summary["fixtures"]
+        ):
+            lines += [
+                "",
+                "For valid-but-unsupported no-rewrite fixtures, the original `fitsverify` output and exit are "
+                "recorded as source diagnostics only. No candidate is accepted on that basis: every registered "
+                "rewritten candidate, including THEAP controls, requires `fitsverify` exit 0, `funpack -C` exit 0, "
+                "and exact array comparison. HDRLET is the named preservation-only exception described below; "
+                "it does not create a global warning allowlist.",
+            ]
+
+        untouched = [fixture for fixture in summary["fixtures"] if fixture.get("expect") == "untouched"]
+        if untouched:
+            lines += ["", "### Expected untouched rows", ""]
+            lines.append("| fixture | expected status | actual status | byte-identical | original fitsverify exit / mode | input SHA-256 | candidate SHA-256 | tzim note | diagnostics |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            for fixture in untouched:
+                record = fixture.get("tzim") or {}
+                input_sha = fixture.get("input_sha256")
+                candidate_sha = fixture.get("candidate_sha256")
+                if input_sha and candidate_sha:
+                    unchanged = "yes" if input_sha == candidate_sha else "no"
+                else:
+                    unchanged = "not recorded"
+                lines.append(
+                    "| %(fixture)s | %(expected)s | %(actual)s | %(unchanged)s | %(original_fitsverify)s | `%(input_sha)s` | `%(candidate_sha)s` | %(note)s | %(problems)s |" % {
+                        "fixture": markdown_cell(fixture.get("name", "?")),
+                        "expected": markdown_cell(fixture.get("expected_status")),
+                        "actual": markdown_cell(record.get("status")),
+                        "unchanged": unchanged,
+                        "original_fitsverify": (
+                            "%s (%s)"
+                            % (
+                                fixture.get("original_fitsverify_exit", "not run"),
+                                fixture.get("original_fitsverify_mode"),
+                            )
+                            if fixture.get("original_fitsverify_mode")
+                            else fixture.get("original_fitsverify_exit", "not run")
+                        ),
+                        "input_sha": input_sha or "not recorded",
+                        "candidate_sha": candidate_sha or "not recorded",
+                        "note": markdown_cell(record.get("note")),
+                        "problems": markdown_cell(fixture.get("problems") or "none"),
+                    }
+                )
+        lines.append("")
+        lines.append("## Residual controls")
+        lines.append("")
+        for control in summary.get("controls", []):
+            lines.append(
+                "- `%s` (%s): expected %s; detected **%s**."
+                % (control.get("name"), control.get("control_type", "unclassified"),
+                   control.get("expected", "not recorded"), control.get("detected", False))
+            )
+            for row in control.get("rows", []):
+                lines.append(
+                    "  - `%s`: ok=%s; binary SHA-256 `%s`; input SHA-256 `%s`; output SHA-256 `%s`."
+                    % (row.get("fixture", row.get("name", "row")), row.get("ok", row.get("detected", False)),
+                       row.get("binary_sha256", "not recorded"), row.get("before_sha256", "not recorded"),
+                       row.get("after_sha256", row.get("candidate_sha256", "not recorded")))
+                )
+        lines.append("")
+        lines.append(
+            "The per-file inputs, rewritten candidates, independent-reader reconstructions, literal card diffs, "
+            "control JSON, second-run outputs, and SHA-256 sidecars are retained in the sealed artifact. "
+            "Every registered rewritten candidate requires `fitsverify` exit 0, independent CFITSIO `funpack -C` "
+            "exit 0, and exact array-byte comparison. HDRLET is a named preservation-only exception: the "
+            "candidate is checked against its inherited per-file `fitsverify` baseline, non-target HDUs must be "
+            "byte-identical, strict-size improvement and second-run idempotence remain required, and this artifact "
+            "contains no `funpack -C` or array read-back for it. Astropy's `multi.fits` is exercised only by the "
+            "separate Astropy CI oracle and is not included in this HEASARC artifact. FITS remains opt-in Tier 2; "
+            "this evidence is not full-format admission or a universal stability guarantee."
+        )
+        return "\n".join(lines).rstrip() + "\n"
+
     for fixture_name, title in (
         ("multi_hdu.fits", "registered multi-HDU positive traversal"),
         ("hdrlet_preservation.fits", "HDRLET preservation-only baseline comparison"),
@@ -1759,11 +2917,13 @@ def render_diagnostics(summary, evidence):
             lines.append("The fixture did not run.")
             lines.append("")
             continue
+        funpack_exit = fixture.get("funpack_exit")
+        if funpack_exit is None:
+            funpack_exit = "not run"
         lines.append(
             "Original fitsverify exit %s; candidate exit %s; funpack -C exit %s."
             % (fixture.get("original_fitsverify_exit", "not run"),
-               fixture.get("fitsverify_exit", "not run"),
-               fixture.get("funpack_exit", "not run"))
+               fixture.get("fitsverify_exit", "not run"), funpack_exit)
         )
         if fixture_name == "multi_hdu.fits":
             lines.append(
@@ -1772,16 +2932,33 @@ def render_diagnostics(summary, evidence):
             )
         else:
             comparison = fixture.get("external_diagnostic_comparison", {})
+            exception = fixture.get("skip_funpack_exception") or {}
+            strict_size = fixture.get("strict_size") or {}
+            idempotence = fixture.get("idempotence") or {}
             lines.append(
-                "The original's unregistered HDRLET diagnostic is an explicit per-file baseline; "
-                "candidate added no new marker or warning/error count: %s (exact match: %s)."
-                % (comparison.get("no_new_diagnostics", "not compared"),
+                "Named exception: `%s`. The original's unregistered HDRLET diagnostic is the inherited "
+                "per-file baseline; candidate added no new marker or increased warning/error count: %s "
+                "(exact match: %s)."
+                % (exception.get("name", "not recorded"),
+                   comparison.get("no_new_diagnostics", "not compared"),
                    comparison.get("exact_match", "not compared"))
             )
             lines.append(
-                "The inherited unregistered-XTENSION error may remain or disappear; a different/new "
-                "candidate diagnostic fails this case. This is not a global warning/error allowlist. "
-                "HDRLET raw bytes must match exactly."
+                "All non-target HDUs must remain byte-identical; strict whole-file size improvement: %s; "
+                "second-run idempotence: ok=%s, status `%s`, unchanged=%s. The inherited "
+                "unregistered-XTENSION error may remain or disappear; a different/new candidate diagnostic "
+                "fails this case. This is not a global warning/error allowlist."
+                % (strict_size.get("improved", "not recorded"),
+                   idempotence.get("ok", "not recorded"),
+                   idempotence.get("second_run_status", "not recorded"),
+                   idempotence.get("unchanged", "not recorded"))
+            )
+            omitted = exception.get("omitted_checks", fixture.get("omitted_checks", []))
+            lines.append(
+                "The HEASARC artifact contains no `funpack -C` or exact array read-back for HDRLET; "
+                "omitted checks: %s. Astropy's `multi.fits` is exercised only by the separate Astropy "
+                "CI oracle and is not included in this HEASARC artifact. HDRLET raw bytes must match exactly."
+                % (", ".join(omitted) if omitted else "not recorded")
             )
         for label in ("original", "candidate"):
             layout = fixture.get(label + "_hdus") or []
@@ -1870,12 +3047,14 @@ def render_diagnostics(summary, evidence):
     else:
         lines.append("No external-card-derived rewrite fixture ran.")
         lines.append("")
-    lines += ["## Controls: two negative controls plus one positive toolchain sanity check", ""]
-    for control in summary.get("controls", []):
+    controls = summary.get("controls", [])
+    control_counts = Counter(control.get("control_type", "unclassified") for control in controls)
+    lines += ["## Controls", "", "Counts: `%s`." % json.dumps(control_counts, sort_keys=True), ""]
+    for control in controls:
         role = control.get("control_type", "unclassified")
-        lines.append("- `%s` (%s): expected %s; record `%s`." % (
+        lines.append("- `%s` (%s): expected %s; detected **%s**; record `%s`." % (
             control.get("name"), role, control.get("expected", "not recorded"),
-            json.dumps(control, sort_keys=True)))
+            control.get("detected", False), json.dumps(control, sort_keys=True)))
     lines.append("")
     lines.append(
         "The corrupt-tile control runs both the intact and altered candidates through the same "
@@ -1885,11 +3064,376 @@ def render_diagnostics(summary, evidence):
         "The separate structural control must make fitsverify nonzero. The positive fpack control "
         "is `fpack → funpack -C`: its output must pass fitsverify and its full literal header diff "
         "must be empty. The fpack reference is integer-only; float arrays are compared only as "
-        "original versus `tzim → funpack -C`."
+        "original versus `tzim → funpack -C`. The additional #78 controls run every "
+        "successful rewrite in the selected scope a second time, preserve malformed inputs and their "
+        "directory contents on failure, and send NaN-payload, signed-zero, gzip, descriptor "
+        "and card mutations through the same independent acceptance path."
     )
     lines.append("")
     lines.append("Full control-tool output and round-trip diffs are retained in the checksummed evidence.")
     return "\n".join(lines).rstrip() + "\n"
+
+def _read_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def _first_source_image(path):
+    hdus = parse(_read_bytes(path))
+    return next(hdu for hdu in hdus if hdu.kind() in ("PRIMARY", "IMAGE") and hdu.axes())
+
+
+def run_idempotence_control(binary, cases, fixture_results, root, scratch, evidence, binary_sha256):
+    """Run every successful rewrite in this scope a second time and retain both byte streams."""
+    by_name = {result.get("name"): result for result in fixture_results}
+    rows = []
+    for case in cases:
+        if case.get("expect") not in ("rewritten", "mixed"):
+            continue
+        result = by_name.get(case["name"], {})
+        if (result.get("tzim") or {}).get("status") != "optimized":
+            continue
+        path = os.path.join(root, case["name"])
+        before = _read_bytes(path)
+        before_sha = hashlib.sha256(before).hexdigest()
+        code, record, output = tzim_run(binary, path)
+        after = _read_bytes(path)
+        after_sha = hashlib.sha256(after).hexdigest()
+        status = (record or {}).get("status")
+        unchanged = before == after
+        ok = code == 0 and status == "already_optimal" and unchanged
+        row = dict(
+            fixture=case["name"],
+            binary_sha256=binary_sha256,
+            second_run_exit=code,
+            second_run_status=status,
+            before_bytes=len(before),
+            after_bytes=len(after),
+            before_sha256=before_sha,
+            after_sha256=after_sha,
+            unchanged=unchanged,
+            output=output,
+            ok=ok,
+        )
+        rows.append(row)
+        result["idempotence"] = {key: value for key, value in row.items() if key != "output"}
+        evidence.write_bytes("idempotence-input-" + case["name"], before)
+        evidence.write_bytes("idempotence-output-" + case["name"], after)
+        evidence.write_json("idempotence-" + case["name"] + ".json", row)
+        evidence.write_text("idempotence-" + case["name"] + ".txt", output)
+    detected = bool(rows) and all(row["ok"] for row in rows)
+    control = dict(
+        name="second_run_idempotence",
+        control_type="preservation",
+        expected=(
+            "for each successfully rewritten candidate, a second --fits-tile run returns "
+            "already_optimal and preserves exact bytes"
+        ),
+        binary_sha256=binary_sha256,
+        rows=rows,
+        detected=detected,
+    )
+    evidence.write_json("control-idempotence.json", control)
+    return control
+
+
+def run_failure_preservation_control(binary, scratch, evidence, binary_sha256):
+    """Exercise actual parse failures and prove the original path is not replaced."""
+    control_root = os.path.join(scratch, "failure-preservation")
+    os.makedirs(control_root, exist_ok=True)
+    valid = image_hdu(16, [64, 128], int16_pattern(64, 128), primary=True)
+    malformed = [
+        ("trailing_bytes", valid + b"TRAILING", "bytes after the last HDU"),
+        ("truncated_record", valid[:-1], "final FITS record truncated by one byte"),
+    ]
+    rows = []
+    for name, raw, defect in malformed:
+        case_dir = os.path.join(control_root, name)
+        os.makedirs(case_dir, exist_ok=True)
+        path = os.path.join(case_dir, name + ".fits")
+        with open(path, "wb") as handle:
+            handle.write(raw)
+        before = _read_bytes(path)
+        before_sha = hashlib.sha256(before).hexdigest()
+        before_names = sorted(os.listdir(case_dir))
+        try:
+            code, record, output = tzim_run(binary, path)
+            after = _read_bytes(path)
+            after_sha = hashlib.sha256(after).hexdigest()
+            after_names = sorted(os.listdir(case_dir))
+            status = (record or {}).get("status")
+            unchanged = before == after
+            no_temporary_files = before_names == after_names
+            ok = code != 0 and status == "failed" and unchanged and no_temporary_files
+            row = dict(
+                fixture=name + ".fits",
+                defect=defect,
+                binary_sha256=binary_sha256,
+                exit=code,
+                status=status,
+                before_bytes=len(before),
+                after_bytes=len(after),
+                before_sha256=before_sha,
+                after_sha256=after_sha,
+                unchanged=unchanged,
+                no_temporary_files=no_temporary_files,
+                output=output,
+                ok=ok,
+            )
+            evidence.write_bytes("failure-preservation-input-" + name + ".fits", before)
+            evidence.write_bytes("failure-preservation-output-" + name + ".fits", after)
+        except Exception as error:
+            row = dict(
+                fixture=name + ".fits",
+                defect=defect,
+                binary_sha256=binary_sha256,
+                ok=False,
+                exception="%s: %s" % (type(error).__name__, error),
+                traceback=traceback.format_exc(),
+            )
+            evidence.write_bytes("failure-preservation-input-" + name + ".fits", before)
+            evidence.write_bytes("failure-preservation-output-" + name + ".fits", _read_bytes(path))
+        rows.append(row)
+        evidence.write_json("failure-preservation-" + name + ".json", row)
+        evidence.write_text("failure-preservation-" + name + ".txt", row.get("output", row.get("traceback", "")))
+    control = dict(
+        name="failure_preservation",
+        control_type="preservation",
+        expected=(
+            "malformed FITS input returns failed/nonzero, leaves the original SHA unchanged, "
+            "and leaves no temporary siblings"
+        ),
+        binary_sha256=binary_sha256,
+        rows=rows,
+        detected=bool(rows) and all(row["ok"] for row in rows),
+    )
+    evidence.write_json("control-failure-preservation.json", control)
+    return control
+
+
+def run_residual_mutation_controls(binary, cases, fixture_results, root, scratch, evidence, binary_sha256):
+    """Mutate actual candidates, then require the shared independent acceptance path to reject them."""
+    cases_by_name = {case["name"]: case for case in cases}
+    results_by_name = {result.get("name"): result for result in fixture_results}
+    float_name = "residual_float32_naxis1_image.fits"
+    integer_name = "residual_bitpix8_naxis1_primary.fits"
+    if float_name not in cases_by_name or integer_name not in cases_by_name:
+        missing = [name for name in (float_name, integer_name) if name not in cases_by_name]
+        control = dict(
+            name="candidate_mutations",
+            control_type="negative",
+            expected="all mutation rows run through actual candidates and the shared acceptance path",
+            detected=False,
+            missing_fixtures=missing,
+        )
+        evidence.write_json("control-candidate-mutations.json", control)
+        return control
+
+    mutations = [
+        (
+            "nan_payload",
+            float_name,
+            dict(
+                payload_mutator=lambda payload, bitpix: _mutate_float_word(
+                    payload, bitpix, bytes.fromhex("7fc00001"), bytes.fromhex("7fc00002")
+                )
+            ),
+            "external funpack/byte-array comparison rejects changed NaN payload bytes",
+        ),
+        (
+            "signed_zero",
+            float_name,
+            dict(
+                payload_mutator=lambda payload, bitpix: _mutate_float_word(
+                    payload, bitpix, bytes.fromhex("00000000"), bytes.fromhex("80000000")
+                )
+            ),
+            "external funpack/byte-array comparison rejects +0 to -0 storage mutation",
+        ),
+        (
+            "gzip_crc",
+            float_name,
+            dict(compressed_member_mutator=_damage_gzip_crc),
+            "gzip CRC damage is rejected by tile inflation or the external reader",
+        ),
+        (
+            "descriptor_zero_length",
+            integer_name,
+            dict(
+                descriptor_mutator=lambda descriptors, heap, rows: (
+                    descriptors.__setitem__(slice(0, 4), struct.pack(">I", 0))
+                    or dict(length=0, offset=struct.unpack(">I", descriptors[4:8])[0])
+                )
+            ),
+            "a zero-length tile descriptor is rejected rather than treated as an empty image",
+        ),
+        (
+            "descriptor_negative_count",
+            integer_name,
+            dict(
+                descriptor_mutator=lambda descriptors, heap, rows: (
+                    descriptors.__setitem__(slice(0, 4), struct.pack(">i", -1))
+                    or dict(count=-1, offset=struct.unpack(">I", descriptors[4:8])[0])
+                )
+            ),
+            "negative signed P count is rejected by the same candidate acceptance path",
+        ),
+        (
+            "descriptor_negative_offset",
+            integer_name,
+            dict(
+                descriptor_mutator=lambda descriptors, heap, rows: (
+                    descriptors.__setitem__(slice(4, 8), struct.pack(">i", -1))
+                    or dict(count=struct.unpack(">I", descriptors[:4])[0], offset=-1)
+                )
+            ),
+            "a negative signed P heap offset is rejected by the same candidate path",
+        ),
+        (
+            "descriptor_offset_past_heap",
+            integer_name,
+            dict(
+                descriptor_mutator=lambda descriptors, heap, rows: (
+                    descriptors.__setitem__(slice(4, 8), struct.pack(">I", len(heap) + 1))
+                    or dict(count=struct.unpack(">I", descriptors[:4])[0], offset=len(heap) + 1)
+                )
+            ),
+            "a descriptor offset one byte beyond the heap is rejected",
+        ),
+        (
+            "descriptor_length_past_heap",
+            integer_name,
+            dict(
+                descriptor_mutator=lambda descriptors, heap, rows: (
+                    descriptors.__setitem__(slice(0, 4), struct.pack(">I", len(heap) + 1))
+                    or dict(length=len(heap) + 1, offset=0)
+                )
+            ),
+            "a descriptor count extending past the heap is rejected",
+        ),
+        (
+            "card_tform1",
+            integer_name,
+            dict(
+                card_replacements={
+                    "TFORM1": _card("%-8s= '%s'" % ("TFORM1", "1QB(1024)"))
+                }
+            ),
+            "fitsverify rejects a damaged P/Q descriptor TFORM1 card",
+        ),
+    ]
+    rows = []
+    for name, fixture_name, options, expected in mutations:
+        fixture = cases_by_name[fixture_name]
+        result = results_by_name.get(fixture_name, {})
+        original_path = result.get("original")
+        candidate_path = os.path.join(root, fixture_name)
+        tag = "mutation-" + name
+        mutation_root = os.path.join(scratch, tag)
+        os.makedirs(mutation_root, exist_ok=True)
+        mutated_path = os.path.join(mutation_root, tag + ".fits")
+        try:
+            details = mutate_zimage_candidate(candidate_path, mutated_path, **options)
+            candidate_bytes = _read_bytes(mutated_path)
+            evidence.write_bytes(tag + ".candidate.fits", candidate_bytes)
+            source_image = _first_source_image(original_path)
+            inflated, local_refusal = safe_inflate_tiles(
+                mutated_path, evidence, tag + "-local-inflate"
+            )
+            if name in ("nan_payload", "signed_zero"):
+                local_detected = local_refusal is None and inflated != source_image.data
+                local_record = dict(
+                    local_inflation_failure=local_refusal,
+                    tile_bytes_equal_source=(inflated == source_image.data)
+                    if local_refusal is None
+                    else None,
+                )
+            elif name == "card_tform1":
+                local_detected = False
+                local_record = dict(
+                    local_inflation_failure=local_refusal,
+                    local_tile_comparison="not a card-structure oracle",
+                )
+            else:
+                local_detected = local_refusal is not None
+                local_record = dict(local_inflation_failure=local_refusal)
+            acceptance = check_candidate(
+                original_path,
+                mutated_path,
+                fixture,
+                mutation_root,
+                evidence,
+                tag,
+            )
+            array_mismatch = any(
+                not check.get("matches") for check in acceptance.get("array_checks", [])
+            )
+            external_signals = dict(
+                fitsverify_rejected=acceptance.get("fitsverify_exit") not in (None, 0),
+                funpack_rejected=acceptance.get("funpack_exit") not in (None, 0),
+                byte_array_mismatch=array_mismatch,
+                controlled_failure=acceptance.get("controlled_failure") is not None,
+            )
+            gate_rejected = acceptance.get("accepted") is False
+            if name == "card_tform1":
+                detected = gate_rejected and external_signals["fitsverify_rejected"]
+            else:
+                detected = gate_rejected and local_detected and any(external_signals.values())
+            row = dict(
+                name=name,
+                fixture=fixture_name,
+                binary_sha256=binary_sha256,
+                expected=expected,
+                candidate_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
+                candidate_bytes=len(candidate_bytes),
+                mutation=details,
+                local_oracle=local_record,
+                external_signals=external_signals,
+                candidate_acceptance=acceptance.get("accepted"),
+                acceptance_problems=acceptance.get("problems", []),
+                fitsverify_exit=acceptance.get("fitsverify_exit"),
+                funpack_exit=acceptance.get("funpack_exit"),
+                detected=detected,
+            )
+        except Exception as error:
+            row = dict(
+                name=name,
+                fixture=fixture_name,
+                binary_sha256=binary_sha256,
+                expected=expected,
+                detected=False,
+                exception="%s: %s" % (type(error).__name__, error),
+                traceback=traceback.format_exc(),
+            )
+        rows.append(row)
+        evidence.write_json(tag + ".json", row)
+    control = dict(
+        name="candidate_mutations",
+        control_type="negative",
+        expected=(
+            "NaN payload, signed-zero, gzip CRC, zero/negative/out-of-range descriptor count/offset/length "
+            "and TFORM1 "
+            "mutations are rejected by the same fail-closed acceptance path as normal candidates"
+        ),
+        binary_sha256=binary_sha256,
+        rows=rows,
+        detected=bool(rows) and all(row.get("detected") for row in rows),
+    )
+    evidence.write_json("control-candidate-mutations.json", control)
+    return control
+
+
+def run_residual_controls(binary, cases, fixture_results, root, scratch, evidence, binary_sha256):
+    """Residual-only actual-binary controls; no previously confirmed fixture is replayed."""
+    controls = [
+        run_idempotence_control(binary, cases, fixture_results, root, scratch, evidence, binary_sha256),
+        run_failure_preservation_control(binary, scratch, evidence, binary_sha256),
+        run_residual_mutation_controls(
+            binary, cases, fixture_results, root, scratch, evidence, binary_sha256
+        ),
+    ]
+    return controls
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1901,6 +3445,12 @@ def main():
     parser.add_argument("--work", default="fits-heasarc-work")
     parser.add_argument("--evidence", default="fits-heasarc-evidence")
     parser.add_argument(
+        "--scope",
+        choices=("full", "residual"),
+        default=os.environ.get("FITS_HEASARC_SCOPE", "full"),
+        help="run the full gate or only the additive #78 rows missing from the reviewed handoff",
+    )
+    parser.add_argument(
         "--self-check",
         action="store_true",
         help="exercise the parser, the diff and both negative controls without tools",
@@ -1909,11 +3459,18 @@ def main():
 
     evidence = Evidence(args.evidence)
     root = os.path.join(args.work, "fixtures")
-    cases = build_fixtures(root)
+    all_cases = build_fixtures(root)
+    cases = select_fixtures(all_cases, args.scope)
     scratch = os.path.join(args.work, "scratch")
     os.makedirs(scratch, exist_ok=True)
 
+    identity = run_identity()
     summary = dict(
+        run=dict(
+            **identity,
+            workflow=os.environ.get("GITHUB_WORKFLOW"),
+            scope=args.scope,
+        ),
         environment=dict(
             python=sys.version.split()[0],
             platform=platform.platform(),
@@ -1926,22 +3483,69 @@ def main():
     )
 
     if args.self_check:
-        return self_check(root, cases, scratch, evidence, summary)
+        evidence.write_json("corpus-manifest.json", corpus_manifest(root, cases, args.scope))
+        return self_check(root, all_cases, scratch, evidence, summary)
 
     if not args.binary:
         parser.error("--binary is required unless --self-check is given")
-    if not args.external_double_ext:
-        parser.error("--external-double-ext is required for the real-file EXTNAMX control")
-    cases.extend(add_external_double_ext(root, args.external_double_ext))
+    if args.scope == "full":
+        if not args.external_double_ext:
+            parser.error("--external-double-ext is required for the full real-file EXTNAMX control")
+        cases.extend(add_external_double_ext(root, args.external_double_ext))
+    evidence.write_json("corpus-manifest.json", corpus_manifest(root, cases, args.scope))
 
     # Every candidate is produced by running the binary from the fixture's own
     # directory, so a relative path is resolved **once**, here: `cwd=` would
     # otherwise look for `target/release/tzim` inside the scratch directory, which
     # is how the first real run of this gate died with FileNotFoundError.
-    args.binary = os.path.abspath(args.binary)
+    args.binary = os.path.realpath(os.path.abspath(args.binary))
     if not os.access(args.binary, os.X_OK):
         print("::error::%s is not an executable file" % args.binary)
         return 2
+    binary_bytes = _read_bytes(args.binary)
+    binary_identity = dict(
+        path=args.binary,
+        bytes=len(binary_bytes),
+        sha256=hashlib.sha256(binary_bytes).hexdigest(),
+        scope=args.scope,
+    )
+    summary["binary"] = binary_identity
+    summary["verification_scope"] = dict(
+        accepted_subset=(
+            "only whole-file FITS inputs whose complete candidate is verified and strictly smaller; "
+            "only unscaled, non-GROUPS image HDUs with BITPIX 8, 16, 32, -32 or -64 and NAXIS 1 through 6, "
+            "valid dimensions, identity PCOUNT/GCOUNT, no CHECKSUM/DATASUM, and GZIP_1/GZIP_2 output. "
+            "BITPIX 64 and standard-valid ranks above 6 are parsed and preserved as skipped refusals"
+        ),
+        runtime=(
+            "repository V3 structure/header/table verification; candidate gzip inflation with CRC-32/ISIZE; "
+            "byte-exact pixel-storage comparison; literal source-card preservation rules; exact non-target "
+            "HDU preservation; strict whole-file size gate; atomic replacement only after success"
+        ),
+        ci_only=(
+            "on the exact checked-out SHA, every registered rewritten candidate in the selected scope requires "
+            "fitsverify exit 0, CFITSIO funpack -C exit 0, and exact array-byte comparison; literal headers and "
+            "byte-exact non-target HDUs are also checked. Explicit refusal rows are checked for their declared "
+            "status and unchanged source bytes, not independently decompressed"
+        ),
+        hdrlet_preservation_exception=(
+            "hdrlet_preservation.fits is a named preservation-only exception: candidate fitsverify diagnostics "
+            "are compared with this input's inherited per-file baseline (no new marker or increased warning/error "
+            "count); all non-target HDUs must remain byte-identical; strict whole-file size improvement and "
+            "second-run idempotence remain required. This HEASARC artifact contains no funpack -C or exact array "
+            "read-back for this fixture"
+        ),
+        separate_astropy_multi_fits=(
+            "Astropy's multi.fits fixture is exercised only by the separate Astropy CI oracle and is not included "
+            "in this HEASARC artifact"
+        ),
+        limitation=(
+            "the CI matrix is representative candidate evidence, not an independent runtime read-back on every "
+            "accepted user file; this opt-in feature is not a full-format admission or a universal stability guarantee"
+        ),
+    )
+    evidence.write_json("tzim-binary-identity.json", binary_identity)
+    evidence.write_json("verification-scope.json", summary["verification_scope"])
 
     # The tools first: a missing tool must not look like a rejected candidate.
     for name in ("fitsverify", "funpack", "fpack"):
@@ -1956,7 +3560,11 @@ def main():
             return 2
     tzim_code, tzim_version = run([args.binary, "--version"])
     summary["tools"]["tzim"] = dict(
-        argv=[args.binary, "--version"], exit=tzim_code, first_lines=tzim_version.strip()
+        argv=[args.binary, "--version"],
+        exit=tzim_code,
+        first_lines=tzim_version.strip(),
+        binary_sha256=binary_identity["sha256"],
+        binary_bytes=binary_identity["bytes"],
     )
     evidence.write_text("tzim-identity.txt", tzim_version)
 
@@ -1981,12 +3589,51 @@ def main():
                 expect=case.get("expect"),
                 input_case=case.get("input_case"),
             )
+        result["binary_sha256"] = binary_identity["sha256"]
         summary["fixtures"].append(result)
         mark = "ok" if not result["problems"] else "FAIL"
-        print("%-24s %-10s %s" % (case["name"], case["expect"], mark))
+        print("%-40s %-10s %s" % (case["name"], case["expect"], mark))
         for problem in result["problems"]:
             print("    %s" % problem)
         failures += bool(result["problems"])
+
+    matrix = acceptance_matrix_summary(cases, summary["fixtures"], args.scope)
+    summary["acceptance_matrix"] = matrix
+    evidence.write_json("acceptance-matrix.json", matrix)
+    if not matrix["complete"]:
+        print("::error::the requested accepted-file matrix is incomplete: %s" % matrix["missing"])
+        failures += 1
+
+    residual_controls = run_residual_controls(
+        args.binary,
+        cases,
+        summary["fixtures"],
+        root,
+        scratch,
+        evidence,
+        binary_identity["sha256"],
+    )
+    summary["controls"].extend(residual_controls)
+    for control in residual_controls:
+        if not control.get("detected"):
+            print("::error::residual control failed: %s" % control["name"])
+            failures += 1
+
+    if args.scope == "residual":
+        summary["ok"] = failures == 0
+        evidence.write_json("summary.json", summary)
+        diagnostics = render_diagnostics(summary, evidence)
+        evidence.write_text("ci-diagnostics.md", diagnostics)
+        evidence.write_text("summary.md", render_summary(summary) + "\n" + diagnostics)
+        digest = evidence.seal()
+        print("%d residual fixture(s), %d residual control(s), %d failure(s)"
+              % (len(summary["fixtures"]), len(residual_controls), failures))
+        print("exact binary SHA-256: %s" % binary_identity["sha256"])
+        print("evidence digest: %s" % digest)
+        print("\n=== BEGIN CI diagnostic report (same content as ci-diagnostics.md) ===")
+        print(diagnostics.rstrip())
+        print("=== END CI diagnostic report ===")
+        return 0 if summary["ok"] else 1
 
     # --- negative controls use the same acceptance path as a normal fixture ---
     # The intact candidate must first pass the complete acceptance helper. Then
@@ -2270,6 +3917,8 @@ def self_check(root, cases, scratch, evidence, summary):
         hdus = parse(raw)
         check(b"".join(h.raw for h in hdus) == raw, "%s does not round trip through the reader" % case["name"])
         check(len(raw) % RECORD == 0, "%s is not a whole number of records" % case["name"])
+    for problem in funpack_skip_exception_problems(cases):
+        check(False, problem)
     print("reader: %d fixtures re-emit their own bytes" % len(cases))
 
     multi = parse(open(os.path.join(root, "multi_hdu.fits"), "rb").read())
@@ -2288,6 +3937,9 @@ def self_check(root, cases, scratch, evidence, summary):
     hdrlet_case = next((c for c in cases if c["name"] == "hdrlet_preservation.fits"), None)
     check(hdrlet_case is not None and hdrlet_case.get("skip_funpack") is True,
           "HDRLET must be a separate preservation-only case")
+    hdrlet_exception = (hdrlet_case or {}).get("skip_funpack_exception") or {}
+    check(hdrlet_exception.get("name") == "HDRLET preservation-only exception",
+          "HDRLET funpack omission must have its named preservation-only exception")
     hdrlet_hdus = parse(open(os.path.join(root, "hdrlet_preservation.fits"), "rb").read())
     hdrlet = next((h for h in hdrlet_hdus if h.kind() == "HDRLET"), None)
     check(hdrlet is not None and hdrlet.data == b"\x01\x02\x03\x04" * 200,
@@ -2311,6 +3963,23 @@ def self_check(root, cases, scratch, evidence, summary):
     check(zero_case is not None and zero_case.get("expect") == "untouched"
           and zero_case.get("status") == "already_optimal",
           "zero-width column must expect unchanged + already_optimal")
+
+    for codec in ("PLIO_1", "HCOMPRESS_1"):
+        codec_case = next(
+            (c for c in cases if c["name"] == "residual_unsupported_%s.fits" % codec.lower()),
+            None,
+        )
+        check(codec_case is not None and codec_case.get("required_note") == codec,
+              "%s refusal must require its codec name in the actual-binary note" % codec)
+    hcompress_path = os.path.join(root, "residual_unsupported_hcompress_1.fits")
+    hcompress_hdus = parse(open(hcompress_path, "rb").read())
+    hcompress_cards = [
+        card for hdu in hcompress_hdus for card in hdu.cards
+        if card[:8].strip() == "ZCMPTYPE"
+    ]
+    expected_hcompress_card = "ZCMPTYPE= 'HCOMPRESS_1         '".ljust(CARD)
+    check(hcompress_cards == [expected_hcompress_card],
+          "HCOMPRESS fixture card must remain exactly ZCMPTYPE= 'HCOMPRESS_1         '")
 
     # The specials fixture really does carry four NaN payloads and both zeros.
     specials = parse(open(os.path.join(root, "float32_specials.fits"), "rb").read())[0]
@@ -2465,25 +4134,103 @@ def tiles_fixture(codec, rows, per_sample):
 
 
 def render_summary(summary):
-    lines = ["# fitsverify / funpack gate", ""]
+    run = summary.get("run") or {}
+    scope = run.get("scope", "full")
+    lines = ["# fitsverify / funpack gate (%s scope)" % scope, ""]
+    lines.append(
+        "Requested SHA (test-merge SHA for PR events) `%s`; checked-out SHA `%s`; PR-head SHA `%s`; run `%s`, attempt `%s`."
+        % (run.get("requested_sha", "not recorded"),
+           run.get("checked_out_sha", "not recorded"),
+           run.get("pull_request_head_sha") or "not applicable (non-PR event)",
+           run.get("run_id", "not recorded"), run.get("run_attempt", "not recorded"))
+    )
+    lines.append(
+        "Checked-out commit parents: `%s`; %s."
+        % (
+            " ".join(run.get("checked_out_parents") or []) or "none",
+            run_identity_relationship(run),
+        )
+    )
+    lines.append("Source identity valid: **%s**." % run.get("source_identity_valid", "not recorded"))
+    binary = summary.get("binary") or {}
+    if binary:
+        lines.append(
+            "Executed binary: `%s`, %s bytes, SHA-256 `%s`."
+            % (binary.get("path", "not recorded"), binary.get("bytes", "not recorded"),
+               binary.get("sha256", "not recorded"))
+        )
     env = summary["environment"]
-    lines.append("- python %s on %s (%s)" % (env["python"], env["platform"], env["machine"]))
+    lines.append("- Python %s on %s (%s)" % (env["python"], env["platform"], env["machine"]))
     for name, tool in summary["tools"].items():
         lines.append("- %s: exit %s, %s" % (name, tool.get("exit"), tool.get("first_lines", "").splitlines()[:1]))
-    lines += ["", "| fixture | expectation | tzim | fitsverify | funpack -C | problems |", "| --- | --- | --- | --- | --- | --- |"]
+    lines += [
+        "",
+        "| fixture | expectation | tzim | original fitsverify | candidate fitsverify | funpack -C | problems |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
     for fixture in summary["fixtures"]:
         problems = fixture.get("problems") or []
+        original_fitsverify = fixture.get("original_fitsverify_exit", "-")
+        if fixture.get("original_fitsverify_mode"):
+            original_fitsverify = "%s (%s)" % (
+                original_fitsverify, fixture["original_fitsverify_mode"]
+            )
+        fitsverify_exit = fixture.get("fitsverify_exit")
+        if fitsverify_exit is None:
+            fitsverify_exit = "not run"
+        funpack_exit = fixture.get("funpack_exit")
+        if funpack_exit is None:
+            funpack_exit = "not run"
         lines.append(
-            "| %s | %s | %s | %s | %s | %s |"
+            "| %s | %s | %s | %s | %s | %s | %s |"
             % (
                 fixture.get("name"),
                 fixture.get("expect"),
                 fixture.get("tzim", {}).get("status") if isinstance(fixture.get("tzim"), dict) else "-",
-                fixture.get("fitsverify_exit", "-"),
-                fixture.get("funpack_exit", "-"),
+                original_fitsverify,
+                fitsverify_exit,
+                funpack_exit,
                 "; ".join(problems) if problems else "none",
             )
         )
+    if any(
+        fixture.get("original_fitsverify_mode") == "record_only"
+        for fixture in summary["fixtures"]
+    ):
+        lines += [
+            "",
+            "For valid-but-unsupported no-rewrite fixtures, original `fitsverify` output and exit are "
+            "recorded as source diagnostics only. Every registered rewritten candidate, including THEAP "
+            "controls, requires `fitsverify` exit 0, `funpack -C` exit 0, and exact array comparison. "
+            "HDRLET is the named preservation-only exception described below; it does not create a global "
+            "warning allowlist.",
+        ]
+    matrix = summary.get("acceptance_matrix") or {}
+    if matrix:
+        lines += ["", "## Accepted-file matrix", ""]
+        lines.append(
+            "Complete: **%s**; expected `%s`; observed `%s`; missing `%s`."
+            % (matrix.get("complete", False),
+               json.dumps(matrix.get("expected", {}), sort_keys=True),
+               json.dumps(matrix.get("observed", {}), sort_keys=True),
+               json.dumps(matrix.get("missing", []), sort_keys=True))
+        )
+        lines.append("")
+        lines.append("| fixture | input SHA-256 | candidate SHA-256 | binary SHA-256 | strict-size | independent acceptance | identity bound | result |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        for row in matrix.get("rows", []):
+            lines.append(
+                "| %(fixture)s | `%(input)s` | `%(candidate)s` | `%(binary)s` | %(size)s | %(independent)s | %(identity)s | %(accepted)s |" % {
+                    "fixture": row.get("fixture", "?"),
+                    "input": row.get("input_sha256") or "not recorded",
+                    "candidate": row.get("candidate_sha256") or "not recorded",
+                    "binary": row.get("binary_sha256") or "not recorded",
+                    "size": row.get("strict_size"),
+                    "independent": row.get("independent_acceptance"),
+                    "identity": row.get("identity_bound"),
+                    "accepted": row.get("accepted"),
+                }
+            )
     zero = next((f for f in summary["fixtures"] if f["name"] == "zero_width_column.fits"), None)
     if zero:
         lines += ["", "## zero-width column: unchanged by the strict whole-file gate", ""]
@@ -2499,11 +4246,30 @@ def render_summary(summary):
                      % (record.get("status", "?"), record.get("note"),
                         zero.get("bytes", {}).get("before", "?"),
                         zero.get("bytes", {}).get("after", "?")))
-    lines += ["", "## controls: two negative, one positive", ""]
-    for control in summary["controls"]:
-        lines.append("- `%s` (%s; expected: %s): %s" % (
+    controls = summary.get("controls", [])
+    control_counts = Counter(control.get("control_type", "unclassified") for control in controls)
+    lines += ["", "## Controls", ""]
+    lines.append("Counts: `%s`." % json.dumps(control_counts, sort_keys=True))
+    for control in controls:
+        lines.append("- `%s` (%s; expected: %s): detected **%s**; record `%s`." % (
             control.get("name"), control.get("control_type", "unclassified"),
-            control.get("expected", "not recorded"), json.dumps(control, sort_keys=True)))
+            control.get("expected", "not recorded"), control.get("detected", False),
+            json.dumps(control, sort_keys=True)))
+    verification = summary.get("verification_scope") or {}
+    if verification:
+        lines += ["", "## Verification boundary", ""]
+        lines.append("Runtime: " + verification.get("runtime", "not recorded") + ".")
+        lines.append("")
+        lines.append("CI only: " + verification.get("ci_only", "not recorded") + ".")
+        for field, label in (
+            ("hdrlet_preservation_exception", "HDRLET preservation-only exception"),
+            ("separate_astropy_multi_fits", "Separate Astropy multi.fits check"),
+        ):
+            if verification.get(field):
+                lines.append("")
+                lines.append(label + ": " + verification[field] + ".")
+        lines.append("")
+        lines.append(verification.get("limitation", ""))
     lines += ["", "Overall: **%s**" % ("PASS" if summary["ok"] else "FAIL")]
     return "\n".join(lines) + "\n"
 

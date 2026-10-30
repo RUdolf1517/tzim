@@ -14,6 +14,8 @@ pub enum Format {
     Tiff,
     Zlib,
     Fits,
+    Flac,
+    Pdf,
 }
 
 impl Format {
@@ -27,6 +29,8 @@ impl Format {
             Format::Tiff => "tiff",
             Format::Zlib => "zlib",
             Format::Fits => "fits",
+            Format::Flac => "flac",
+            Format::Pdf => "pdf",
         }
     }
 
@@ -40,6 +44,8 @@ impl Format {
             Format::Tiff => "TIFF",
             Format::Zlib => "ZLIB",
             Format::Fits => "FITS",
+            Format::Flac => "FLAC",
+            Format::Pdf => "PDF",
         }
     }
 }
@@ -100,6 +106,23 @@ pub fn detect(head: &[u8]) -> Option<Format> {
         return Some(Format::Fits);
     }
 
+    // FLAC: the four-byte marker is unambiguous at offset zero. The handler
+    // still validates every metadata block and frame before writing.
+    if head.starts_with(b"fLaC") {
+        return Some(Format::Flac);
+    }
+
+    // PDF: the version header is permitted within the first 1024 bytes, after a
+    // short producer-specific prefix. Detection is only a hint; the PDF handler
+    // insists on a complete, single-revision classic-xref or supported xref stream.
+    if head.len() >= 5
+        && head[..head.len().min(1024)]
+            .windows(5)
+            .any(|window| window == b"%PDF-")
+    {
+        return Some(Format::Pdf);
+    }
+
     // zlib: CM = 8 (DEFLATE), CINFO <= 7, FDICT clear, and a header that passes
     // RFC 1950's own check — the two bytes, big-endian, divisible by 31. That is
     // weaker than a magic number, so the handler re-validates everything, and a
@@ -139,8 +162,9 @@ pub struct Probe {
 }
 
 /// How many bytes of a file [`probe_path`] reads: enough for the format
-/// signature and for a PNG's `IHDR` dimensions.
-const PROBE_BYTES: usize = 24;
+/// signatures, including a PDF header up to its allowed 1024-byte prefix, and
+/// for a PNG's `IHDR` dimensions.
+const PROBE_BYTES: usize = 1024;
 
 /// Reads the first bytes of a file without loading it.
 pub fn probe_path(path: &Path) -> Result<Probe> {
@@ -160,7 +184,7 @@ pub fn probe_path(path: &Path) -> Result<Probe> {
     // The eight-byte signature, then the IHDR length and type (8), then width
     // and height (8): the dimensions end at offset 24.
     let pixels = match format {
-        Some(Format::Png) if filled >= PROBE_BYTES && head[12..16] == *b"IHDR" => {
+        Some(Format::Png) if filled >= 24 && head[12..16] == *b"IHDR" => {
             let width = u32::from_be_bytes([head[16], head[17], head[18], head[19]]) as u64;
             let height = u32::from_be_bytes([head[20], head[21], head[22], head[23]]) as u64;
             Some(width.saturating_mul(height))
@@ -342,6 +366,14 @@ mod tests {
         assert_eq!(detect(b"MM\x00+\x00\x00\x00\x08"), Some(Format::Tiff));
         assert_eq!(detect(b"II*\x01"), None); // magic 42 in the wrong byte order
         assert_eq!(detect(b"hello, world"), None);
+        assert_eq!(detect(b"fLaC"), Some(Format::Flac));
+        assert_eq!(detect(b"%PDF-1.7"), Some(Format::Pdf));
+        let mut prefixed_pdf = vec![b' '; 1019];
+        prefixed_pdf.extend_from_slice(b"%PDF-");
+        assert_eq!(detect(&prefixed_pdf), Some(Format::Pdf));
+        let mut late_pdf = vec![b' '; 1020];
+        late_pdf.extend_from_slice(b"%PDF-");
+        assert_eq!(detect(&late_pdf), None);
         assert_eq!(detect(&[]), None);
         // Truncated signatures are not a match.
         assert_eq!(detect(&PNG_SIGNATURE[..7]), None);

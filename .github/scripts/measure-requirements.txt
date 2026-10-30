@@ -6,7 +6,10 @@
 # numbers were recorded with. Python 3.12 on x86_64 Linux: three of the wheels are
 # cp312-only. `pikepdf` carries libqpdf and `pymupdf` carries MuPDF, so no system
 # PDF library is involved; `pymupdf` 2.0 pulls its layout stack (`onnxruntime` and
-# friends) whether or not it is used, and those are pinned too.
+# friends) whether or not it is used, and those are pinned too. `img2pdf` is the
+# scan-derived PDF creator required by fixed #57; its sdist and its setuptools/
+# wheel build tools are hash-pinned, and the build tools are installed before
+# this file with `--no-build-isolation`.
 
 astropy==8.0.2 \
     --hash=sha256:000d6998bcf4f097257b3776f29f1dafde0967bf1b091edbad95df564eee4eea
@@ -26,6 +29,12 @@ packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 pikepdf==10.17.0 \
     --hash=sha256:f76e2ac6777b2d2a74a71eb73fa2438734ad453177c66f5a5a246b5e2660336b
+setuptools==75.8.0 \
+    --hash=sha256:e3982f444617239225d675215d51f6ba05f845d4eec313da4418fdbb56fb27e3
+wheel==0.45.1 \
+    --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+img2pdf==0.6.1 \
+    --hash=sha256:306e279eb832bc159d7d6294b697a9fbd11b4be1f799b14b3b2174fb506af289
 pillow==13.0.0 \
     --hash=sha256:42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca
 protobuf==7.36.2 \

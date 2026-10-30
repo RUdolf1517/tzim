@@ -1,17 +1,23 @@
 # PDF: the audit the contract has to pass
 
-Related: [guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement) · [formats](formats.md) ·
+Related: [guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) · [formats](formats.md) ·
 [dependencies](dependencies.md) · [size-budget](size-budget.md) · [roadmap](roadmap.md)
 
 This is stage 1 for PDF — the audit a contract is allowed to follow, the same rule the FLAC work followed
-([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--refused-after-measurement))
+([flac-audit](flac-audit.md)). The order matters: the contract ([§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in))
 says what an implementation would have to preserve; this document says what such an implementation could
 possibly win and what it would cost.
 
-**Status: not measured, therefore not decided.** No PDF code exists, `--list-formats` does not name the format,
-and `docs/formats.md` §5 still records PDF as refused. The refusal is not being withdrawn here; it is being put
-to a measurement, because §5 itself says a refusal is reopened by evidence and not by preference. §7 fixes the
-decision rule **before** the numbers exist, so that the numbers cannot be read as a verdict they do not support.
+**Historical status:** the 2,208-file audit and its §9 refusal remain unchanged historical evidence. The owner
+subsequently authorized a narrow, non-default #80 implementation, which is present in this unreleased branch.
+The earlier exact 21-output #57 run at SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` is preserved in §11.
+The corrected run at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` is retained in §12, and the subsequent
+exact-head rerun at `5967e318951f9c3945f0c256c3095b347483e234` is in §13. The original accepted-subset
+`faithful_pct` rule was applied and returned **refused after measurement** in both runs because the median was
+below 1%. The current-head #57 report publishes each accepted row's `faithful_pct` and raw formula inputs directly
+in the PR comment; that exact source SHA governs the document snapshot. This does not revoke the separate #80
+opt-in implementation decision, make PDF a release default, or authorize the forbidden repack comparator. The
+historical distributions and reports remain in §§11–13 and the [measurement status](measurement-status.md).
 
 Two things in this document are facts about the format and are checkable without a corpus: the structure in §1–§4
 and the refusal list in §6. The gain figures in §3 are **estimates from what produces PDFs**, not measurements,
@@ -111,7 +117,7 @@ worth more than anything the binary can do on its own — the same argument as i
 ## 6. Refusal list
 
 Every row below is a refusal with a reason, not a best-effort rewrite. This list is the spine of
-[§4.11](guarantees.md#411-pdf--refused-after-measurement); if a construct is not listed as accepted, it is
+[§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in); if a construct is not listed as accepted, it is
 refused.
 
 | Construct | Why refuse |
@@ -312,19 +318,106 @@ it is a rewrite with a different risk class. The audit's job was to find out whe
 without paying that price. It cannot.
 
 The refusal is recorded in [formats §5](formats.md#5-refused-formats) and
-[guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), which keeps the clause-by-clause
+[guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), which keeps the clause-by-clause
 contract: it is now a written answer to "what would it take", and the reason to keep it is the same
 reason FLAC's audit was kept.
 
-## 10. What happens to this work
+## 10. What happened to this work
 
-- **If the measurement refuses PDF**, the audit and §4.11 stay: they cost nothing, they are correct, and they
-  are where a future attempt starts. `docs/formats.md` §5 gains the numbers next to its sentence, and the queue
-  shortens by one entry that was decided rather than postponed.
-- **If it accepts**, the next step is an issue with the acceptance criteria of
-  [formats §4](formats.md#4-admission-criteria-for-a-new-format): contract, verification, detection, refusal
-  list, a synthetic PDF builder in `tests/common/mod.rs` modelled on `build_tiff`, the corpus run, the measured
-  size delta, and the `qpdf` oracle wired into CI.
+The two branches in the original stage-1 plan are historical. The owner later authorized the narrow #80 handler
+behind the non-default `pdf` feature, independently of #57. The fixed 21-output #57 sample has now been rerun at the corrected exact source SHA, and a further exact-head
+rerun is recorded in §13; the original accepted-subset `faithful_pct` rule still returns refusal because the
+median is below 1%. The corrected immutable report and permitted-qpdf/forbidden-repack distributions are in §§12–13;
+§11 preserves the earlier `7b82c9ed` result. This does not remove the separate opt-in #80 decision, enable
+PDF by default, or permit repacking. The older 2,208-file audit and thresholds remain unchanged.
 
-Either way, the answer to "can tzim touch PDF" becomes a number and a paragraph instead of an opinion — which is
-the only kind of refusal this project has ever been willing to keep.
+## 11. PR #84 follow-up — #57 fixed 21-output sample
+
+The historical 2,208-file audit and its §9 values are preserved above. The fixed real-toolchain sample was
+measured at exact source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, run
+[41038741167](https://github.com/RUdolf1517/tzim/actions/runs/41038741167); the frozen manifest SHA-256 is
+`8b4705e6b7ce450b97e01c247c29d7f032f245270a0e6ad9ccffea9f731dd903`. All 21 pre-registered outputs were
+retained: 18 accepted (85.71% of the frozen corpus), and 3 refused as `incremental_update`. Raw rows,
+`qpdf-and-tzim-tool-output.jsonl`, manifest and independent recomputation are in artifact `fixed-pdf-evidence`
+(ID `12970270169`, SHA-256 `209bd12a83b8c616928a3da837eceb00a06a3979b56246877c26e42d787e2c2b`). The report is
+[PR comment `6520274047`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520274047).
+
+### Pre-registered distributions and decision
+
+These are computed from the **same 18 accepted rows**. `faithful_pct` is the registered flate2-level-9 metric;
+the Tzim-only optimized-row median is reported separately below and is not used for the threshold.
+
+| Distribution | n | Median | Q1 (registered index) | Q3 (registered index) | Share > 0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Accepted-subset `faithful_pct` (flate2 level 9) | 18 | 0.00038990779980227345% | 0.0% | 0.19344060494152818% | 72.22% |
+| Permitted qpdf (`--object-streams=preserve`) | 18 | 0.00042536785618854157% | −0.9378938421407427% | 0.19284450979138698% | 66.67% |
+| **Forbidden** qpdf repack comparator (object streams generated) | 18 | 0.35566962243960054% | 0.03437523629623234% | 43.320392689225876% | 100.00% |
+
+The pre-registered rule admits only when median `faithful_pct` is at least 3% and at least 10% of the frozen
+corpus is accepted; a median below 1% refuses. Since the accepted-subset median is 0.00038990779980227345%,
+the threshold was **applied and returned refused after measurement**. This does not change the separately
+authorized #80 code, which remains behind the non-default `pdf` feature; no PDF baseline or threshold was
+changed, and the repack remains a diagnostic comparator, not an allowed transformation.
+
+### Tzim and soundness results (separate from the rule)
+
+Tzim optimized 12 of 21 rows and saved 3,565 bytes from 72,982,531 optimized-input bytes (0.004884730566551604%
+weighted). Its per-file optimized-row median gain was 0.07017961336301083%; neither is substituted for
+`faithful_pct`. All 21 source rows and all three incremental-update refusals remain in the report. There were
+zero qpdf candidate-check failures and zero registered MuPDF render differences. This section preserves the complete
+`7b82c9ed` run as its own immutable historical measurement; the corrected subsequent exact-SHA result is recorded
+separately in §12.
+
+## 12. PR #84 corrected exact-head #57 sample
+
+The fixed 21-output sample was rerun at exact source SHA `5721867ab1439814cead5645d4f443d8f8876c9c` in workflow
+[41047304719](https://github.com/RUdolf1517/tzim/actions/runs/41047304719); the frozen manifest SHA-256 is
+`d179ff1bb652fcf5c78b88eb59cf10686cd088369d55bfcead1a2c4e3b96d961`. All 21 pre-registered outputs were
+retained: 18 accepted and 3 refused as `incremental_update`. The raw rows, commands, source/output identities,
+qpdf checks, renders and independent recomputation are in artifact `fixed-pdf-evidence`; the report is
+[PR comment `6521481242`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521481242).
+
+The **same 18 accepted rows** feed the registered metric and both comparators. No Tzim-only gain substitutes for
+`faithful_pct`.
+
+| Distribution | n | Median | Q1 | Q3 | Share > 0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Accepted-subset `faithful_pct` (flate2 level 9) | 18 | 0.0003428000748065941% | 0.0% | 0.20546883358771292% | 72.22% |
+| Permitted qpdf (`--object-streams=preserve`) | 18 | 0.0003289122823834112% | −0.9587218833140738% | 0.2043518962486015% | 66.67% |
+| **Forbidden** qpdf repack comparator (object streams generated) | 18 | 0.3487681804689819% | 0.03305937990382424% | 44.06366320112951% | 100.00% |
+
+The original registered rule is unchanged: admission requires median `faithful_pct` ≥3% and at least 10% of the
+frozen corpus accepted; median below 1% refuses. The measured median is 0.0003428000748065941%, so the threshold
+was **applied and returned refused after measurement**. Tzim optimized 12/21 rows and saved 3,670 bytes from
+76,721,560 optimized-input bytes (0.004783531513175697% weighted); the optimized-row per-file median was
+0.07246214628159946%, and was not substituted for the registered metric. Qpdf candidate-check failures and
+registered render differences were both zero. This rerun does not alter #80's independent authorization, the
+non-default `pdf` feature, any baseline, or the forbidden status of repacking. Section §11 preserves the earlier
+exact `7b82c9ed` result; the a1 report remains in its immutable PR comment.
+
+## 13. PR #84 exact-head #57 rerun at `5967e31`
+
+The fixed 21-output sample reran at exact source SHA `5967e318951f9c3945f0c256c3095b347483e234` in workflow
+[41049496855](https://github.com/RUdolf1517/tzim/actions/runs/41049496855). Its frozen manifest SHA-256 is
+`a5ecf26b32bda38353f743e1cd450b7a7b44d3ccff2a35827858e4406092858c`. All 21 outputs were retained: 18 accepted
+and 3 refused as `incremental_update`. Raw rows, commands, source/output identities, renders, qpdf results and
+independent recomputation are in artifact `fixed-pdf-evidence` (ID `12973712842`, 198,867 bytes, SHA-256
+`1dc57c9ed62ee31f327b91feaefc9c63cd28738a43701d7a3f67a5db5c9d1ef6`); no generated PDF corpus bytes are in the
+artifact. The exact report is [PR comment `6521774706`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521774706).
+
+The registered metric and both comparators use the **same 18 accepted rows**. `faithful_pct` remains the
+pre-registered flate2-level-9 metric, not the Tzim optimized-row gain.
+
+| Distribution | n | Median | Q1 | Q3 | Share > 0 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Accepted-subset `faithful_pct` | 18 | 0.00034127460376596526% | 0.0% | 0.20532715969914445% | 72.22% |
+| Permitted qpdf (`--object-streams=preserve`) | 18 | 0.00031738124802770226% | −0.9369760331393628% | 0.19488249112494602% | 66.67% |
+| **Forbidden** qpdf repack comparator | 18 | 0.29515964267860634% | 0.033062028207528904% | 44.10705775399784% | 100.00% |
+
+The original registered rule is unchanged: admission requires median `faithful_pct` ≥3% and at least 10% of the
+frozen corpus accepted; median below 1% refuses. The measured median was 0.00034127460376596526%, so the threshold
+was **applied and returned refused after measurement**. Tzim optimized 12/21 rows and saved 3,723 bytes from
+76,993,480 optimized-input bytes (0.004835474380428057% weighted); its optimized-row median was 0.07132130674592069%
+and mean 0.09019490508048468%, neither a substitute for the registered metric. Qpdf candidate-check failures and
+registered render differences were both zero. No PDF baseline, threshold, #80 authorization, default or repack
+policy changed.

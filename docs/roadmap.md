@@ -113,7 +113,7 @@ ZIP entries with a depth limit, and a child failure can never fail the parent. 9
 
 **Estimate:** 4–6 days. **Risk:** medium.
 
-### v0.4 — JPEG (opt-in) — **implemented**
+### v0.4 — JPEG (opt-in at the time) — **implemented**
 
 **What shipped**
 
@@ -207,7 +207,7 @@ Nothing here changes a byte of output:
   `--no-progress`, `NO_COLOR`, `CLICOLOR` and `CLICOLOR_FORCE` honoured ([cli §10](cli.md#10-colour-and-progress));
 - clustered short flags (`-rq`) and attached values (`-j4`), a usage line on usage errors, and a closed
   stdout pipe that exits quietly instead of aborting ([cli §11](cli.md#11-conformance-with-cli-conventions));
-- the FLAC **contract**, written and not implemented: [guarantees §4.9](guarantees.md#49-flac--refused-after-measurement)
+- the FLAC **contract**: [guarantees §4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in); the opt-in handler is an unreleased #84 follow-up
   and the [audit](flac-audit.md) behind it.
 
 ### v0.9 — zlib, and the end of the format queue — **implemented**
@@ -296,18 +296,14 @@ The six issues 0.12 opened against itself, and the first release since v0.1 that
   [dependencies §2.9](dependencies.md#29-indicatif--added-in-v010-removed-in-v013)).
 - **A JPEG decoder nobody here wrote** (#39): `jpeg-decoder` verifies both sides of an accepted candidate,
   which closes the symmetric-codec hole [guarantees §2.6](guarantees.md#26-verification-independence) had been
-  describing since v0.4. Approved on one condition — the binary must not grow past 1 049 440 bytes — and the
-  measurement said **+118 784 bytes**, more than the 96 KiB the progress line gave back. The condition was
-  kept and the decoder is not in the shipped default: `jpeg-v1` exists, CI tests it on every run, and one
-  flag turns it on ([size-budget §3](size-budget.md#3-feature-matrix)).
-  **The decision was taken with the number in hand, not by default.** Turning it on was within reach:
-  building that one dependency at `opt-level = "s"` measures 1 082 208 bytes — 32 768 over the 1 049 440
-  limit, and still 97 KiB *under* the v0.12.1 binary. It was declined for two reasons, and both are arguments
-  about this project rather than about bytes. JPEG is the one handler that is also off at run time, behind
-  `--formats jpeg`, so 102 KiB would be carried by every user for a format most of them never enable; and
-  the price would be moving the `size` gate off the zero-tolerance number it was just tightened to, which is
-  how v0.12.1's green-but-meaningless gate happened. A build that wants the second opinion has one flag; a
-  user who does not pays nothing for it.
+  describing since v0.4. At the v0.13 decision, the condition was that the binary not grow past 1 049 440
+  bytes; the ordinary-profile measurement was **+118 784 bytes**, more than the 96 KiB the progress line gave
+  back. The v0.13 release therefore kept the condition: `jpeg-v1` existed and CI tested it, but it was not in
+  that release's default, and JPEG remained opt-in behind `--formats jpeg`.
+  **This paragraph records the v0.13 decision, not the current policy.** The dependency-specific `opt-level =
+  "s"` build measured 1 082 208 bytes, 32 768 over the then-current 1 049 440-byte limit; the owner later
+  explicitly superseded that old size condition in #82. The v0.13 rationale and measurements remain history,
+  while the unreleased #82 status below records the authorized default and its unchanged new ceiling.
 - **The check that lives in CI** (#54): Pillow, stdlib `zlib` and `zipfile` compare every accepted candidate
   with its original, at the strongest level each offers, and a self-test mutates one candidate per run to
   prove the gate can fail ([testing §3](testing.md#the-third-party-decoder-job)). It found a defect on its
@@ -332,23 +328,43 @@ The tag is cut from `main` only after each test fails before its fix and passes 
   the current differences, unavailable Zopfli cells and supplemental samples remain disclosed. This release
   does not claim full FITS or PDF admission.
 
-### v0.14+ — the queue after this
+### v0.15 — baseline JPEG and evidence-bounded opt-in formats
 
-The v0.14 implementation queue is complete. Full-format admission and other examined candidates remain separate
-follow-ups rather than reasons to smuggle another format into this release:
+The #84 implementation and reviewed measurements form the v0.15.0 release scope. The #57/#59/#79 results below
+are bound to reviewed source SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`; they are not test or full/bundle
+evidence for the later release-candidate SHA. Final release-gate evidence must be read from the exact-SHA bundle.
 
-| Candidate | State | Why |
+| Issue | v0.15.0 scope / disposition | Evidence and limits |
 | --- | --- | --- |
-| FLAC | refused, measured | 0.4 % for a quarter of the binary |
-| WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
-| FITS full-admission follow-up | open, outside the v0.14.0 opt-in release | The v0.14.0 handler is behind `--fits-tile` and the non-default `fits` feature. Historical audit figures are not release/performance evidence; current differences and the supplemental survey sample remain open for full admission. Candidate-specific HEASARC evidence and limitations are tracked in [measurement status](measurement-status.md) |
-| DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| PDF | refused after measurement | the permitted slice covers 45.7 % of a 2 208-file corpus and saves a median 0.08 %; repacking would save 20.1 % and is forbidden ([guarantees §4.11](guarantees.md#411-pdf--refused-after-measurement), [pdf-audit §9](pdf-audit.md#9-the-measurement-method-corpus-and-the-rule-that-is-fixed-in-advance)) |
-| WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
-| raw DEFLATE | refused | no signature: recognition would be a guess |
+| #82 — default JPEG V1 | Eligible baseline sequential JPEG is in the release default with independent pixel verification; `--formats` narrows the allowlist and is not a JPEG opt-in | The fixed stripped-musl ceiling remains **1,082,208 bytes**. Exact-head size/performance reports are source-SHA-specific; do not carry them to another SHA. Progressive JPEG is not supported or claimed. |
+| #79 — FLAC re-encoding | Implemented behind the non-default `flac` feature | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, 23 of the fixed 43 rows were optimized; all 23 passed `flac --test`, `metaflac`, exact PCM and STREAMINFO-MD5 checks; 744,570 bytes saved. This sample is not full format admission. See [FLAC audit](flac-audit.md) and [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524900373). |
+| #80 — narrow PDF FlateDecode | Implemented behind the non-default `pdf` feature, separately authorized from #57 | Preserves existing `/ObjStm` bytes; repacking remains forbidden. It does not change #57's refusal and is not full PDF admission. |
+| #83 — FITS confirmation | A direct single-file TTY `--fits-tile` run verifies a staged candidate before default-No confirmation; only Yes installs it | Noninteractive, JSON, batch, nested and dry-run paths do not prompt; the flag remains explicit consent there. |
+| #57 — PDF measurement | Original pre-registered threshold applied; **refused after measurement** | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, all 21 outputs were retained; 18 were accepted for the measured subset and three were refused as `incremental_update`. Accepted-subset `faithful_pct` median was 0.00034122090736326286% (Q1 0%, Q3 0.205778828129944%; 72.22% positive), below the 1% refusal bar. See [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6525030959) and [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31). This is not an admission result. |
+| #59 — FITS measurement | Corrected reader mode; threshold **not applied** | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, reference-candidate acceptance was 0/14; Tzim strict preservation passed 14/14. Cards-through-actual-END equality was 0/20, storage-payload mismatches 0, with 94 changed, 66 dropped and 12 inserted cards. Four independent TESS `fitsverify -l` checksum warnings remain blockers. No green reference-candidate claim is made; see [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524986515) and [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol). |
+| #78 — full-scope HEASARC evidence | Exact final-SHA full-scope run with bundle is a release gate | Its requested and checked-out identities and raw per-file evidence must be reviewed from that release candidate's run. Passing a fixed sample or this gate does not establish full FITS admission. |
 
-A new format is admitted only by [formats §4](formats.md#4-admission-criteria-for-a-new-format), and the
-first question it now asks is not "can it be verified" but "is there anything left to win".
+### Separate follow-ups and measurement limits
+
+The v0.15.0 format implementations remain bounded subsets, not full-format admissions or universal stability claims.
+FITS stays out of the default feature set and requires both `--features fits` and `--fits-tile`; FLAC and PDF stay
+separate non-default opt-in features. Baseline JPEG is the supported sequential subset only; progressive JPEG is
+not claimed.
+
+| Candidate | State | Why / remaining boundary |
+| --- | --- | --- |
+| FLAC | Non-default opt-in #79 implementation; broader admission remains open | The fixed 43-row sample at reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60` optimized 23 rows and saved 744,570 bytes; all 23 passed external tools, PCM comparison and STREAMINFO-MD5. Sample evidence only; see [measurement status](measurement-status.md). |
+| WOFF2 | Refused | Brotli re-encoding cannot be verified without the encoder itself. |
+| FITS full-admission follow-up | Open; outside the v0.15.0 opt-in release | The handler remains behind the non-default `fits` feature and `--fits-tile`. The a1 default-checksum `funpack` result is superseded as an instrument outcome, not evidence of 14 content failures. The corrected #59 path uses `funpack -C` and an external integer-only positive control through the same literal-header/storage-array comparison; structured mismatches are retained. Four TESS checksum warnings keep the threshold not applied. Do not repair inputs or claim acceptance from the Tier-2 median. See [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol); §11 preserves the historical report. |
+| DICOM | Audited, under measurement | The 5,189-entry dictionary is needed by one of three tiers. The cheap tier recompresses a dataset already using raw DEFLATE (no checksum); the thresholds are fixed in advance in [DICOM audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance). |
+| PDF | Non-default #80 implementation; #57 fixed sample refused under its original rule | The historical 2,208-file audit is unchanged. The exact 21-output #57 result is a refusal; #80 remains separate, opt-in and does not repack ([guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31)). |
+| WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | Refused | [formats §5](formats.md#5-refused-formats). |
+| Raw DEFLATE | Refused | No signature: recognition would be a guess. |
+
+The separate `measure-repro` comparison remains a disclosed failure: published and measured corpus/PDF figures differ,
+and five historical per-file Zopfli rows are unavailable. No baseline or threshold is changed to manufacture a green
+result; exact current release-candidate outcomes are retained in the raw evidence bundle. The release makes no
+full-format admission or universal-stability claims.
 
 ---
 
