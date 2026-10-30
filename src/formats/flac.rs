@@ -163,6 +163,16 @@ fn parse(data: &[u8]) -> Result<FlacFile> {
         if kind == 0 && (!blocks.is_empty() || len != STREAMINFO_BYTES) {
             return Err(refusal("duplicate or malformed STREAMINFO block"));
         }
+        if kind == 2 {
+            if len < 4 {
+                return Err(refusal("application block length must be at least 4 bytes"));
+            }
+            if len > 10 * 1024 * 1024 {
+                return Err(refusal(
+                    "application blocks larger than 10 MiB are not supported",
+                ));
+            }
+        }
         if kind == 3 {
             if seektable_index.replace(blocks.len()).is_some() {
                 return Err(refusal("more than one SEEKTABLE block"));
@@ -170,6 +180,9 @@ fn parse(data: &[u8]) -> Result<FlacFile> {
             if !len.is_multiple_of(18) {
                 return Err(refusal("SEEKTABLE length is not a multiple of 18 bytes"));
             }
+        }
+        if kind == 4 {
+            validate_vorbis_comment(&data[block.data_range()])?;
         }
         blocks.push(block);
         pos = end;
@@ -185,6 +198,80 @@ fn parse(data: &[u8]) -> Result<FlacFile> {
         frame_start: pos,
         seektable_index,
     })
+}
+
+fn validate_vorbis_comment(data: &[u8]) -> Result<()> {
+    if data.len() < 8 {
+        return Err(refusal("Vorbis comment block is too short"));
+    }
+
+    let vendor_len = u32::from_le_bytes(data[..4].try_into().unwrap()) as usize;
+    let vendor_end = 4usize
+        .checked_add(vendor_len)
+        .filter(|&end| end <= data.len().saturating_sub(4))
+        .ok_or_else(|| refusal("Vorbis comment vendor string is too long"))?;
+    std::str::from_utf8(&data[4..vendor_end])
+        .map_err(|_| refusal("Vorbis comment vendor string is not valid UTF-8"))?;
+
+    let count_end = vendor_end + 4;
+    let mut comments_left =
+        usize::try_from(u32::from_le_bytes(data[vendor_end..count_end].try_into().unwrap()))
+            .map_err(|_| refusal("Vorbis comment count does not fit this platform"))?;
+    if comments_left >= data.len() / 4 {
+        return Err(refusal("too many entries for Vorbis comment block"));
+    }
+
+    let mut offset = count_end;
+    let mut bytes_left = data.len() - 8 - vendor_len;
+    let mut comments_seen = 0usize;
+    while bytes_left >= 4 && comments_seen < comments_left {
+        let length_end = offset + 4;
+        let comment_len =
+            usize::try_from(u32::from_le_bytes(data[offset..length_end].try_into().unwrap()))
+                .map_err(|_| refusal("Vorbis comment length does not fit this platform"))?;
+        offset = length_end;
+        bytes_left -= 4;
+        if comment_len > bytes_left {
+            return Err(refusal("Vorbis comment is too long for its metadata block"));
+        }
+        let comment_end = offset + comment_len;
+        let comment = &data[offset..comment_end];
+        bytes_left -= comment_len;
+        offset = comment_end;
+
+        // Match libFLAC/Claxon compatibility: older reference encoders emitted
+        // zero-length comments, which Claxon tolerates while adjusting the
+        // declared comment count.
+        if comment_len == 0 {
+            comments_left -= 1;
+            continue;
+        }
+        let separator = comment
+            .iter()
+            .position(|&byte| byte == b'=')
+            .ok_or_else(|| refusal("Vorbis comment does not contain '='"))?;
+        if comment[..separator]
+            .iter()
+            .any(|&byte| !(0x20..=0x7d).contains(&byte))
+        {
+            return Err(refusal(
+                "Vorbis comment field name contains an invalid byte",
+            ));
+        }
+        std::str::from_utf8(comment)
+            .map_err(|_| refusal("Vorbis comment entry is not valid UTF-8"))?;
+        comments_seen += 1;
+    }
+
+    if bytes_left != 0 {
+        return Err(refusal("Vorbis comment block has excess data"));
+    }
+    if comments_seen != comments_left {
+        return Err(refusal(
+            "Vorbis comment block contains the wrong number of entries",
+        ));
+    }
+    Ok(())
 }
 
 fn streaminfo_md5(data: &[u8], file: &FlacFile) -> Result<[u8; 16]> {
@@ -208,9 +295,70 @@ fn write_metadata_header<W: Write>(out: &mut W, kind: u8, last: bool, len: usize
 }
 
 fn decode_info(data: &[u8]) -> Result<claxon::metadata::StreamInfo> {
-    let reader = claxon::FlacReader::new(Cursor::new(data))
-        .map_err(|error| refusal(format!("independent decoder rejected input: {error}")))?;
-    let info = reader.streaminfo();
+    let file = parse(data)?;
+    decode_streaminfo(data, &file)
+}
+
+fn decode_streaminfo(
+    data: &[u8],
+    file: &FlacFile,
+) -> Result<claxon::metadata::StreamInfo> {
+    let block = file
+        .blocks
+        .first()
+        .ok_or_else(|| refusal("STREAMINFO is missing"))?;
+    let bytes = data
+        .get(block.data_range())
+        .filter(|bytes| bytes.len() == STREAMINFO_BYTES)
+        .ok_or_else(|| refusal("STREAMINFO is malformed"))?;
+    let min_block_size = u16::from_be_bytes(bytes[0..2].try_into().unwrap());
+    let max_block_size = u16::from_be_bytes(bytes[2..4].try_into().unwrap());
+    let min_frame_size =
+        (u32::from(bytes[4]) << 16) | (u32::from(bytes[5]) << 8) | u32::from(bytes[6]);
+    let max_frame_size =
+        (u32::from(bytes[7]) << 16) | (u32::from(bytes[8]) << 8) | u32::from(bytes[9]);
+    let packed = u64::from_be_bytes(bytes[10..18].try_into().unwrap());
+    let sample_rate = ((packed >> 44) & 0x000f_ffff) as u32;
+    let channels = (((packed >> 41) & 0x7) + 1) as u32;
+    let bits_per_sample = (((packed >> 36) & 0x1f) + 1) as u32;
+    let total_samples = packed & ((1u64 << 36) - 1);
+    let mut md5sum = [0u8; 16];
+    md5sum.copy_from_slice(&bytes[18..34]);
+
+    // Apply Claxon's STREAMINFO checks without asking it to materialize every
+    // metadata block. In particular, valid large Vorbis comments must not be
+    // refused solely because Claxon caps its own comment parser at 10 MiB.
+    if min_block_size > max_block_size {
+        return Err(refusal(
+            "independent decoder rejected input: inconsistent STREAMINFO block-size bounds",
+        ));
+    }
+    if min_block_size < 16 {
+        return Err(refusal(
+            "independent decoder rejected input: invalid STREAMINFO block size, must be at least 16",
+        ));
+    }
+    if min_frame_size > max_frame_size && max_frame_size != 0 {
+        return Err(refusal(
+            "independent decoder rejected input: inconsistent STREAMINFO frame-size bounds",
+        ));
+    }
+    if sample_rate == 0 || sample_rate > 655_350 {
+        return Err(refusal(
+            "independent decoder rejected input: invalid STREAMINFO sample rate",
+        ));
+    }
+    let info = claxon::metadata::StreamInfo {
+        min_block_size,
+        max_block_size,
+        min_frame_size: (min_frame_size != 0).then_some(min_frame_size),
+        max_frame_size: (max_frame_size != 0).then_some(max_frame_size),
+        sample_rate,
+        channels,
+        bits_per_sample,
+        samples: (total_samples != 0).then_some(total_samples),
+        md5sum,
+    };
     if info.samples.unwrap_or(0) == 0 {
         return Err(refusal(
             "STREAMINFO does not give a non-zero total sample count",
@@ -655,6 +803,13 @@ fn encode_frames(
         return Ok(None);
     }
     stream_info.set_total_samples(source.total_samples);
+    // Fixed-block streams report the nominal block size in STREAMINFO even
+    // when their terminal frame is shorter. flacenc includes that final frame
+    // in its observed minimum, which can produce STREAMINFO below FLAC's
+    // required 16-sample lower bound for a very short tail.
+    stream_info
+        .set_block_sizes(block_size, block_size)
+        .map_err(|error| refusal(format!("flacenc STREAMINFO block sizes failed: {error:?}")))?;
     // Preserve a recorded input MD5 exactly. An all-zero STREAMINFO field is
     // the format's legal "not computed" sentinel, so write the independently
     // computed PCM MD5 into the candidate rather than perpetuating an
@@ -941,74 +1096,150 @@ fn seektable_valid(data: &[u8], file: &FlacFile, total: u64, max_block_size: u16
     Ok(())
 }
 
-fn compare_pcm(original: &[u8], candidate: &[u8]) -> Result<()> {
-    let mut left = claxon::FlacReader::new(Cursor::new(original)).map_err(|error| {
-        Error::verify(format!("original FLAC is unreadable by Claxon: {error}"))
-    })?;
-    let mut right = claxon::FlacReader::new(Cursor::new(candidate)).map_err(|error| {
-        Error::verify(format!("candidate FLAC is unreadable by Claxon: {error}"))
-    })?;
-    let a = left.streaminfo();
-    let b = right.streaminfo();
-    if a.channels != b.channels
-        || a.sample_rate != b.sample_rate
-        || a.bits_per_sample != b.bits_per_sample
-        || a.samples != b.samples
+fn next_pcm_frame(
+    cursor: &mut Cursor<&[u8]>,
+    reuse: Vec<i32>,
+    sequence: &mut FrameSequence,
+    info: claxon::metadata::StreamInfo,
+    side: &str,
+) -> Result<Option<DecodedFrame>> {
+    let frame = read_decoded_frame(cursor, reuse)
+        .map_err(|error| Error::verify(format!("Claxon could not decode {side} FLAC: {error}")))?;
+    if let Some(frame) = frame {
+        sequence.observe(
+            &frame,
+            info.channels as usize,
+            info.min_block_size,
+            info.max_block_size,
+        )
+        .map_err(|error| Error::verify(format!("{side} FLAC frame sequence: {error}")))?;
+        Ok(Some(frame))
+    } else {
+        sequence
+            .finish(info.samples.unwrap_or(0))
+            .map_err(|error| Error::verify(format!("{side} FLAC frame sequence: {error}")))?;
+        Ok(None)
+    }
+}
+
+fn compare_pcm(
+    original: &[u8],
+    original_file: &FlacFile,
+    original_info: claxon::metadata::StreamInfo,
+    candidate: &[u8],
+    candidate_file: &FlacFile,
+    candidate_info: claxon::metadata::StreamInfo,
+) -> Result<()> {
+    if original_info.channels != candidate_info.channels
+        || original_info.sample_rate != candidate_info.sample_rate
+        || original_info.bits_per_sample != candidate_info.bits_per_sample
+        || original_info.samples != candidate_info.samples
     {
         return Err(Error::verify(
             "FLAC sample format or total sample count changed",
         ));
     }
-    let expected = a
+    let expected = original_info
         .samples
         .ok_or_else(|| Error::verify("FLAC total samples are unknown"))?;
+    let left_audio = original
+        .get(original_file.frame_start..)
+        .ok_or_else(|| Error::verify("original FLAC audio starts outside the input"))?;
+    let right_audio = candidate
+        .get(candidate_file.frame_start..)
+        .ok_or_else(|| Error::verify("candidate FLAC audio starts outside the input"))?;
+    let mut left_cursor = Cursor::new(left_audio);
+    let mut right_cursor = Cursor::new(right_audio);
+    let mut left_sequence = FrameSequence::default();
+    let mut right_sequence = FrameSequence::default();
+    let mut left_current = None;
+    let mut right_current = None;
+    let mut left_pos = 0u32;
+    let mut right_pos = 0u32;
+    let mut left_reuse = Vec::new();
+    let mut right_reuse = Vec::new();
+    let channels = original_info.channels as usize;
+    let bytes_per_sample = (original_info.bits_per_sample as usize).div_ceil(8);
     let mut digest = Md5::new();
-    let bytes_per_sample = (a.bits_per_sample as usize).div_ceil(8);
     let mut samples_seen = 0u64;
-    let mut left_samples = left.samples();
-    let mut right_samples = right.samples();
+
     loop {
-        match (left_samples.next(), right_samples.next()) {
+        if left_current
+            .as_ref()
+            .is_none_or(|frame: &DecodedFrame| left_pos >= frame.block.duration())
+        {
+            if let Some(frame) = left_current.take() {
+                left_reuse = frame.block.into_buffer();
+            }
+            left_pos = 0;
+            left_current = next_pcm_frame(
+                &mut left_cursor,
+                std::mem::take(&mut left_reuse),
+                &mut left_sequence,
+                original_info,
+                "original",
+            )?;
+        }
+        if right_current
+            .as_ref()
+            .is_none_or(|frame: &DecodedFrame| right_pos >= frame.block.duration())
+        {
+            if let Some(frame) = right_current.take() {
+                right_reuse = frame.block.into_buffer();
+            }
+            right_pos = 0;
+            right_current = next_pcm_frame(
+                &mut right_cursor,
+                std::mem::take(&mut right_reuse),
+                &mut right_sequence,
+                candidate_info,
+                "candidate",
+            )?;
+        }
+
+        match (&left_current, &right_current) {
             (None, None) => break,
-            (Some(Ok(x)), Some(Ok(y))) if x == y => {
-                digest.update(&x.to_le_bytes()[..bytes_per_sample]);
-                samples_seen = samples_seen.saturating_add(1);
+            (None, Some(_)) | (Some(_), None) => {
+                return Err(Error::verify("FLAC decoded sample counts differ"));
             }
-            (Some(Ok(_)), Some(Ok(_))) => {
-                return Err(Error::verify(
-                    "independent Claxon PCM comparison found a changed sample",
-                ));
+            (Some(left), Some(right)) => {
+                let left_available = left.block.duration() - left_pos;
+                let right_available = right.block.duration() - right_pos;
+                let take = left_available.min(right_available);
+                for offset in 0..take {
+                    for channel in 0..channels as u32 {
+                        let x = left.block.sample(channel, left_pos + offset);
+                        let y = right.block.sample(channel, right_pos + offset);
+                        if x != y {
+                            return Err(Error::verify(
+                                "independent Claxon PCM comparison found a changed sample",
+                            ));
+                        }
+                        digest.update(&x.to_le_bytes()[..bytes_per_sample]);
+                    }
+                }
+                left_pos += take;
+                right_pos += take;
+                samples_seen = samples_seen
+                    .checked_add(u64::from(take))
+                    .ok_or_else(|| Error::verify("FLAC decoded sample count overflows"))?;
             }
-            (Some(Err(error)), _) => {
-                return Err(Error::verify(format!(
-                    "Claxon could not decode original FLAC: {error}"
-                )));
-            }
-            (_, Some(Err(error))) => {
-                return Err(Error::verify(format!(
-                    "Claxon could not decode candidate FLAC: {error}"
-                )));
-            }
-            _ => return Err(Error::verify("FLAC decoded sample counts differ")),
         }
     }
-    if samples_seen != expected.saturating_mul(u64::from(a.channels)) {
+
+    if samples_seen != expected {
         return Err(Error::verify(
             "FLAC decoded sample count disagrees with STREAMINFO",
         ));
     }
     let actual: [u8; 16] = digest.finalize().into();
-    let stored = streaminfo_md5(
-        original,
-        &parse(original).map_err(|error| Error::verify(error.to_string()))?,
-    )?;
+    let stored = streaminfo_md5(original, original_file)?;
     if stored != [0u8; 16] && stored != actual {
         return Err(Error::verify(
             "original FLAC STREAMINFO MD5 disagrees with decoded PCM",
         ));
     }
-    let candidate_file = parse(candidate).map_err(|error| Error::verify(error.to_string()))?;
-    let candidate_md5 = streaminfo_md5(candidate, &candidate_file)?;
+    let candidate_md5 = streaminfo_md5(candidate, candidate_file)?;
     if candidate_md5 != actual {
         return Err(Error::verify(
             "candidate FLAC STREAMINFO MD5 disagrees with decoded PCM",
@@ -1078,7 +1309,7 @@ fn removable_metadata(kind: u8) -> bool {
 
 fn rewrite(input: &[u8], strip_metadata: bool) -> Result<Option<RewrittenFlac>> {
     let file = parse(input)?;
-    let info = decode_info(input)?;
+    let info = decode_streaminfo(input, &file)?;
     let total = info.samples.unwrap_or(0);
     validate_frame_sequence(input, file.frame_start, info)
         .map_err(|error| refusal(format!("invalid input frame sequence: {error}")))?;
@@ -1170,10 +1401,10 @@ pub fn verify(original: &[u8], candidate: &[u8], options: &Options) -> Result<()
     }
     let left = parse(original).map_err(|error| Error::verify(format!("original: {error}")))?;
     let right = parse(candidate).map_err(|error| Error::verify(format!("candidate: {error}")))?;
-    let left_info =
-        decode_info(original).map_err(|error| Error::verify(format!("original: {error}")))?;
-    let right_info =
-        decode_info(candidate).map_err(|error| Error::verify(format!("candidate: {error}")))?;
+    let left_info = decode_streaminfo(original, &left)
+        .map_err(|error| Error::verify(format!("original: {error}")))?;
+    let right_info = decode_streaminfo(candidate, &right)
+        .map_err(|error| Error::verify(format!("candidate: {error}")))?;
     if left_info.channels != right_info.channels
         || left_info.sample_rate != right_info.sample_rate
         || left_info.bits_per_sample != right_info.bits_per_sample
@@ -1202,7 +1433,14 @@ pub fn verify(original: &[u8], candidate: &[u8], options: &Options) -> Result<()
         right_info.samples.unwrap_or(0),
         right_info.max_block_size,
     )?;
-    compare_pcm(original, candidate)?;
+    compare_pcm(
+        original,
+        &left,
+        left_info,
+        candidate,
+        &right,
+        right_info,
+    )?;
     Ok(())
 }
 
@@ -1287,6 +1525,30 @@ mod tests {
             allow: crate::formats::Allow::default(),
             fits_tile: false,
         }
+    }
+
+    fn large_vorbis_comment_block() -> Vec<u8> {
+        let field_len = 10 * 1024 * 1024 + 128;
+        let field_name = b"COMMENT=";
+        let mut block = Vec::with_capacity(13 + field_len);
+        block.extend_from_slice(&1u32.to_le_bytes());
+        block.push(b'v');
+        block.extend_from_slice(&1u32.to_le_bytes());
+        block.extend_from_slice(&(field_len as u32).to_le_bytes());
+        block.extend_from_slice(field_name);
+        block.resize(13 + field_len, b'x');
+        block
+    }
+
+    fn add_vorbis_comment(input: &[u8], comment: &[u8]) -> Vec<u8> {
+        let file = parse(input).unwrap();
+        let mut output = input[..file.frame_start].to_vec();
+        let last_header = file.blocks.last().unwrap().data_start - METADATA_HEADER_BYTES;
+        output[last_header] &= 0x7f;
+        write_metadata_header(&mut output, 4, true, comment.len()).unwrap();
+        output.extend_from_slice(comment);
+        output.extend_from_slice(&input[file.frame_start..]);
+        output
     }
 
     fn frame_spans(input: &[u8]) -> Vec<(usize, usize)> {
@@ -1419,7 +1681,47 @@ mod tests {
             optimize(&input, &mut candidate, &options).unwrap(),
             Cand::Written(_)
         ));
+        let candidate_info = decode_info(&candidate).unwrap();
+        let nominal_output_block_size =
+            flacenc::config::Encoder::default().block_size as u16;
+        assert_eq!(candidate_info.min_block_size, nominal_output_block_size);
+        assert_eq!(candidate_info.max_block_size, nominal_output_block_size);
         verify(&input, &candidate, &options).unwrap();
+    }
+
+    #[test]
+    fn large_vorbis_comment_is_validated_and_pcm_verified_without_claxon_limit() {
+        let base = sample_flac_with_samples(8192, 2048, false, true);
+        let comment = large_vorbis_comment_block();
+        assert!(comment.len() > 10 * 1024 * 1024);
+        let input = add_vorbis_comment(&base, &comment);
+        let file = parse(&input).unwrap();
+        let info = decode_streaminfo(&input, &file).unwrap();
+        validate_frame_sequence(&input, file.frame_start, info).unwrap();
+
+        let options = Options {
+            strip_metadata: true,
+            ..test_options()
+        };
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&input, &mut candidate, &options).unwrap(),
+            Cand::Written(_)
+        ));
+        verify(&input, &candidate, &options).unwrap();
+        let candidate_file = parse(&candidate).unwrap();
+        assert!(!candidate_file.blocks.iter().any(|block| block.kind == 4));
+    }
+
+    #[test]
+    fn malformed_vorbis_comment_entries_are_rejected() {
+        let mut comment = Vec::new();
+        comment.extend_from_slice(&1u32.to_le_bytes());
+        comment.push(b'v');
+        comment.extend_from_slice(&1u32.to_le_bytes());
+        comment.extend_from_slice(&5u32.to_le_bytes());
+        comment.extend_from_slice(b"bad!!");
+        assert!(validate_vorbis_comment(&comment).is_err());
     }
 
     #[test]
