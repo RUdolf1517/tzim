@@ -95,10 +95,7 @@ fn capabilities_is_one_versioned_read_only_json_record() {
     #[cfg(feature = "jpeg")]
     assert!(lines[0].contains("\"jpeg\",\"available\":true"), "{stdout}");
     #[cfg(not(feature = "jpeg"))]
-    assert!(
-        !lines[0].contains("\"format\":\"jpeg\""),
-        "{stdout}"
-    );
+    assert!(!lines[0].contains("\"format\":\"jpeg\""), "{stdout}");
 
     #[cfg(feature = "jpeg-v1")]
     assert!(lines[0].contains("\"default_enabled\":true"), "{stdout}");
