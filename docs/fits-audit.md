@@ -522,3 +522,49 @@ boundary was preserved.
 The earlier owner-decision request based on the default-checksum comparison is withdrawn; no owner protocol
 choice is pending. The corrected threshold remains `not_applied` because required candidate gates fail, including
 the four independent TESS checksum warnings. #70/full FITS admission remains separate.
+
+## 13. Corrected #59 exact-head rerun at `5967e31`
+
+The same owner-fixed 14-product survey was rerun at exact source SHA
+`5967e318951f9c3945f0c256c3095b347483e234` in workflow
+[41049496855](https://github.com/RUdolf1517/tzim/actions/runs/41049496855). Frozen 14-product source-manifest
+SHA-256: `e96d7c913754a4c1931d307110509a49f78c909685b63cf8ce92875c18bf02de`. All sources downloaded and measured;
+source byte counts and hashes match §12. No input was repaired, substituted or selected by gain. The positive
+control again **passed** through pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → the same
+literal-header/storage-array comparator on an integer-only fixture; no `fpack` float-array oracle was used.
+
+Tier 2 Astropy candidates remained n=14, median gain 30.42168674698795%, Q1 29.518072289156628%, Q3
+64.63408680369086%, share-positive 100%; Tier 1 remained empty. The 14 reference round trips again had 20
+`header_only` HDU mismatches, 2,412 differing header cards, zero payload-mismatch HDUs and zero HDU-count
+mismatches. The `fitsverify -l` statuses were 4 failed TESS candidates with new checksum warnings, 4 GALEX
+passes with inherited warnings, and 6 clean ROSAT passes. Therefore 0/14 candidates passed and the registered
+threshold remains **not applied**. Tzim separately skipped all 14 rows unchanged; direct source-to-unchanged-Tzim
+comparisons passed 14/14. These results do not change the ROSAT permission boundary.
+
+The reference candidate bytes and SHA-256 values are this run's exact identities. The 5721867 run's table in §12
+is retained as a separate historical measurement.
+
+| Fixed product ID | Candidate bytes / SHA-256 | `fitsverify -l` | `funpack -C` exact header / payload |
+| --- | --- | --- | --- |
+| `tess-s1-c1-ccd1-calibrated` | 26,242,560 / `efe2eaecd77cdf3f73bf066c917be624fe1f3ec6de5497b0ff96650d007c5611` | FAIL, exit 1; new checksum warning | header-only, 3 HDUs |
+| `tess-s1-c1-ccd1-uncalibrated` | 8,280,000 / `f2a99dba1ce622331a19aaa9348cf9bd545b85aa45b31aeb480e8e167ca49d04` | FAIL, exit 1; new checksum warning | header-only, 2 HDUs |
+| `tess-s1-c4-ccd2-calibrated` | 27,089,280 / `756c269e37c448e9743c0fdd6d04f10b92e5a174b87b0554569591b3e1351c04` | FAIL, exit 1; new checksum warning | header-only, 3 HDUs |
+| `tess-s1-c4-ccd2-uncalibrated` | 9,192,960 / `1170e597102aa91c1430588836320670b7677f208b72208967f4505f1dadc82e` | FAIL, exit 1; new checksum warning | header-only, 2 HDUs |
+| `galex-tile-01-MISDR1_18916_0459-fd-int` | 15,693,120 / `0dafc17fcbd2a6cc02624e27416315548225977d1d76720a5b08557afc6e185a` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-02-MISDR1_18916_0459-nd-int` | 20,862,720 / `f105be77751c0087f7364906b58b1e9159e68718766ca3e5facd3ed7e58fc93e` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-03-MISWZS03_18917_0284-fd-int` | 6,825,600 / `5e724ec6eb495d06c057fdf2069b1179d25ca620fb7940f409afa0f4b3a76f88` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `galex-tile-04-MISWZS03_18917_0284-nd-int` | 15,782,400 / `c607788d8e4cba9eca5d6a88e8503aa9825b8ce35692691f9bbd6b0f1b0052f8` | inherited EPOCH warning; candidate exit 1 | header-only, 1 HDU |
+| `rosat-rass-c` | 328,320 / `9c143c521016080193bcb448b545210137a29063640afe2e0a7850c2275550c8` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-m` | 336,960 / `b32919e6c94614c28cd2103dde5c79f59c8a64b84f0dbb821502595699733b6b` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-ij` | 339,840 / `2d8c85004e1c6042d5c7c672fc2b610f802ce86680311dc33cb0409a61aa2d88` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-c` | 336,960 / `75ae8d51cd7c48fc3176f6f527441d3edc9b194c7f38c409fa45b80010fcd516` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-m` | 336,960 / `3e8b7d9a7427214c676a83ea914b0d4e558040596c890dd3d12f6388c7d95332` | PASS, exit 0 | header-only, 1 HDU |
+| `rosat-rass-exp-ij` | 336,960 / `5b538b0164c7f78d75a7b233ff2fda4e1ddef6ab6fb11378b8bee67b2b2d766b` | PASS, exit 0 | header-only, 1 HDU |
+
+Full, non-truncated per-HDU diagnostics include exact header-record and storage-payload equality, failure class,
+HDU/card indexes, keyword, first differing byte offsets and before/after 80-column cards. They are in
+`run/reference-hdu-diagnostics.jsonl` and each raw row of artifact `fixed-fits-evidence` (ID `12973643986`,
+992,196 bytes, SHA-256 `fc84ed264206712a35bc2b9d01327248d1ab70f2536d6f93fd2da805af177fe0`). The report is
+[PR comment `6521814144`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521814144). The artifact contains
+no FITS bytes or payload data. No input repair, checksum-card filtering, header normalization, or scaling removal
+occurred; the ROSAT permission boundary remains unchanged.
