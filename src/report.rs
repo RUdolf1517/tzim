@@ -51,7 +51,8 @@ pub enum ReasonCode {
 }
 
 impl ReasonCode {
-    pub const fn id(self) -> &'static str {
+    #[inline(never)]
+    pub fn id(self) -> &'static str {
         match self {
             ReasonCode::AbortedByFailFast => "aborted_by_fail_fast",
             ReasonCode::AboveMaximumSize => "above_maximum_size",
@@ -82,6 +83,8 @@ impl ReasonCode {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn for_error(error: &Error) -> ReasonCode {
         match error {
             Error::Io(_) => ReasonCode::FilesystemError,
@@ -576,7 +579,7 @@ fn round_half_even(value: u128, divisor: u128) -> u128 {
     }
 }
 
-#[inline]
+#[inline(never)]
 fn push_json_identifier(out: &mut String, value: &str) {
     // These IDs are internal ASCII enum values, not user-provided strings.
     out.push('"');
