@@ -786,7 +786,7 @@ def write_summary(
             f"| `{compact(row.get('id'), 80)}` | {compact(row.get('handler_expectation', entry.get('handler_expectation')))} "
             f"| {source_size if source_size is not None else '—'} / `{compact(source_sha, 64)}` "
             f"| {compact(row.get('status'))}; {after_size if after_size is not None else '—'} / `{compact(after_sha, 64)}` "
-            f"| {row.get('saved_bytes', 0)} | {compact(note)} | {compact(external_status)} | {compact(md5_detail)} "
+            f"| {row.get('saved_bytes', 0)} | {compact(note, 300)} | {compact(external_status)} | {compact(md5_detail)} "
             f"| {compact(second_status, 80)} |"
         )
 

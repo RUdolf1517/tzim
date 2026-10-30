@@ -92,7 +92,10 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
             "handler_expectation": "valid-input",
             "before_sha256": "a" * 64,
             "after_sha256": "a" * 64,
-            "tzim_file_row": {"status": "skipped", "note": "no smaller candidate"},
+            "tzim_file_row": {
+                "status": "skipped",
+                "note": "independent decoder rejected a frame sequence gap; source bytes were preserved without modification",
+            },
             "reference_flac_test": {"return_code": 0},
             "reference_metaflac": {"return_code": 0},
         }
@@ -122,6 +125,10 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
             self.assertIn("pre-registered-skip", report)
             self.assertIn("source flac pass / metaflac pass; candidate not run", report)
             self.assertIn("not run (no optimized candidate)", report)
+            self.assertIn(
+                "independent decoder rejected a frame sequence gap; source bytes were preserved without modification",
+                report,
+            )
 
 
 if __name__ == "__main__":
