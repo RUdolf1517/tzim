@@ -24,15 +24,16 @@ threshold, old aggregate, #78 policy, or #82/#83 behavior was changed.
   bytes; this optimized-only median was not substituted for the registered metric. There were zero qpdf
   candidate-check failures and zero registered render differences. The exact report is
   [comment `6520274047`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520274047).
-- **#59 — fixed survey measured; threshold not applied.** All 14 exact TESS, GALEX and ROSAT products were
-  fetched and measured. Tier 2 Astropy candidates: n=14, median 30.42168674698795%, Q1 29.518072289156628%,
-  Q3 64.63408680369086%, share-positive 100%. The per-tier/refusal distribution is Tier 1 comparator n=0,
-  Tier 2 reference n=14, refused n=0, not-measured n=0, with no refusal reasons; Tier 1 remains explicitly
-  empty, not 0%. Every Astropy candidate was retained by its exact size/SHA, then checked with HEASARC
-  `fitsverify -l` and `funpack`. The full round-trip gate failed 14/14 on literal-header/storage-array
-  comparison, so the registered threshold was **not applied**. Tzim independently skipped all 14 rows
-  unchanged; its 14 direct comparisons concern source-versus-unchanged-copy, not the reference candidates.
-  No input repair or FITS-byte upload occurred; the ROSAT boundary was preserved. See [FITS audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample) and [comment `6520285722`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520285722).
+- **#59 — fixed survey measured; threshold not applied.** The frozen 14-product TESS/GALEX/ROSAT set and its
+  Tier-2 distribution are unchanged. The a1 report used default-checksum `funpack`; its 14/14 literal-header /
+  storage-array outcome is superseded as an instrument result and is not evidence of candidate content failures.
+  The corrected path uses `funpack -C` for every literal comparison and requires an external integer-only CFITSIO
+  positive control through the same comparator before attributing candidate differences. It retains structured
+  per-HDU equality, mismatch classes, card indices, keywords, first-difference offsets, and exact 80-column cards;
+  checksum cards are compared literally. The four TESS `fitsverify -l` checksum warnings remain blockers, so the
+  registered threshold stays **not applied**. Tzim independently skipped all 14 rows unchanged; no input repair
+  or FITS-byte upload occurred and the ROSAT boundary was preserved. The a1 report remains historical; see
+  [corrected FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol), [historical audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), and [historical a1 comment `6520583133`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133).
 - **#79 — fixed FLAC corpus evidence recorded.** The 43-row manifest SHA-256 remains
   `fe3e15d22d098744bee1955a026c537cc077331b89765a698ddfb6c169de71be`; the run-specific expanded-manifest
   SHA-256 is `225cb1b592da64008f9c0e5679bdb898aa943751579c9b03c93257fcdc58615c`. Counts were 30 valid inputs
@@ -158,7 +159,7 @@ separately, and the final release inventory must name the actual release SHA.
 | Issue / requirement | Available evidence in this iteration | Open gap / disposition |
 | --- | --- | --- |
 | #57: exact source set | Owner-fixed 21-output set; exact run `41038741167` at source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, manifest SHA `8b4705e6…` | 18 accepted, 3 refused; `faithful_pct` median 0.00038990779980227345%; original threshold applied and returned refusal. Permitted-qpdf/repack distributions, raw commands, qpdf checks, renders and independent recomputation are retained. The post-documentation rerun is separately reported; do not replace the registered metric with Tzim-only gain |
-| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; exact run `41038741167` at source SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, manifest SHA `7a7b563b…` | 14/14 products downloaded; Tier 2 n=14 (median 30.42168674698795%, Q1 29.518072289156628%, Q3 64.63408680369086%, positive share 100%); Tier 1 explicitly empty. All 14 reference-candidate `funpack` array/literal-header checks failed; threshold **not applied**. Full per-row candidate hashes and external results retained without FITS bytes; all unchanged Tzim skips remain distinct |
+| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; the a1 default-checksum `funpack` result is historical and superseded as an instrument outcome | The four independent TESS `fitsverify -l` checksum warnings remain blockers, so threshold **not applied**. Re-run the exact 14 rows with `funpack -C` and an external integer-only positive control through the same literal-header/storage-array comparator; retain exact candidate identities, structured diagnostics, raw rows and commands without FITS bytes. Do not use the old a1 14/14 mismatch as candidate-content evidence; unchanged Tzim skips remain distinct |
 | #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seekpoint mapping, and regression tests behind `flac`; fixed 43-row run `41038741487` at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b` | 23 optimized, 7 already optimal, 7 documented refusals, 6 invalid controls; all 23 optimized rows passed external tools, exact PCM and STREAMINFO-MD5. Saved 744,570 bytes; whole-corpus and optimized-only labels are both recorded. Fuzz, feature-size and timing evidence are linked; broader admission/review remains separate |
 | #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, tests, behind `pdf` | Implementation is independent of #57 and remains owner-authorized/non-default. #57's original rule refused the fixed sample; qpdf/MuPDF evidence and all-feature tests passed. No default enablement or full PDF-admission claim |
 | #78 and #82/#83 | #78 HEASARC run `41038741101` passed; its external Astropy EXTNAMX fixture and final evidence/repro jobs were skipped. #82/#83 code and owner decisions were unchanged | Keep #78 open pending its missing evidence/manager review; preserve #82/#83. No size threshold, baseline, prompt, or release default was changed |

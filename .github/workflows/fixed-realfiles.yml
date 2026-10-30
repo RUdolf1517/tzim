@@ -614,7 +614,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fixed-fits-evidence"
           python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-evidence/measurement-environment.txt"
 
-      - name: Test the compressed-primary FITS measurement oracle
+      - name: Test fixed FITS diagnostics and positive-control gating
         shell: bash
         run: python3 .github/scripts/test_fixed_fits_measure.py
 
@@ -640,7 +640,7 @@ jobs:
           fi
           exit "$fetch_status"
 
-      - name: Build pinned CFITSIO fitsverify and funpack
+      - name: Build pinned CFITSIO fitsverify, fpack and funpack
         continue-on-error: true
         shell: bash
         run: |
@@ -657,7 +657,7 @@ jobs:
           make install
           bindir="$RUNNER_TEMP/cfitsio-install/bin"
           mkdir -p "$bindir"
-          for tool in fitsverify funpack; do
+          for tool in fitsverify fpack funpack; do
             placed=""
             for candidate in "$bindir/$tool" "$RUNNER_TEMP/cfitsio-src/utilities/.libs/$tool" \
               "$RUNNER_TEMP/cfitsio-src/.libs/$tool"; do
@@ -697,7 +697,7 @@ jobs:
             --out "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier.log"
 
-      - name: Run Tzim Tier 2, Tier 1 comparator, fitsverify, funpack and array/header oracles
+      - name: Run Tzim Tier 2, Tier 1 comparator, fitsverify, funpack -C positive control and array/header oracles
         id: measure
         continue-on-error: true
         shell: bash
@@ -709,6 +709,7 @@ jobs:
             --audit-rows "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
             --tzim "$RUNNER_TEMP/tzim-artifact/tzim" \
             --fitsverify "$RUNNER_TEMP/cfitsio-install/bin/fitsverify" \
+            --fpack "$RUNNER_TEMP/cfitsio-install/bin/fpack" \
             --funpack "$RUNNER_TEMP/cfitsio-install/bin/funpack" \
             --work "$RUNNER_TEMP/fixed-fits-work/candidates" \
             --reference-candidate-dir "$RUNNER_TEMP/fixed-fits-work/reference-candidates" \
@@ -725,6 +726,7 @@ jobs:
           python3 .github/scripts/recompute-fixed-fits.py \
             --rows "$RUNNER_TEMP/fixed-fits-evidence/run/raw-rows.jsonl" \
             --aggregate "$RUNNER_TEMP/fixed-fits-evidence/run/aggregate.json" \
+            --positive-control "$RUNNER_TEMP/fixed-fits-evidence/run/positive-control.json" \
             --out "$RUNNER_TEMP/fixed-fits-evidence/independent-recomputation.json" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/recompute.log"
 

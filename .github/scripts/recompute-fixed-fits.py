@@ -38,8 +38,33 @@ def distribution(values):
     }
 
 
-def threshold_disposition(rows, tier1_stats, tier2_stats):
+def positive_control_passed(control):
+    """Check the retained command and comparator evidence independently."""
+    comparison = control.get("literal_header_storage_array_comparison") or {}
+    funpack_argv = control.get("funpack_invocation") or []
+    fitsverify_argv = control.get("fitsverify_invocation") or []
+    commands_ok = all(
+        (control.get(name) or {}).get("returncode") == 0
+        for name in ("fpack", "fitsverify", "funpack")
+    )
+    return (
+        control.get("status") == "passed"
+        and control.get("ok") is True
+        and control.get("fixture_dtype") == "int16"
+        and control.get("fpack_float_array_oracle_used") is False
+        and commands_ok
+        and "-l" in fitsverify_argv
+        and "-C" in funpack_argv
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v1"
+        and comparison.get("diagnostics_complete") is True
+        and comparison.get("ok") is True
+    )
+
+
+def threshold_disposition(rows, tier1_stats, tier2_stats, positive_control):
     blockers = []
+    if not positive_control_passed(positive_control):
+        blockers.append("external funpack -C positive control did not pass; survey header/payload differences are not attributable")
     if len(rows) != 14:
         blockers.append(f"expected all 14 frozen products, found {len(rows)}")
     tier2_rows = []
@@ -64,7 +89,8 @@ def threshold_disposition(rows, tier1_stats, tier2_stats):
         return {
             "status": "not_applied",
             "decision": "threshold not applied",
-            "reason": "one or more fixed rows or reference-candidate validation checks remain unresolved",
+            "reason": "positive control or one or more fixed-row/reference-candidate checks remain unresolved",
+            "positive_control_status": positive_control.get("status", "missing"),
             "blockers": blockers,
             "tier2_threshold": {
                 "median_gain_pct_at_least": 8.0,
@@ -81,7 +107,7 @@ def threshold_disposition(rows, tier1_stats, tier2_stats):
                 "median_gain_pct_at_least": 2.0,
                 "n": tier1_stats["n"],
                 "median_gain_pct": tier1_stats["median"],
-                "result": "empty set; not evaluated" if tier1_stats["n"] == 0 else "not evaluated because the validation gate is incomplete",
+                "result": "empty set; not evaluated (not 0%)" if tier1_stats["n"] == 0 else "not evaluated because the validation gate is incomplete",
             },
         }
 
@@ -116,6 +142,7 @@ def threshold_disposition(rows, tier1_stats, tier2_stats):
     return {
         "status": "applied",
         "decision": decision,
+        "positive_control_status": positive_control.get("status", "missing"),
         "blockers": [],
         "tier2_threshold": {
             "median_gain_pct_at_least": 8.0,
@@ -144,10 +171,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", required=True)
     parser.add_argument("--aggregate", required=True)
+    parser.add_argument("--positive-control", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     rows = [json.loads(line) for line in Path(args.rows).read_text(encoding="utf-8").splitlines() if line.strip()]
     aggregate = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
+    positive_control = json.loads(Path(args.positive_control).read_text(encoding="utf-8"))
     ids = {row.get("product_id") for row in rows}
     if len(rows) != 14 or ids != EXPECTED_IDS:
         raise SystemExit(f"raw FITS rows are not the exact 14-product source set: {len(rows)} rows, IDs={sorted(ids)}")
@@ -220,6 +249,56 @@ def main():
             if (row.get("reference_candidate_validation") or {})
             .get("reconstructed_array_literal_header_comparison", {}).get("ok") is False
         ),
+        "header_payload_attribution_enabled": positive_control_passed(positive_control),
+    }
+    positive_control_summary = {
+        "control_id": positive_control.get("control_id"),
+        "status": positive_control.get("status", "missing"),
+        "ok": positive_control_passed(positive_control),
+        "fpack_exit": (positive_control.get("fpack") or {}).get("returncode"),
+        "fitsverify_exit": (positive_control.get("fitsverify") or {}).get("returncode"),
+        "funpack_exit": (positive_control.get("funpack") or {}).get("returncode"),
+        "roundtrip_ok": (positive_control.get("literal_header_storage_array_comparison") or {}).get("ok") is True,
+        "fpack_float_array_oracle_used": positive_control.get("fpack_float_array_oracle_used"),
+        "funpack_checksum_mode": positive_control.get("funpack_checksum_mode"),
+    }
+
+    def comparison_diagnostics(rows_to_count, comparison_field, nested_field=None):
+        failure_classes = Counter()
+        header_card_mismatches = payload_mismatch_hdus = hdu_count_mismatches = mismatch_records = 0
+        complete_comparisons = comparisons_n = 0
+        for row in rows_to_count:
+            comparison = row.get(comparison_field) or {}
+            if nested_field is not None:
+                comparison = comparison.get(nested_field) or {}
+            if comparison.get("diagnostic_schema") is None:
+                continue
+            comparisons_n += 1
+            complete_comparisons += int(comparison.get("diagnostics_complete") is True)
+            failure_classes.update(comparison.get("failure_class_counts") or {})
+            mismatch_records += len(comparison.get("mismatch_records") or [])
+            for check in comparison.get("hdu_checks") or []:
+                header_card_mismatches += len(check.get("header_card_differences") or [])
+                payload_mismatch_hdus += int(check.get("storage_payload_equality") is False)
+            hdu_count_mismatches += int(comparison.get("hdu_count_equal") is False)
+        return {
+            "comparisons_n": comparisons_n,
+            "complete_comparisons_n": complete_comparisons,
+            "failure_class_counts": dict(sorted(failure_classes.items())),
+            "header_card_mismatch_count": header_card_mismatches,
+            "payload_mismatch_hdu_count": payload_mismatch_hdus,
+            "hdu_count_mismatch_count": hdu_count_mismatches,
+            "structured_mismatch_record_count": mismatch_records,
+            "diagnostics_file": "reference-hdu-diagnostics.jsonl",
+        }
+
+    reference_hdu_diagnostics = {
+        "comparison_kind": "Astropy reference candidate funpack -C versus exact source",
+        **comparison_diagnostics(rows, "reference_candidate_validation", "reconstructed_array_literal_header_comparison"),
+    }
+    tzim_hdu_diagnostics = {
+        "comparison_kind": "Tzim candidate funpack -C versus source funpack -C",
+        **comparison_diagnostics(rows, "funpack_array_header_roundtrip"),
     }
     recomputed = {
         "products_n": len(rows),
@@ -248,8 +327,12 @@ def main():
             "min": min(tzim_gains) if tzim_gains else None,
             "max": max(tzim_gains) if tzim_gains else None,
         },
+        "external_funpack_C_positive_control": positive_control_summary,
         "reference_candidate_gate": reference_gate,
-        "pre_registered_threshold_disposition": threshold_disposition(rows, tier1_stats, tier2_stats),
+        "reference_hdu_diagnostics": reference_hdu_diagnostics,
+        "tzim_hdu_diagnostics": tzim_hdu_diagnostics,
+        "funpack_checksum_mode": "-C used for reference candidates and any optimized Tzim source/candidate reconstructions; checksum cards are not filtered",
+        "pre_registered_threshold_disposition": threshold_disposition(rows, tier1_stats, tier2_stats, positive_control),
         "fitsverify_candidate_nonzero": sum(
             1 for row in rows
             if row.get("tier2_tzim", {}).get("status") == "optimized"

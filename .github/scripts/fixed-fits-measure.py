@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the frozen #59 FITS products through tzim, fitsverify, funpack and array/header checks."""
+"""Run frozen #59 FITS products through tzim, fitsverify, funpack -C and exact array/header checks."""
 
 from __future__ import annotations
 
@@ -81,12 +81,23 @@ def digest(path: Path) -> tuple[int, str]:
     return size, h.hexdigest()
 
 
-def run(argv: list[str], log: list[dict], timeout: int = 1800) -> dict:
+def run(argv: list[str], log: list[dict], timeout: int = 1800, cwd: Path | None = None) -> dict:
     try:
-        result = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        result = subprocess.run(
+            argv,
+            cwd=str(cwd) if cwd is not None else None,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
         row = {"argv": argv, "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
+        if cwd is not None:
+            row["cwd"] = str(cwd)
     except Exception as error:
         row = {"argv": argv, "error": f"{type(error).__name__}: {error}"}
+        if cwd is not None:
+            row["cwd"] = str(cwd)
     log.append(row)
     return row
 
@@ -104,12 +115,9 @@ def image_bytes(hdu) -> bytes | None:
     return normalized.tobytes(order="C")
 
 
-def user_cards(hdu, ignore_checksums: bool = False) -> list[str]:
-    ignored = {"CHECKSUM", "DATASUM"} if ignore_checksums else set()
-    return [
-        card.image for card in hdu.header.cards
-        if not structural(card.keyword) and card.keyword.upper() not in ignored
-    ]
+def user_cards(hdu) -> list[str]:
+    """All non-structural cards, including CHECKSUM/DATASUM, in literal order."""
+    return [card.image for card in hdu.header.cards if not structural(card.keyword)]
 
 
 def raw_hdu(path: Path, hdu) -> bytes:
@@ -145,80 +153,285 @@ def raw_data(path: Path, hdu) -> bytes:
         return stream.read(padded)
 
 
-def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
-    """Compare a reference candidate's `funpack` output with the exact source.
+def first_byte_difference(before: bytes, after: bytes) -> int | None:
+    """Return the first unequal byte offset, including a length-only suffix."""
+    for offset, (left, right) in enumerate(zip(before, after)):
+        if left != right:
+            return offset
+    return min(len(before), len(after)) if len(before) != len(after) else None
 
-    Unlike the Tzim candidate comparison, this checks each uncompressed output
-    against the source using literal header record bytes (including padding) and
-    storage-array bytes. It does not ignore CHECKSUM/DATASUM or normalize cards.
+
+def _card_keyword(card: bytes) -> str:
+    return card[:8].decode("ascii", errors="replace").strip()
+
+
+def _header_card_differences(
+    original_header: bytes,
+    reconstructed_header: bytes,
+    original_header_file_offset: int,
+    reconstructed_header_file_offset: int,
+    hdu_index: int,
+) -> list[dict]:
+    """List every changed 80-byte header record with exact card bytes and offsets."""
+    card_count = (max(len(original_header), len(reconstructed_header)) + 79) // 80
+    differences = []
+    for card_index in range(card_count):
+        start = card_index * 80
+        before = original_header[start : start + 80]
+        after = reconstructed_header[start : start + 80]
+        if before == after:
+            continue
+        within_card = first_byte_difference(before, after)
+        assert within_card is not None
+        original_keyword = _card_keyword(before)
+        reconstructed_keyword = _card_keyword(after)
+        keyword = (
+            original_keyword or reconstructed_keyword or "<blank>"
+            if original_keyword == reconstructed_keyword
+            else f"{original_keyword or '<missing>'} -> {reconstructed_keyword or '<missing>'}"
+        )
+        header_offset = start + within_card
+        differences.append({
+            "hdu_index": hdu_index,
+            "card_index": card_index,
+            "keyword": keyword,
+            "mismatch_kind": "header_card",
+            "original_keyword": original_keyword,
+            "reconstructed_keyword": reconstructed_keyword,
+            "first_differing_byte_offset": within_card,
+            "first_differing_header_byte_offset": header_offset,
+            "original_file_offset": (
+                original_header_file_offset + header_offset if header_offset < len(original_header) else None
+            ),
+            "reconstructed_file_offset": (
+                reconstructed_header_file_offset + header_offset
+                if header_offset < len(reconstructed_header) else None
+            ),
+            # Keep both the exact 80-column text and hex. The hex retains trailing
+            # spaces and any unexpected non-ASCII byte without lossy rendering.
+            "before_card": before.decode("ascii", errors="replace") if before else None,
+            "after_card": after.decode("ascii", errors="replace") if after else None,
+            "before_card_hex": before.hex() if before else None,
+            "after_card_hex": after.hex() if after else None,
+            "before_card_bytes": len(before),
+            "after_card_bytes": len(after),
+        })
+    return differences
+
+
+def _payload_comparison(
+    original_path: Path,
+    original_hdu,
+    reconstructed_path: Path,
+    reconstructed_hdu,
+    hdu_index: int,
+) -> dict:
+    original_image = image_bytes(original_hdu)
+    reconstructed_image = image_bytes(reconstructed_hdu)
+    original_data_offset = int(original_hdu._data_offset or 0)
+    reconstructed_data_offset = int(reconstructed_hdu._data_offset or 0)
+    original_shape = tuple(np.asarray(original_hdu.data).shape) if original_image is not None else None
+    reconstructed_shape = (
+        tuple(np.asarray(reconstructed_hdu.data).shape) if reconstructed_image is not None else None
+    )
+    if original_image is None and reconstructed_image is None:
+        original_payload = raw_data(original_path, original_hdu)
+        reconstructed_payload = raw_data(reconstructed_path, reconstructed_hdu)
+        payload_kind = "non-image-HDU-data-and-padding"
+        shape_equal = None
+        type_compatible = type(original_hdu).__name__ == type(reconstructed_hdu).__name__
+    elif original_image is not None and reconstructed_image is not None:
+        original_payload = original_image
+        reconstructed_payload = reconstructed_image
+        payload_kind = "FITS image storage-array bytes (big-endian, row-major)"
+        shape_equal = original_shape == reconstructed_shape
+        type_compatible = True
+    else:
+        original_payload = original_image if original_image is not None else raw_data(original_path, original_hdu)
+        reconstructed_payload = (
+            reconstructed_image if reconstructed_image is not None else raw_data(reconstructed_path, reconstructed_hdu)
+        )
+        payload_kind = "image/non-image HDU type mismatch"
+        shape_equal = False
+        type_compatible = False
+
+    byte_equal = original_payload == reconstructed_payload
+    first_difference = (
+        None if byte_equal else first_byte_difference(original_payload, reconstructed_payload)
+    )
+    storage_equal = byte_equal and (shape_equal is not False) and type_compatible
+    detail = {
+        "hdu_index": hdu_index,
+        "payload_kind": payload_kind,
+        "original_payload_bytes": len(original_payload),
+        "reconstructed_payload_bytes": len(reconstructed_payload),
+        "payload_bytes_equal": byte_equal,
+        "storage_array_shape_equal": shape_equal,
+        "storage_payload_equal": storage_equal,
+        "original_shape": list(original_shape) if original_shape is not None else None,
+        "reconstructed_shape": list(reconstructed_shape) if reconstructed_shape is not None else None,
+        "original_payload_sha256": hashlib.sha256(original_payload).hexdigest(),
+        "reconstructed_payload_sha256": hashlib.sha256(reconstructed_payload).hexdigest(),
+        "first_differing_byte_offset": first_difference,
+        "difference_reason": (
+            "storage shape/type differs although payload bytes are identical"
+            if not storage_equal and byte_equal else None
+        ),
+        "original_file_offset": (
+            original_data_offset + first_difference
+            if first_difference is not None and first_difference < len(original_payload)
+            else None
+        ),
+        "reconstructed_file_offset": (
+            reconstructed_data_offset + first_difference
+            if first_difference is not None and first_difference < len(reconstructed_payload)
+            else None
+        ),
+        "original_byte_hex": (
+            original_payload[first_difference : first_difference + 1].hex()
+            if first_difference is not None and first_difference < len(original_payload) else None
+        ),
+        "reconstructed_byte_hex": (
+            reconstructed_payload[first_difference : first_difference + 1].hex()
+            if first_difference is not None and first_difference < len(reconstructed_payload) else None
+        ),
+    }
+    return detail
+
+
+def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
+    """Compare a `funpack -C` reconstruction to the exact uncompressed source.
+
+    The gate compares every 80-column header record (including END and padding)
+    and exact image storage-array bytes. Non-image HDUs retain their full data
+    area and padding comparison. No checksum filtering or header normalization is
+    applied. The result contains diagnostics and hashes, never FITS payload bytes.
     """
     with fits.open(original, memmap=False, do_not_scale_image_data=True, uint=False) as before, \
          fits.open(reconstructed, memmap=False, do_not_scale_image_data=True, uint=False) as after:
-        if len(before) != len(after):
-            return {
-                "ok": False,
-                "reason": "hdu_count",
-                "original_hdus": len(before),
-                "reconstructed_hdus": len(after),
-                "comparison": "literal header-record bytes and reconstructed array bytes",
-            }
         checks = []
-        for index, (original_hdu, reconstructed_hdu) in enumerate(zip(before, after)):
+        mismatch_records = []
+        common_hdus = min(len(before), len(after))
+        for index in range(common_hdus):
+            original_hdu = before[index]
+            reconstructed_hdu = after[index]
             original_header = raw_header(original, original_hdu)
             reconstructed_header = raw_header(reconstructed, reconstructed_hdu)
-            original_image = image_bytes(original_hdu)
-            reconstructed_image = image_bytes(reconstructed_hdu)
-            if original_image is None and reconstructed_image is None:
-                original_payload = raw_data(original, original_hdu)
-                reconstructed_payload = raw_data(reconstructed, reconstructed_hdu)
-                payload_kind = "non-image-HDU-data-and-padding"
-                payload_equal = original_payload == reconstructed_payload
-            elif original_image is not None and reconstructed_image is not None:
-                original_shape = tuple(np.asarray(original_hdu.data).shape)
-                reconstructed_shape = tuple(np.asarray(reconstructed_hdu.data).shape)
-                original_payload = original_image
-                reconstructed_payload = reconstructed_image
-                payload_kind = "FITS image storage-array bytes"
-                payload_equal = original_shape == reconstructed_shape and original_image == reconstructed_image
-            else:
-                original_payload = original_image
-                reconstructed_payload = reconstructed_image
-                payload_kind = "image/non-image HDU type mismatch"
-                payload_equal = False
-            hdu_type_equal = type(original_hdu).__name__ == type(reconstructed_hdu).__name__
+            original_header_offset = int(original_hdu._header_offset or 0)
+            reconstructed_header_offset = int(reconstructed_hdu._header_offset or 0)
+            header_differences = _header_card_differences(
+                original_header,
+                reconstructed_header,
+                original_header_offset,
+                reconstructed_header_offset,
+                index,
+            )
             header_equal = original_header == reconstructed_header
-            checks.append({
-                "hdu": index,
+            payload = _payload_comparison(
+                original, original_hdu, reconstructed, reconstructed_hdu, index
+            )
+            hdu_type_equal = type(original_hdu).__name__ == type(reconstructed_hdu).__name__
+            payload_equal = payload["storage_payload_equal"]
+            if not header_equal and not payload_equal:
+                failure_class = "combined"
+            elif not header_equal:
+                failure_class = "header_only"
+            elif not payload_equal:
+                failure_class = "payload_only"
+            elif not hdu_type_equal:
+                failure_class = "hdu_type_only"
+            else:
+                failure_class = "match"
+
+            check = {
+                "hdu_index": index,
                 "original_hdu_type": type(original_hdu).__name__,
                 "reconstructed_hdu_type": type(reconstructed_hdu).__name__,
                 "hdu_type_equal": hdu_type_equal,
-                "header_record_bytes_equal": header_equal,
+                "original_header_file_offset": original_header_offset,
+                "reconstructed_header_file_offset": reconstructed_header_offset,
+                "original_header_record_bytes": len(original_header),
+                "reconstructed_header_record_bytes": len(reconstructed_header),
+                "header_record_equality": header_equal,
                 "original_header_record_sha256": hashlib.sha256(original_header).hexdigest(),
                 "reconstructed_header_record_sha256": hashlib.sha256(reconstructed_header).hexdigest(),
-                "payload_kind": payload_kind,
-                "payload_bytes_equal": payload_equal,
-                "original_payload_sha256": (
-                    hashlib.sha256(original_payload).hexdigest() if original_payload is not None else None
+                "header_card_differences": header_differences,
+                "storage_payload_equality": payload_equal,
+                "storage_payload": payload,
+                "failure_class": failure_class,
+            }
+            checks.append(check)
+            mismatch_records.extend(header_differences)
+            if not payload_equal:
+                mismatch_records.append({
+                    "hdu_index": index,
+                    "card_index": None,
+                    "keyword": "<storage-payload>",
+                    "mismatch_kind": "storage_payload",
+                    "first_differing_byte_offset": payload["first_differing_byte_offset"],
+                    "original_file_offset": payload["original_file_offset"],
+                    "reconstructed_file_offset": payload["reconstructed_file_offset"],
+                    "original_byte_hex": payload["original_byte_hex"],
+                    "reconstructed_byte_hex": payload["reconstructed_byte_hex"],
+                    "original_payload_bytes": payload["original_payload_bytes"],
+                    "reconstructed_payload_bytes": payload["reconstructed_payload_bytes"],
+                    "original_shape": payload["original_shape"],
+                    "reconstructed_shape": payload["reconstructed_shape"],
+                    "payload_kind": payload["payload_kind"],
+                })
+            if not hdu_type_equal:
+                mismatch_records.append({
+                    "hdu_index": index,
+                    "card_index": None,
+                    "keyword": "<HDU-type>",
+                    "mismatch_kind": "hdu_type",
+                    "original_hdu_type": type(original_hdu).__name__,
+                    "reconstructed_hdu_type": type(reconstructed_hdu).__name__,
+                    "first_differing_byte_offset": None,
+                })
+
+        for index in range(common_hdus, max(len(before), len(after))):
+            original_hdu = before[index] if index < len(before) else None
+            reconstructed_hdu = after[index] if index < len(after) else None
+            mismatch_records.append({
+                "hdu_index": index,
+                "card_index": None,
+                "keyword": "<HDU-count>",
+                "mismatch_kind": "hdu_count",
+                "original_hdu_type": type(original_hdu).__name__ if original_hdu is not None else None,
+                "reconstructed_hdu_type": (
+                    type(reconstructed_hdu).__name__ if reconstructed_hdu is not None else None
                 ),
-                "reconstructed_payload_sha256": (
-                    hashlib.sha256(reconstructed_payload).hexdigest() if reconstructed_payload is not None else None
-                ),
+                "first_differing_byte_offset": None,
             })
+
+        failure_counts = dict(sorted(Counter(
+            item["failure_class"] for item in checks if item["failure_class"] != "match"
+        ).items()))
+        hdu_count_equal = len(before) == len(after)
+        ok = hdu_count_equal and all(item["failure_class"] == "match" for item in checks)
+        if ok:
+            reason = "ok"
+        elif not hdu_count_equal:
+            reason = "hdu_count_mismatch"
+        else:
+            reason = "header-only, payload-only, combined, or HDU-type mismatch"
         return {
-            "ok": all(
-                item["hdu_type_equal"] and item["header_record_bytes_equal"] and item["payload_bytes_equal"]
-                for item in checks
+            "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+            "diagnostics_complete": True,
+            "ok": ok,
+            "reason": reason,
+            "comparison": (
+                "exact 80-column header records including padding and checksum cards; exact storage-array bytes; "
+                "non-image data bytes and padding"
             ),
-            "reason": "ok" if all(
-                item["hdu_type_equal"] and item["header_record_bytes_equal"] and item["payload_bytes_equal"]
-                for item in checks
-            ) else "literal-header-or-reconstructed-payload-mismatch",
-            "comparison": "literal header-record bytes (including padding), exact storage-array bytes, and non-image data bytes",
             "original_hdus": len(before),
             "reconstructed_hdus": len(after),
+            "hdu_count_equal": hdu_count_equal,
+            "failure_class_counts": failure_counts,
+            "mismatch_records": mismatch_records,
             "hdu_checks": checks,
         }
-
 
 def is_compressed_image_hdu(hdu) -> bool:
     """Recognize Astropy's logical CompImageHDU view as well as raw ZIMAGE tables.
@@ -296,9 +509,7 @@ def compare_fits(
                     arrays_equal = raw_data(original, original_hdu) == raw_data(candidate, candidate_hdu)
                 else:
                     arrays_equal = left is not None and right is not None and left == right
-                cards_equal = user_cards(original_hdu, ignore_checksums=not compare_untransformed_raw) == user_cards(
-                    candidate_hdu, ignore_checksums=not compare_untransformed_raw
-                )
+                cards_equal = user_cards(original_hdu) == user_cards(candidate_hdu)
                 exact = raw_equal if compare_untransformed_raw else (arrays_equal and cards_equal)
                 item.update(ok=exact, reason="untransformed-HDU-byte-identical" if exact else "untransformed-HDU-changed",
                             raw_hdu_equal=raw_equal, arrays_equal=arrays_equal, user_header_cards_equal=cards_equal)
@@ -405,6 +616,144 @@ def reference_fitsverify_status(source_check: dict, candidate_check: dict) -> di
     }
 
 
+def positive_control_passed(control: dict) -> bool:
+    """Independently check every recorded component of the external control."""
+    comparison = control.get("literal_header_storage_array_comparison") or {}
+    funpack_argv = control.get("funpack_invocation") or []
+    fitsverify_argv = control.get("fitsverify_invocation") or []
+    command_results_ok = all(
+        (control.get(name) or {}).get("returncode") == 0
+        for name in ("fpack", "fitsverify", "funpack")
+    )
+    return (
+        control.get("status") == "passed"
+        and control.get("ok") is True
+        and control.get("fixture_dtype") == "int16"
+        and control.get("fpack_float_array_oracle_used") is False
+        and command_results_ok
+        and "-l" in fitsverify_argv
+        and "-C" in funpack_argv
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v1"
+        and comparison.get("diagnostics_complete") is True
+        and comparison.get("ok") is True
+    )
+
+
+def run_funpack_positive_control(
+    fpack: str,
+    funpack: str,
+    fitsverify: str,
+    work: Path,
+    logs: list[dict],
+) -> dict:
+    """Exercise the real CFITSIO fpack -> funpack -C -> literal comparison path.
+
+    This deliberately uses an integer-only synthetic fixture. It checks that the
+    external reader path can reproduce exact 80-column cards and storage bytes;
+    fpack is not used as a float-array correctness oracle. Temporary FITS files
+    are deleted and only their identities and comparison diagnostics are kept.
+    """
+    control = {
+        "control_id": "cfitsio-fpack-funpack-C-integer-primary-v1",
+        "control_type": "external_positive_control",
+        "status": "failed",
+        "expected": "fpack -> fitsverify -l -> funpack -C -> exact header-record and storage-array comparison",
+        "fpack_float_array_oracle_used": False,
+        "fixture_dtype": "int16",
+        "funpack_checksum_mode": "-C; disable CFITSIO CHECKSUM/DATASUM updates",
+        "literal_header_mode": "all 80-column header records including CHECKSUM/DATASUM and padding",
+        "array_mode": "exact big-endian storage-array bytes and shape; integer fixture only",
+    }
+    if fits is None or np is None:
+        control["reason"] = f"positive-control fixture dependencies unavailable: {FITS_IO_IMPORT_ERROR}"
+        return control
+
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="funpack-positive-control-", dir=work) as temporary_dir:
+            temp = Path(temporary_dir)
+            source = temp / "positive-control.fits"
+            packed = Path(str(source) + ".fz")
+            reconstructed = temp / "positive-control-reconstructed.fits"
+            data = np.arange(64 * 96, dtype=np.int16).reshape(64, 96)
+            primary = fits.PrimaryHDU(data=data)
+            primary.header["OBJECT"] = "FUNPACK C POSITIVE CONTROL"
+            primary.header.append(("HISTORY", "Integer-only external reader control"))
+            primary.writeto(source, overwrite=True, checksum=False)
+            source_bytes, source_sha = digest(source)
+            control["source_identity"] = {"bytes": source_bytes, "sha256": source_sha}
+
+            fpack_argv = [fpack, source.name]
+            fpack_result = run(fpack_argv, logs, cwd=temp)
+            control["fpack_invocation"] = fpack_argv
+            control["fpack"] = fpack_result
+            if packed.is_file():
+                packed_bytes, packed_sha = digest(packed)
+                control["fpack_output_identity"] = {"bytes": packed_bytes, "sha256": packed_sha}
+
+            if packed.is_file():
+                fitsverify_argv = [fitsverify, "-l", str(packed)]
+                fitsverify_result = run(fitsverify_argv, logs)
+                control["fitsverify_invocation"] = fitsverify_argv
+                control["fitsverify"] = fitsverify_result
+
+                funpack_argv = [funpack, "-C", "-O", str(reconstructed), str(packed)]
+                funpack_result = run(funpack_argv, logs)
+                control["funpack_invocation"] = funpack_argv
+                control["funpack"] = {**funpack_result, "checksum_mode": "-C"}
+                if reconstructed.is_file():
+                    reconstructed_bytes, reconstructed_sha = digest(reconstructed)
+                    control["reconstructed_identity"] = {
+                        "bytes": reconstructed_bytes,
+                        "sha256": reconstructed_sha,
+                    }
+                    comparison = compare_reference_funpack(source, reconstructed)
+                    control["literal_header_storage_array_comparison"] = comparison
+                else:
+                    control["literal_header_storage_array_comparison"] = {
+                        "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                        "diagnostics_complete": False,
+                        "ok": False,
+                        "reason": "funpack -C produced no reconstructed FITS output",
+                        "failure_class_counts": {"funpack_failed": 1},
+                        "mismatch_records": [],
+                        "hdu_checks": [],
+                    }
+            else:
+                control["fitsverify"] = {"status": "not_run", "reason": "fpack produced no candidate"}
+                control["funpack"] = {"status": "not_run", "reason": "fpack produced no candidate"}
+                control["literal_header_storage_array_comparison"] = {
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostics_complete": False,
+                    "ok": False,
+                    "reason": "fpack produced no candidate",
+                    "failure_class_counts": {"fpack_failed": 1},
+                    "mismatch_records": [],
+                    "hdu_checks": [],
+                }
+
+            control["ok"] = (
+                fpack_result.get("returncode") == 0
+                and packed.is_file()
+                and control.get("fitsverify", {}).get("returncode") == 0
+                and control.get("funpack", {}).get("returncode") == 0
+                and reconstructed.is_file()
+                and control.get("literal_header_storage_array_comparison", {}).get("ok") is True
+            )
+            control["status"] = "passed" if control["ok"] else "failed"
+            control["reason"] = (
+                "external CFITSIO positive control passed through the same funpack -C and exact comparison path"
+                if control["ok"]
+                else "external CFITSIO positive control did not pass; survey header/payload differences must not be attributed"
+            )
+    except Exception as error:
+        control["ok"] = False
+        control["status"] = "failed"
+        control["reason"] = f"{type(error).__name__}: {error}"
+        control["exception"] = control["reason"]
+    return control
+
+
 def validate_reference_candidate(
     source: Path,
     audit: dict,
@@ -414,6 +763,7 @@ def validate_reference_candidate(
     order: int,
     fitsverify: str,
     funpack: str,
+    positive_control: dict,
     logs: list[dict],
 ) -> dict:
     """HEASARC-validate the exact Astropy candidate that produced a Tier-2 row."""
@@ -425,6 +775,7 @@ def validate_reference_candidate(
             "reason": f"no Tier-2 reference candidate (instrument status: {audit_status})",
         }
 
+    positive_control_ok = positive_control_passed(positive_control)
     filename = reference.get("filename")
     result = {
         "status": "failed",
@@ -437,8 +788,14 @@ def validate_reference_candidate(
         "eligible_images": reference.get("eligible_images"),
         "hdu_mapping": reference.get("mapping"),
         "fitsverify_invocation": "fitsverify -l <exact Astropy Tier-2 candidate>",
-        "funpack_invocation": "funpack -O <temporary reconstructed FITS> <exact Astropy Tier-2 candidate>",
-        "funpack_checksum_mode": "default CFITSIO behavior; no -C, checksum removal, or source repair",
+        "funpack_invocation": "funpack -C -O <temporary reconstructed FITS> <exact Astropy Tier-2 candidate>",
+        "funpack_checksum_mode": "-C; prevent CFITSIO from synthesizing/updating CHECKSUM/DATASUM; compare those cards literally",
+        "positive_control_status": positive_control.get("status", "missing"),
+        "header_payload_attribution": (
+            "enabled: external funpack -C positive control passed"
+            if positive_control_ok
+            else "withheld: external funpack -C positive control did not pass"
+        ),
     }
     candidate = None
     unpacked = work / f"{order:02d}-{product_id}.reference-unpacked.fits"
@@ -465,11 +822,11 @@ def validate_reference_candidate(
         result["fitsverify_candidate"] = candidate_check
         result["fitsverify"] = reference_fitsverify_status(source_check, candidate_check)
 
-        funpack_argv = [funpack, "-O", str(unpacked), str(candidate)]
+        funpack_argv = [funpack, "-C", "-O", str(unpacked), str(candidate)]
         funpack_check = run(funpack_argv, logs)
         result["funpack"] = {
             **funpack_check,
-            "checksum_mode": "default; -C not used",
+            "checksum_mode": "-C; CFITSIO checksum updates disabled",
         }
         if funpack_check.get("returncode") == 0 and unpacked.is_file():
             unpacked_bytes, unpacked_sha = digest(unpacked)
@@ -477,12 +834,35 @@ def validate_reference_candidate(
             try:
                 roundtrip = compare_reference_funpack(source, unpacked)
             except Exception as error:
-                roundtrip = {"ok": False, "reason": f"{type(error).__name__}: {error}"}
+                roundtrip = {
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostics_complete": False,
+                    "ok": False,
+                    "reason": f"{type(error).__name__}: {error}",
+                    "failure_class_counts": {"unreadable": 1},
+                    "mismatch_records": [],
+                    "hdu_checks": [],
+                }
+            roundtrip["attribution"] = (
+                "candidate_comparison"
+                if positive_control_ok
+                else "not_attributed_positive_control_failed"
+            )
             result["reconstructed_array_literal_header_comparison"] = roundtrip
         else:
             result["reconstructed_array_literal_header_comparison"] = {
+                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                "diagnostics_complete": False,
                 "ok": False,
-                "reason": "funpack failed or produced no reconstructed FITS output",
+                "reason": "funpack -C failed or produced no reconstructed FITS output",
+                "failure_class_counts": {"funpack_failed": 1},
+                "mismatch_records": [],
+                "hdu_checks": [],
+                "attribution": (
+                    "candidate_comparison"
+                    if positive_control_ok
+                    else "not_attributed_positive_control_failed"
+                ),
             }
 
         fitsverify_ok = result["fitsverify"].get("status") in ("passed", "passed_inherited_warnings")
@@ -490,26 +870,24 @@ def validate_reference_candidate(
             funpack_check.get("returncode") == 0
             and result["reconstructed_array_literal_header_comparison"].get("ok") is True
         )
-        if (
-            identity_matches
-            and audit.get("exact") is True
-            and fitsverify_ok
-            and funpack_ok
-        ):
+        failures = []
+        if not positive_control_ok:
+            failures.append("external funpack -C positive control failed; candidate header/payload differences are not attributed")
+        if not identity_matches:
+            failures.append("candidate identity differs from the bytes used by the reference measurement")
+        if audit.get("exact") is not True:
+            failures.append("existing Astropy reference verifier did not report an exact candidate")
+        if not fitsverify_ok:
+            failures.append(result["fitsverify"].get("reason", "fitsverify failed"))
+        if not funpack_ok:
+            roundtrip = result.get("reconstructed_array_literal_header_comparison", {})
+            failures.append(roundtrip.get("reason", "funpack or reconstruction check failed"))
+        if not positive_control_ok:
+            result["status"] = "blocked_positive_control"
+        elif not failures:
             result["status"] = "passed"
-            result["reason"] = "exact candidate identity, HEASARC check, funpack, and literal-header/storage-array round trip passed"
-        else:
-            failures = []
-            if not identity_matches:
-                failures.append("candidate identity differs from the bytes used by the reference measurement")
-            if audit.get("exact") is not True:
-                failures.append("existing Astropy reference verifier did not report an exact candidate")
-            if not fitsverify_ok:
-                failures.append(result["fitsverify"].get("reason", "fitsverify failed"))
-            if not funpack_ok:
-                roundtrip = result.get("reconstructed_array_literal_header_comparison", {})
-                failures.append(roundtrip.get("reason", "funpack or reconstruction check failed"))
-            result["reason"] = "; ".join(failures)
+            result["reason"] = "exact candidate identity, HEASARC check, funpack -C, positive control, and literal-header/storage-array round trip passed"
+        result["reason"] = "; ".join(failures) if failures else result.get("reason", "")
     except Exception as error:
         result["reason"] = f"{type(error).__name__}: {error}"
     finally:
@@ -525,9 +903,14 @@ def validate_reference_candidate(
     return result
 
 
-def threshold_disposition(rows: list[dict], tier1_stats: dict, tier2_stats: dict) -> dict:
-    """Apply issue #59's original rule only after exact reference-candidate gates."""
+def threshold_disposition(
+    rows: list[dict], tier1_stats: dict, tier2_stats: dict, positive_control: dict
+) -> dict:
+    """Apply issue #59's unchanged rule only after the -C control and candidate gates."""
     blockers = []
+    positive_control_ok = positive_control_passed(positive_control)
+    if not positive_control_ok:
+        blockers.append("external funpack -C positive control did not pass; survey header/payload differences are not attributable")
     if len(rows) != 14:
         blockers.append(f"expected all 14 frozen products, found {len(rows)}")
     tier2_rows = []
@@ -552,7 +935,8 @@ def threshold_disposition(rows: list[dict], tier1_stats: dict, tier2_stats: dict
         return {
             "status": "not_applied",
             "decision": "threshold not applied",
-            "reason": "one or more fixed rows or reference-candidate validation checks remain unresolved",
+            "reason": "positive control or one or more fixed-row/reference-candidate checks remain unresolved",
+            "positive_control_status": positive_control.get("status", "missing"),
             "blockers": blockers,
             "tier2_threshold": {
                 "median_gain_pct_at_least": 8.0,
@@ -569,7 +953,7 @@ def threshold_disposition(rows: list[dict], tier1_stats: dict, tier2_stats: dict
                 "median_gain_pct_at_least": 2.0,
                 "n": tier1_stats["n"],
                 "median_gain_pct": tier1_stats["median"],
-                "result": "empty set; not evaluated" if tier1_stats["n"] == 0 else "not evaluated because the validation gate is incomplete",
+                "result": "empty set; not evaluated (not 0%)" if tier1_stats["n"] == 0 else "not evaluated because the validation gate is incomplete",
             },
         }
 
@@ -604,6 +988,7 @@ def threshold_disposition(rows: list[dict], tier1_stats: dict, tier2_stats: dict
     return {
         "status": "applied",
         "decision": decision,
+        "positive_control_status": positive_control.get("status", "missing"),
         "blockers": [],
         "tier2_threshold": {
             "median_gain_pct_at_least": 8.0,
@@ -636,6 +1021,7 @@ def main() -> int:
     parser.add_argument("--audit-rows", required=True)
     parser.add_argument("--tzim", required=True)
     parser.add_argument("--fitsverify", required=True)
+    parser.add_argument("--fpack", required=True)
     parser.add_argument("--funpack", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--reference-candidate-dir", required=True)
@@ -690,6 +1076,17 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     logs: list[dict] = []
     products_by_id = {row["id"]: row for row in products}
+    positive_control = run_funpack_positive_control(
+        fpack=str(Path(args.fpack).resolve()),
+        funpack=str(Path(args.funpack).resolve()),
+        fitsverify=str(Path(args.fitsverify).resolve()),
+        work=work,
+        logs=logs,
+    )
+    positive_control_ok = positive_control_passed(positive_control)
+    (out / "positive-control.json").write_text(
+        json.dumps(positive_control, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     rows: list[dict] = []
 
     for order, product in enumerate(products, start=1):
@@ -742,6 +1139,7 @@ def main() -> int:
             order=order,
             fitsverify=str(Path(args.fitsverify).resolve()),
             funpack=str(Path(args.funpack).resolve()),
+            positive_control=positive_control,
             logs=logs,
         )
         if isinstance(audit.get("reference_candidate"), dict):
@@ -819,8 +1217,8 @@ def main() -> int:
 
         unpack_source = work / f"{order:02d}-{product['id']}.source-unpacked.fits"
         unpack_candidate = work / f"{order:02d}-{product['id']}.candidate-unpacked.fits"
-        funpack_source_argv = [str(Path(args.funpack).resolve()), "-O", str(unpack_source), str(source)]
-        funpack_candidate_argv = [str(Path(args.funpack).resolve()), "-O", str(unpack_candidate), str(candidate)]
+        funpack_source_argv = [str(Path(args.funpack).resolve()), "-C", "-O", str(unpack_source), str(source)]
+        funpack_candidate_argv = [str(Path(args.funpack).resolve()), "-C", "-O", str(unpack_candidate), str(candidate)]
         if tzim_record.get("unchanged_nonoptimized"):
             funpack_source = {
                 "status": "not_applicable",
@@ -841,7 +1239,7 @@ def main() -> int:
                 row["external_checks"]["funpack_candidate_output"] = {"bytes": digest(unpack_candidate)[0], "sha256": digest(unpack_candidate)[1]}
         row["external_checks"]["funpack_source"] = funpack_source
         row["external_checks"]["funpack_candidate"] = funpack_candidate
-        row["external_checks"]["funpack_checksum_mode"] = "default checksum behavior; -C not used; fpack checksum behavior is comparator documentation only"
+        row["external_checks"]["funpack_checksum_mode"] = "-C used for source and candidate reconstructions; CHECKSUM/DATASUM are retained and compared"
 
         try:
             direct = compare_fits(source, candidate)
@@ -856,14 +1254,43 @@ def main() -> int:
             }
         elif unpack_source.is_file() and unpack_candidate.is_file():
             try:
-                unpacked = compare_fits(
-                    unpack_source, unpack_candidate, compare_untransformed_raw=False, allow_primary_filler=True
+                unpacked = compare_reference_funpack(unpack_source, unpack_candidate)
+                unpacked["attribution"] = (
+                    "candidate_comparison"
+                    if positive_control_ok
+                    else "not_attributed_positive_control_failed"
                 )
                 row["funpack_array_header_roundtrip"] = unpacked
             except Exception as error:
-                row["funpack_array_header_roundtrip"] = {"ok": False, "reason": f"{type(error).__name__}: {error}"}
+                row["funpack_array_header_roundtrip"] = {
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostics_complete": False,
+                    "ok": False,
+                    "reason": f"{type(error).__name__}: {error}",
+                    "failure_class_counts": {"unreadable": 1},
+                    "mismatch_records": [],
+                    "hdu_checks": [],
+                    "attribution": (
+                        "candidate_comparison"
+                        if positive_control_ok
+                        else "not_attributed_positive_control_failed"
+                    ),
+                }
         else:
-            row["funpack_array_header_roundtrip"] = {"ok": False, "reason": "funpack output missing"}
+            row["funpack_array_header_roundtrip"] = {
+                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                "diagnostics_complete": False,
+                "ok": False,
+                "reason": "funpack -C output missing",
+                "failure_class_counts": {"funpack_failed": 1},
+                "mismatch_records": [],
+                "hdu_checks": [],
+                "attribution": (
+                    "candidate_comparison"
+                    if positive_control_ok
+                    else "not_attributed_positive_control_failed"
+                ),
+            }
 
         candidate_size, candidate_sha = digest(candidate)
         row["tier2_tzim"]["candidate_bytes"] = candidate_size
@@ -885,6 +1312,36 @@ def main() -> int:
     rows_path = out / "raw-rows.jsonl"
     rows_path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
     (out / "external-tool-output.jsonl").write_text("".join(json.dumps(item, sort_keys=True) + "\n" for item in logs), encoding="utf-8")
+    hdu_diagnostics = []
+    for row in rows:
+        reference = row.get("reference_candidate") or {}
+        validation = row.get("reference_candidate_validation") or {}
+        reference_comparison = validation.get("reconstructed_array_literal_header_comparison")
+        if reference_comparison is not None:
+            hdu_diagnostics.append({
+                "product_id": row.get("product_id"),
+                "comparison_kind": "astropy_reference_candidate_funpack_C_vs_source",
+                "candidate_bytes": reference.get("bytes"),
+                "candidate_sha256": reference.get("sha256"),
+                "positive_control_status": positive_control.get("status"),
+                "attribution": reference_comparison.get("attribution"),
+                "diagnostics": reference_comparison,
+            })
+        tzim_comparison = row.get("funpack_array_header_roundtrip")
+        if tzim_comparison is not None and tzim_comparison.get("status") != "not_applicable":
+            hdu_diagnostics.append({
+                "product_id": row.get("product_id"),
+                "comparison_kind": "tzim_candidate_funpack_C_vs_source_funpack_C",
+                "candidate_bytes": (row.get("tier2_tzim") or {}).get("candidate_bytes"),
+                "candidate_sha256": (row.get("tier2_tzim") or {}).get("candidate_sha256"),
+                "positive_control_status": positive_control.get("status"),
+                "attribution": tzim_comparison.get("attribution"),
+                "diagnostics": tzim_comparison,
+            })
+    (out / "reference-hdu-diagnostics.jsonl").write_text(
+        "".join(json.dumps(item, sort_keys=True, ensure_ascii=False) + "\n" for item in hdu_diagnostics),
+        encoding="utf-8",
+    )
 
     audit_status_counts = dict(sorted(Counter(row.get("status", "missing") for row in audit_rows).items()))
     audit_refusal_reasons = dict(sorted(Counter(
@@ -918,6 +1375,60 @@ def main() -> int:
         ((row.get("reference_candidate_validation") or {}).get("fitsverify") or {}).get("status", "missing")
         for row in reference_rows
     ).items()))
+
+    def comparison_diagnostics(rows_to_count: list[dict], comparison_field: str, nested_field: str | None = None) -> dict:
+        failure_classes: Counter = Counter()
+        header_card_mismatches = 0
+        payload_mismatch_hdus = 0
+        hdu_count_mismatches = 0
+        mismatch_records = 0
+        complete_comparisons = 0
+        comparisons_n = 0
+        for row in rows_to_count:
+            comparison = row.get(comparison_field) or {}
+            if nested_field is not None:
+                comparison = comparison.get(nested_field) or {}
+            if comparison.get("diagnostic_schema") is None:
+                continue
+            comparisons_n += 1
+            complete_comparisons += int(comparison.get("diagnostics_complete") is True)
+            for name, count in (comparison.get("failure_class_counts") or {}).items():
+                failure_classes[name] += count
+            mismatch_records += len(comparison.get("mismatch_records") or [])
+            for check in comparison.get("hdu_checks") or []:
+                header_card_mismatches += len(check.get("header_card_differences") or [])
+                payload_mismatch_hdus += int(check.get("storage_payload_equality") is False)
+            hdu_count_mismatches += int(comparison.get("hdu_count_equal") is False)
+        return {
+            "comparisons_n": comparisons_n,
+            "complete_comparisons_n": complete_comparisons,
+            "failure_class_counts": dict(sorted(failure_classes.items())),
+            "header_card_mismatch_count": header_card_mismatches,
+            "payload_mismatch_hdu_count": payload_mismatch_hdus,
+            "hdu_count_mismatch_count": hdu_count_mismatches,
+            "structured_mismatch_record_count": mismatch_records,
+            "diagnostics_file": "reference-hdu-diagnostics.jsonl",
+        }
+
+    reference_hdu_diagnostics = {
+        "comparison_kind": "Astropy reference candidate funpack -C versus exact source",
+        **comparison_diagnostics(rows, "reference_candidate_validation", "reconstructed_array_literal_header_comparison"),
+    }
+    tzim_hdu_diagnostics = {
+        "comparison_kind": "Tzim candidate funpack -C versus source funpack -C",
+        **comparison_diagnostics(rows, "funpack_array_header_roundtrip"),
+    }
+    positive_control_summary = {
+        "control_id": positive_control.get("control_id"),
+        "status": positive_control.get("status", "missing"),
+        "ok": positive_control_ok,
+        "fpack_exit": (positive_control.get("fpack") or {}).get("returncode"),
+        "fitsverify_exit": (positive_control.get("fitsverify") or {}).get("returncode"),
+        "funpack_exit": (positive_control.get("funpack") or {}).get("returncode"),
+        "roundtrip_ok": (positive_control.get("literal_header_storage_array_comparison") or {}).get("ok") is True,
+        "fpack_float_array_oracle_used": positive_control.get("fpack_float_array_oracle_used"),
+        "funpack_checksum_mode": positive_control.get("funpack_checksum_mode"),
+    }
     tier_distribution = {
         "tier1_comparator_n": len(tier1_gains),
         "tier1_comparator_product_ids": [
@@ -930,7 +1441,7 @@ def main() -> int:
         "not_measured_n": sum(1 for row in rows if (row.get("existing_two_tier_instrument") or {}).get("status") == "not_measured"),
         "note": "Tier 1 recompression rows are comparators derived from the frozen products and may overlap a Tier 2 product; they are not new survey inputs.",
     }
-    threshold_result = threshold_disposition(rows, tier1_stats, tier2_stats)
+    threshold_result = threshold_disposition(rows, tier1_stats, tier2_stats, positive_control)
     audit_stats = {
         "audit_rows": len(audit_rows),
         "tier2_candidate_rows": len(audit_tier2_rows),
@@ -960,6 +1471,7 @@ def main() -> int:
             "min": min(tzim_gains) if tzim_gains else None,
             "max": max(tzim_gains) if tzim_gains else None,
         },
+        "external_funpack_C_positive_control": positive_control_summary,
         "reference_candidate_gate": {
             "expected_candidates_n": len(reference_rows),
             "validation_status_counts": reference_validation_counts,
@@ -967,7 +1479,11 @@ def main() -> int:
             "validated_candidates_n": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("status") == "passed"),
             "candidate_identity_mismatches": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("identity_matches_measurement_candidate") is False),
             "funpack_roundtrip_failures": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("reconstructed_array_literal_header_comparison", {}).get("ok") is False),
+            "header_payload_attribution_enabled": positive_control_summary["ok"],
         },
+        "reference_hdu_diagnostics": reference_hdu_diagnostics,
+        "tzim_hdu_diagnostics": tzim_hdu_diagnostics,
+        "funpack_checksum_mode": "-C used for reference candidates and any optimized Tzim source/candidate reconstructions; checksum cards are not filtered",
         "pre_registered_threshold_disposition": threshold_result,
         "fitsverify_candidate_nonzero": sum(1 for row in rows if row.get("tier2_tzim", {}).get("status") == "optimized" and row.get("external_checks", {}).get("fitsverify_candidate", {}).get("returncode") != 0),
         "array_header_roundtrip_passes": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is True),
@@ -1020,20 +1536,23 @@ def main() -> int:
         f"- {distribution_text('Tier 2 Astropy reference-candidate gain', aggregate['existing_fits_measure_tier2_gain_pct'])}",
         f"- {distribution_text('Tier 1 existing-tile comparator gain', aggregate['existing_tile_tier1_comparator_gain_pct'])}",
         f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
-        f"- Reference candidate HEASARC/funpack gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
+        f"- External positive control: **{positive_control_summary['status']}** via pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → this same literal-header/storage-array comparator; integer-only fixture, no fpack float-array oracle.",
+        f"- Reference candidate HEASARC/funpack -C gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
+        f"- Reference per-HDU classes: `{json.dumps(reference_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; header-card differences={reference_hdu_diagnostics['header_card_mismatch_count']}, payload-mismatch HDUs={reference_hdu_diagnostics['payload_mismatch_hdu_count']}, HDU-count mismatches={reference_hdu_diagnostics['hdu_count_mismatch_count']}; attribution enabled={positive_control_summary['ok']}.",
+        "- Full, non-truncated per-HDU diagnostics (including exact before/after 80-column cards, card indexes, keywords, and byte/file offsets) are in `run/reference-hdu-diagnostics.jsonl` and each raw row; only hashes and header-card records are stored, not FITS payload bytes.",
         f"- Pre-registered #59 disposition: **{threshold['status']}** — {threshold['decision']}.",
         f"- Tzim Tier 2 median among strictly smaller candidates (separate implementation result): {aggregate['tzim_tier2_gain_pct']['median']}",
         f"- Direct Tzim array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
         f"- Tzim-candidate funpack array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed, {aggregate['funpack_roundtrip_not_applicable']} not applicable for unchanged non-optimized rows.",
         f"- Exact reference-candidate funpack round trips: {aggregate['reference_funpack_roundtrip_passes']} passed, {aggregate['reference_funpack_roundtrip_failures']} failed.",
         "",
-        "All 14 fixed source rows are retained. The two-tier reference-candidate identities and HEASARC commands/results are separate from Tzim's unchanged/skipped rows. Tier 1 is a comparator derived from each source, never an extra survey input. The artifact contains hashes and tool output only—no source FITS bytes, candidate FITS bytes, reconstructed FITS bytes, or ROSAT data.",
+        "All 14 fixed source rows are retained. The two-tier reference-candidate identities and HEASARC commands/results are separate from Tzim's unchanged/skipped rows. Tier 1 is a comparator derived from each source, never an extra survey input. Every compared reconstruction uses `funpack -C`; checksum cards are preserved, not filtered. The structured diagnostics retain exact changed header cards and byte offsets without storing any FITS data payload bytes. The artifact contains hashes and tool output only—no source FITS bytes, reference-candidate bytes, Tzim candidate bytes, reconstructed FITS bytes, or ROSAT data.",
         "",
         "## All fixed product rows — distinct reference and Tzim dispositions",
         "",
         "No row is dropped based on outcome. Candidate file identities are retained as byte counts and SHA-256; the FITS bytes themselves are temporary and are not uploaded.",
         "",
-        "| Fixed product | Input bytes / SHA-256 | Astropy reference candidate bytes / SHA-256 | Reference `fitsverify -l` | Reference `funpack` literal header / array | Tzim status; candidate bytes / SHA-256 | Direct Tzim comparison | Tzim fitsverify |",
+        "| Fixed product | Input bytes / SHA-256 | Astropy reference candidate bytes / SHA-256 | Reference `fitsverify -l` | Reference `funpack -C` header / array | Tzim status; candidate bytes / SHA-256 | Direct Tzim comparison | Tzim fitsverify |",
         "| --- | ---: | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
@@ -1054,8 +1573,10 @@ def main() -> int:
             direct_status = "not measured"
         if reference_roundtrip.get("ok") is True:
             reference_funpack_status = "PASS"
+        elif reference_roundtrip.get("ok") is False and reference_roundtrip.get("attribution") == "not_attributed_positive_control_failed":
+            reference_funpack_status = "mismatch observed; attribution withheld (positive control failed)"
         elif reference_roundtrip.get("ok") is False:
-            reference_funpack_status = "FAIL"
+            reference_funpack_status = f"FAIL {reference_roundtrip.get('failure_class_counts', {})}"
         else:
             reference_funpack_status = "not run / not applicable"
         if reference_fitsverify.get("status") == "passed_inherited_warnings":
@@ -1068,8 +1589,10 @@ def main() -> int:
             funpack_status = "not applicable (Tzim unchanged)"
         elif funpack_roundtrip.get("ok") is True:
             funpack_status = "pass"
+        elif funpack_roundtrip.get("ok") is False and funpack_roundtrip.get("attribution") == "not_attributed_positive_control_failed":
+            funpack_status = "mismatch observed; attribution withheld (positive control failed)"
         elif funpack_roundtrip.get("ok") is False:
-            funpack_status = "FAIL"
+            funpack_status = f"FAIL {funpack_roundtrip.get('failure_class_counts', {})}"
         else:
             funpack_status = "not run"
         if candidate_fitsverify.get("returncode") is None and candidate_fitsverify.get("error"):
@@ -1154,14 +1677,15 @@ def main() -> int:
                 if text != "(empty)":
                     diagnostics.extend([f"- {label}:", "", "```text", text, "```"])
             diagnostics.append("")
-        if reference_validation.get("status") == "failed":
+        if reference_validation.get("status") in ("failed", "blocked_positive_control"):
             details = json.dumps(reference_validation, sort_keys=True, ensure_ascii=False)
             diagnostics.extend([
-                f"### Reference candidate gate failure: {product_id}",
+                f"### Reference candidate gate {reference_validation.get('status')}: {product_id}",
                 f"- Exact candidate identity: `{(row.get('reference_candidate') or {}).get('bytes')}` bytes / "
                 f"`{(row.get('reference_candidate') or {}).get('sha256')}`",
                 f"- Reason: {diagnostic_excerpt(reference_validation.get('reason'))}",
-                f"- Validation record: `{diagnostic_excerpt(details)}`",
+                "- Full structured per-HDU header/payload diagnostics, when produced, are retained without truncation in `reference-hdu-diagnostics.jsonl` and `raw-rows.jsonl`.",
+                f"- Validation record excerpt: `{diagnostic_excerpt(details)}`",
                 "",
             ])
         for label in ("array_header_roundtrip", "funpack_array_header_roundtrip"):
@@ -1219,6 +1743,11 @@ def main() -> int:
             failures.append(f"{row['product_id']}: existing tile Tier 1 comparator failed ({row['tier1_error']})")
         if row.get("temporary_cleanup_errors"):
             failures.append(f"{row['product_id']}: temporary cleanup failed: {row['temporary_cleanup_errors']}")
+    if not positive_control_ok:
+        failures.append(
+            "external CFITSIO fpack/fitsverify/funpack -C positive control did not pass; "
+            "survey header/payload differences are not attributable"
+        )
     if failures:
         (out / "blockers.txt").write_text("\n".join(failures) + "\n", encoding="utf-8")
         print("\n".join(f"BLOCKER: {item}" for item in failures), file=sys.stderr)

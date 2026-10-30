@@ -31,12 +31,13 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
   (flate2 level 9) was 0.00038990779980227345%, below the registered 1% refusal bar. The pre-registered result
   is **refused after measurement**. The permitted-qpdf and forbidden-repack distributions, all raw rows, and
   qpdf/MuPDF checks are in [PDF audit §11](docs/pdf-audit.md#11-pr-84-follow-up--57-fixed-21-output-sample).
-- **#59 fixed FITS survey: reference-candidate gate stops threshold application.** At exact source SHA
-  `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, Tier 2 had n=14, median 30.42168674698795%, Q1
-  29.518072289156628%, Q3 64.63408680369086%, and 100% positive share; Tier 1 was explicitly empty. All 14
-  Astropy candidates failed the strict `funpack` array/literal-header comparison, so the threshold is
-  **not applied**. Tzim's 14 rows remained unchanged skips; no FITS bytes were uploaded or inputs repaired.
-  Exact per-row candidate identities and diagnostics are in [FITS audit §11](docs/fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample).
+- **#59 fixed FITS survey: corrected reader path preserves threshold blockers.** The a1 default-checksum
+  `funpack` result is superseded as an instrument outcome and is not evidence of 14 candidate content failures.
+  Literal-header comparisons now use `funpack -C` and require an external integer-only CFITSIO positive control
+  through the same exact-header/storage-array path; structured per-HDU diagnostics retain card indices, keywords,
+  byte offsets and exact 80-column cards. The four independent TESS `fitsverify -l` checksum warnings remain
+  blockers, so the registered threshold is **not applied**. No inputs are repaired or FITS bytes uploaded. See
+  [FITS audit §12](docs/fits-audit.md#12-corrected-59-reader-mode-protocol) for the corrected protocol and evidence; [§11](docs/fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample) preserves the historical report.
 - **Baseline JPEG is enabled in the release default with independent V1 verification** (#82). The default
   feature set includes `jpeg-v1`; the exact coefficient, marker and refusal checks remain, with an independent
   decoder comparing original and candidate pixels before atomic replacement. `--formats` stays an allowlist.

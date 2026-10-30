@@ -356,13 +356,24 @@ separately in [measurement status](measurement-status.md).
 ## 10. What happened to this work
 
 The two branches in the original stage-1 plan are historical. The v0.14 handler is an opt-in implementation
-behind `--fits-tile` and the non-default `fits` feature, not full FITS admission. The separately registered #59
-survey ran at exact SHA `7b82c9ed`; all 14 Astropy reference candidates failed the strict `funpack`
-array/literal-header comparison, so its pre-registered threshold was not applied. The fixed source rows and
-candidate identities remain unchanged in §11; no checksum or header repair was made. The result leaves the
-threshold blocked and #70/full-admission questions open; it does not alter the historical audit.
+behind `--fits-tile` and the non-default `fits` feature, not full FITS admission. The initial #59 comparisons at
+`7b82c9ed` and the later `a1b27144` report used `funpack` without `-C`; their literal-header outcomes are
+superseded as instrument results and must not be treated as candidate content failures. The independent
+`fitsverify -l` results remain valid, including four TESS checksum-warning blockers. The corrected fixed-sample
+path is documented in §12; no source row is repaired, replaced, or selected by gain, and no owner protocol
+decision is pending. #70/full-admission questions remain separate from this measurement correction.
 
 ## 11. PR #84 follow-up — #59 fixed survey sample
+
+*Historical default-mode report; the `funpack` result is superseded as an instrument outcome.*
+
+**Instrument-method caveat.** The report below records the `7b82c9ed` run before the checksum-mode correction;
+its `funpack` invocations omitted `-C`. Its 14/14 round-trip result is preserved historically but is not evidence
+that the reference candidates have content failures. The later `a1b27144` report, comment
+[6520583133](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133), used the same invalid default
+checksum mode and is superseded on the same narrow basis. Candidate hashes, source identities and independent
+`fitsverify -l` results remain useful; the four TESS checksum warnings remain blockers. See the corrected
+measurement protocol/results in §12.
 
 The historical 178-file audit in §8 remains unchanged. The separate, owner-fixed full-product sample from
 [comment `6498702204`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204) ran at exact SHA
@@ -396,7 +407,7 @@ The following are the exact candidate byte counts and SHA-256 values measured an
 reference-candidate results below are distinct from the Tzim columns later in the report. The compact report is
 [PR comment `6520285722`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520285722).
 
-| Fixed product ID | Reference candidate bytes | Candidate SHA-256 | `fitsverify -l` on reference candidate | `funpack` storage-array + literal-header comparison |
+| Fixed product ID | Reference candidate bytes | Candidate SHA-256 | `fitsverify -l` on reference candidate | Historical default-mode `funpack` storage-array + literal-header comparison (superseded) |
 | --- | ---: | --- | --- | --- |
 | `tess-s1-c1-ccd1-calibrated` | 26,242,560 | `41698a6e1e90611d70ac06a7b0b0a29b2a68616b70b7ddbacde034ca94d03b93` | FAIL, exit 1; new checksum warning | FAIL |
 | `tess-s1-c1-ccd1-uncalibrated` | 8,280,000 | `dfa30bbef4c5aac175da2ceccb7243987fac3b2e3317cd197b268344747e54fe` | FAIL, exit 1; new checksum warning | FAIL |
@@ -431,6 +442,34 @@ unchanged-Tzim array/header comparisons passed 14/14; Tzim-candidate `funpack` i
 unchanged rows. These results do **not** validate the Astropy reference candidates above and are not Tier-2
 gain results. No FITS input or candidate bytes were uploaded, and the ROSAT permission boundary was preserved.
 
-**One owner action remains:** decide whether to keep #59 blocked on these exact reference-candidate mismatches or
-authorize a separately specified, independently validated reference-candidate protocol. Until then, retain this
-14-row result unchanged and do not apply the registered threshold.
+**No owner protocol decision is pending.** The earlier request above was based on an invalid default-checksum
+`funpack` comparison and is withdrawn. Continue the existing #59 protocol with `funpack -C` for every literal
+header comparison, require the external integer-only positive control through the same comparison path, and retain
+the original fixed rows and all negative controls. The four TESS `fitsverify -l` checksum warnings remain blockers;
+keep the registered threshold `not_applied` unless every required candidate gate passes. The corrected exact-SHA
+report and raw structured diagnostics are recorded in §12; no FITS bytes are uploaded.
+
+## 12. Corrected #59 reader-mode protocol
+
+This correction changes the `funpack` reader mode and diagnostics, not the pre-registered acceptance protocol,
+source identities, sample, threshold, or raw-row retention. The corrected fixed-sample run retains all 14 exact
+TESS, GALEX and ROSAT product rows and the Astropy reference-candidate byte counts/SHA-256 values used for the
+measurement. It does not repair or substitute inputs, normalize headers, remove checksum cards, or upload FITS
+bytes; the ROSAT permission boundary remains unchanged.
+
+Every reconstruction whose header is compared literally uses `funpack -C`: each exact Astropy Tier-2 reference
+candidate is reconstructed against its source, and each optimized Tzim candidate path reconstructs both source
+and candidate before comparison. The mode is recorded in the raw row, tool-command log, positive-control record,
+aggregate and report. The positive control is a real pinned-CFITSIO `fpack` → `fitsverify -l` → `funpack -C`
+round trip through the same exact comparator, using an integer-only fixture. It must pass before candidate header
+or payload differences are attributed to the survey candidates; `fpack` is not used as a float-array correctness
+oracle. The existing negative controls remain intact.
+
+Each comparison records per-HDU exact 80-column header-record equality and exact storage-payload equality,
+including shape and HDU type. Mismatch records distinguish `header_only`, `payload_only`, `combined`, and
+HDU-structure failures; header mismatches include the HDU/card index, keyword, first differing byte offsets,
+and exact before/after cards. The complete structured records are in `reference-hdu-diagnostics.jsonl` and
+`raw-rows.jsonl`; only hashes, sizes, cards and tool output are retained, never FITS payload bytes. The four
+TESS `fitsverify -l` checksum warnings remain independent candidate blockers, so the registered threshold stays
+`not_applied` unless all required candidate gates pass. Exact corrected per-row results and the final-SHA artifact
+are linked from the PR #84 report; no manager/owner protocol choice is being requested.

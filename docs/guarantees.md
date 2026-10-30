@@ -1036,12 +1036,15 @@ full FITS format admission or stability.
 
 **Historical audit, not current release/performance evidence.** The historical 178-file audit reported median
 **21.9%** on **84.8%** of its sample and admitted Tier 2 under its written thresholds; those figures remain
-history. The owner selected an opt-in `--fits-tile` implementation, not full FITS admission. In the separate #59
-14-product survey run at exact SHA `7b82c9edb6e5060bc8ce7ed756caebba91505b5b`, all 14 Astropy Tier-2 reference
-candidates failed the required `funpack` literal-header/storage-array round trip. The pre-registered threshold
-was **not applied**; Tzim skipped all 14 products unchanged, which is distinct from the candidate check.
+history. The owner selected an opt-in `--fits-tile` implementation, not full FITS admission. The a1 #59 report's
+14 default-checksum `funpack` comparisons are superseded as an instrument outcome and are not evidence of
+candidate content failures: each literal-header/storage-array reconstruction must use `funpack -C`. The
+corrected gate requires an external integer-only CFITSIO positive control through that same comparison path;
+structured diagnostics include per-HDU equality, card indices, keywords, first-difference offsets, and exact
+80-column cards. Four TESS `fitsverify -l` checksum warnings remain independent blockers, so the pre-registered
+threshold is **not applied**. Tzim skipped all 14 products unchanged, distinct from the reference-candidate check.
 Recompressing tiles already `GZIP_1`/`GZIP_2` measured **0.00%** in the historical run and **does not ship** — a
-`ZIMAGE` table is copied verbatim. No FITS inputs were repaired or uploaded. See [FITS audit §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample) and [measurement status](measurement-status.md) for identities and limits.
+`ZIMAGE` table is copied verbatim. No FITS inputs were repaired or uploaded. See [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol), [the historical report in §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), and [measurement status](measurement-status.md) for identities and limits.
 
 **Confirmation (#83).** `--fits-tile` remains the only transformation that can request confirmation. For a
 single direct regular file on a TTY, the handler first establishes eligibility, builds the candidate, and runs
