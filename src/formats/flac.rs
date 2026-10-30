@@ -296,6 +296,7 @@ fn write_metadata_header<W: Write>(out: &mut W, kind: u8, last: bool, len: usize
     Ok(())
 }
 
+#[cfg(test)]
 fn decode_info(data: &[u8]) -> Result<claxon::metadata::StreamInfo> {
     let file = parse(data)?;
     decode_streaminfo(data, &file)
