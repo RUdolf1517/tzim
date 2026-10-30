@@ -13,9 +13,9 @@ REPOSITORY = "RUdolf1517/tzim"
 ASSET_NAME = "tzim-x86_64-pc-windows-msvc.zip"
 TEMPLATE_DIR = Path(__file__).with_name("templates")
 TEMPLATE_NAMES = {
-    "version.yaml.in": "version.yaml",
-    "installer.yaml.in": "installer.yaml",
-    "locale.en-US.yaml.in": "locale.en-US.yaml",
+    "version.yaml.in": "RUdolf1517.tzim.yaml",
+    "installer.yaml.in": "RUdolf1517.tzim.installer.yaml",
+    "locale.en-US.yaml.in": "RUdolf1517.tzim.locale.en-US.yaml",
 }
 
 
@@ -59,7 +59,7 @@ def render(tag: str, version: str, archive_sha256: str, output_root: Path) -> tu
             text = text.replace(placeholder, replacement)
         if "{{" in text or "}}" in text:
             raise ValueError(f"unexpanded template placeholder in {source}")
-        if destination_name == "installer.yaml" and installer_url not in text:
+        if destination_name.endswith(".installer.yaml") and installer_url not in text:
             raise ValueError("installer template did not produce the fixed release URL")
         with (manifest_dir / destination_name).open("w", encoding="utf-8", newline="\n") as destination:
             destination.write(text)

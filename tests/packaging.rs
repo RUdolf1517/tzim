@@ -203,6 +203,19 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
     assert!(workflow.contains("packaging/winget/generate.py"));
     assert!(workflow.contains("sha256sum ./* > SHA256SUMS"));
 
+    let generator = read("packaging/winget/generate.py");
+    for filename in [
+        "RUdolf1517.tzim.yaml",
+        "RUdolf1517.tzim.installer.yaml",
+        "RUdolf1517.tzim.locale.en-US.yaml",
+    ] {
+        assert!(
+            generator.contains(filename),
+            "local winget manifest filename is not canonical: {filename}"
+        );
+    }
+    assert!(!generator.contains("microsoft/winget-pkgs"));
+
     let manifest_template = read("packaging/winget/templates/installer.yaml.in");
     for field in [
         "Architecture: x64",
