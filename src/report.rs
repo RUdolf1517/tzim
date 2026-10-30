@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use crate::detect::Format;
 use crate::error::Error;
-use crate::formats;
 use crate::style::{Pen, Style};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -459,92 +458,11 @@ pub fn print_json<W: Write + ?Sized>(
 }
 
 /// Writes a side-effect-free, versioned description of this binary's compiled
-/// formats and admission/confirmation policy. This deliberately reads only
-/// compile-time feature flags; it never scans paths or consults the filesystem.
+/// formats and admission/confirmation policy. The record is generated at build
+/// time from Cargo's feature set and requires no runtime filesystem access.
 pub fn print_capabilities<W: Write + ?Sized>(out: &mut W) -> io::Result<()> {
-    let mut line = String::with_capacity(2048);
-    line.push_str("{\"type\":\"capabilities\",\"capabilities_schema_version\":1");
-    line.push_str(",\"result_schema_version\":2,\"tzim_version\":");
-    push_json_string(&mut line, env!("CARGO_PKG_VERSION"));
-
-    line.push_str(",\"build_features\":{");
-    let build_features = formats::build_features();
-    for (index, (name, enabled)) in build_features.iter().enumerate() {
-        if index > 0 {
-            line.push(',');
-        }
-        push_json_string(&mut line, name);
-        line.push(':');
-        line.push_str(if *enabled { "true" } else { "false" });
-    }
-    line.push('}');
-
-    line.push_str(",\"compiled_formats\":[");
-    let compiled_formats = formats::compiled_names();
-    push_string_array(&mut line, &compiled_formats);
-    line.push_str("],\"default_enabled_formats\":[");
-    let default_enabled_formats = formats::default_enabled_names();
-    push_string_array(&mut line, &default_enabled_formats);
-    line.push(']');
-
-    line.push_str(",\"selection_flags\":[{\"flag\":\"--formats\",\"semantics\":\"allowlist\",");
-    line.push_str("\"scope\":\"compiled_formats\",\"default_set\":\"default_enabled_formats\",");
-    line.push_str("\"does_not_grant_handler_opt_ins\":true}]");
-
-    line.push_str(",\"handler_opt_ins\":[");
-    line.push_str(&format!(
-        "{{\"format\":\"jpeg\",\"available\":{},\"kind\":\"independent_verifier_default_gate\",\"build_feature\":\"jpeg\",\"default_admission_feature\":\"jpeg-v1\",\"default_enabled\":{},\"codec_only_selection_flag\":\"--formats jpeg\"}},",
-        cfg!(feature = "jpeg"),
-        cfg!(feature = "jpeg-v1")
-    ));
-    line.push_str(&format!(
-        "{{\"format\":\"fits\",\"available\":{},\"kind\":\"visible_transform_consent\",\"build_feature\":\"fits\",\"runtime_opt_in_flag\":\"--fits-tile\",\"default_enabled\":false,\"allowlist_is_not_consent\":true}},",
-        cfg!(feature = "fits")
-    ));
-    line.push_str(&format!(
-        "{{\"format\":\"flac\",\"available\":{},\"kind\":\"optional_build_feature\",\"build_feature\":\"flac\",\"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\"runtime_opt_in_flag\":null}},",
-        cfg!(feature = "flac")
-    ));
-    line.push_str(&format!(
-        "{{\"format\":\"pdf\",\"available\":{},\"kind\":\"optional_build_feature\",\"build_feature\":\"pdf\",\"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\"runtime_opt_in_flag\":null}}",
-        cfg!(feature = "pdf")
-    ));
-    line.push(']');
-
-    line.push_str(",\"transformations\":[");
-    line.push_str("{\"flag\":\"--strip-metadata\",\"available\":true,\"default\":false,\"effect\":\"removes only the documented per-format metadata list\"},");
-    line.push_str("{\"flag\":\"--nested\",\"available\":true,\"default\":false,\"effect\":\"also considers supported files inside archives\"},");
-    line.push_str(&format!(
-        "{{\"flag\":\"--zopfli\",\"available\":{},\"default\":false,\"effect\":\"uses the slower, stronger DEFLATE encoder where supported\"}},",
-        cfg!(feature = "zopfli")
-    ));
-    line.push_str(&format!(
-        "{{\"flag\":\"--fits-tile\",\"available\":{},\"default\":false,\"effect\":\"converts an eligible FITS IMAGE HDU to a tile-compressed BINTABLE\",\"confirmation_policy\":\"fits_tile_confirmation\"}}",
-        cfg!(feature = "fits")
-    ));
-    line.push(']');
-
-    line.push_str(",\"confirmation_policies\":[{");
-    line.push_str("\"id\":\"fits_tile_confirmation\",\"flag\":\"--fits-tile\",");
-    line.push_str(&format!("\"available\":{},", cfg!(feature = "fits")));
-    line.push_str("\"interactive\":{\"eligible_for_single_direct_regular_file_only\":true,\"requires_stdin_and_stderr_tty\":true,\"prompt_stream\":\"stderr\",\"default_answer\":\"no\",\"runs_after_candidate_verification\":true,\"only_yes_commits\":true},");
-    line.push_str("\"non_interactive\":{\"prompt\":false,\"flag_is_explicit_opt_in\":true},");
-    line.push_str("\"decline\":{\"status\":\"skipped\",\"original_unchanged\":true},");
-    line.push_str("\"never_prompts_for\":[\"--json\",\"--dry-run\",\"recursive_or_batch_runs\",\"nested_work\",\"filtered_or_refused_inputs\",\"candidate_or_verification_failures\"]}]");
-
-    line.push_str(
-        ",\"side_effects\":{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}\n",
-    );
-    out.write_all(line.as_bytes())
-}
-
-fn push_string_array(into: &mut String, strings: &[&str]) {
-    for (index, value) in strings.iter().enumerate() {
-        if index > 0 {
-            into.push(',');
-        }
-        push_json_string(into, value);
-    }
+    const CAPABILITIES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/capabilities.json"));
+    out.write_all(CAPABILITIES)
 }
 
 /// Width of `s` in terminal cells. Shared with the progress line, which has to

@@ -59,7 +59,23 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          & .\packaging\windows\tests\Install.Integration.ps1
+          try {
+            & .\packaging\windows\tests\Install.Integration.ps1
+          }
+          catch {
+            $diagnostic = @(
+              $_.Exception.ToString()
+              "Category: $($_.CategoryInfo)"
+              "Script stack: $($_.ScriptStackTrace)"
+              "Position: $($_.InvocationInfo.PositionMessage)"
+            ) -join [Environment]::NewLine
+            [System.IO.File]::WriteAllText(
+              'artifacts\windows-installer-error.txt',
+              $diagnostic,
+              [System.Text.UTF8Encoding]::new($false)
+            )
+            throw
+          }
 
       - name: Publish Windows integration failure log to the pull request
         if: failure()
@@ -68,12 +84,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           log_file="$RUNNER_TEMP/windows-installer-failure.log"
-          : > "$log_file"
-          for file in artifacts/*.txt artifacts/*.log; do
-            [ -f "$file" ] || continue
-            printf '\n--- %s ---\n' "$file" >> "$log_file"
-            cat "$file" >> "$log_file"
-          done
+          python - "$log_file" <<'PY'
+          from pathlib import Path
+          import sys
+
+          target = Path(sys.argv[1])
+          with target.open("w", encoding="utf-8") as output:
+              for path in sorted(Path("artifacts").glob("*")):
+                  if not path.is_file() or path.suffix.lower() not in {".txt", ".log"}:
+                      continue
+                  data = path.read_bytes()
+                  if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+                      text = data.decode("utf-16")
+                  else:
+                      text = data.decode("utf-8", errors="replace")
+                  output.write(f"\n--- {path.as_posix()} ---\n{text}\n")
+          PY
           bash .github/scripts/ci-report.sh "$log_file" windows-installer
 
       - name: Summarize evidence location and run identity
