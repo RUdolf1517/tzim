@@ -184,6 +184,10 @@ def main():
         (row.get("reference_candidate_validation") or {}).get("status", "missing")
         for row in reference_rows
     ).items()))
+    reference_fitsverify_counts = dict(sorted(Counter(
+        ((row.get("reference_candidate_validation") or {}).get("fitsverify") or {}).get("status", "missing")
+        for row in reference_rows
+    ).items()))
     tier_distribution = {
         "tier1_comparator_n": len(tier1_gains),
         "tier1_comparator_product_ids": [
@@ -202,6 +206,7 @@ def main():
     reference_gate = {
         "expected_candidates_n": len(reference_rows),
         "validation_status_counts": reference_validation_counts,
+        "fitsverify_status_counts": reference_fitsverify_counts,
         "validated_candidates_n": sum(
             1 for row in reference_rows
             if (row.get("reference_candidate_validation") or {}).get("status") == "passed"

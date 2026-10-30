@@ -914,6 +914,10 @@ def main() -> int:
         (row.get("reference_candidate_validation") or {}).get("status", "missing")
         for row in reference_rows
     ).items()))
+    reference_fitsverify_counts = dict(sorted(Counter(
+        ((row.get("reference_candidate_validation") or {}).get("fitsverify") or {}).get("status", "missing")
+        for row in reference_rows
+    ).items()))
     tier_distribution = {
         "tier1_comparator_n": len(tier1_gains),
         "tier1_comparator_product_ids": [
@@ -959,6 +963,7 @@ def main() -> int:
         "reference_candidate_gate": {
             "expected_candidates_n": len(reference_rows),
             "validation_status_counts": reference_validation_counts,
+            "fitsverify_status_counts": reference_fitsverify_counts,
             "validated_candidates_n": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("status") == "passed"),
             "candidate_identity_mismatches": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("identity_matches_measurement_candidate") is False),
             "funpack_roundtrip_failures": sum(1 for row in reference_rows if (row.get("reference_candidate_validation") or {}).get("reconstructed_array_literal_header_comparison", {}).get("ok") is False),
@@ -1015,7 +1020,7 @@ def main() -> int:
         f"- {distribution_text('Tier 2 Astropy reference-candidate gain', aggregate['existing_fits_measure_tier2_gain_pct'])}",
         f"- {distribution_text('Tier 1 existing-tile comparator gain', aggregate['existing_tile_tier1_comparator_gain_pct'])}",
         f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
-        f"- Reference candidate HEASARC/funpack gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`.",
+        f"- Reference candidate HEASARC/funpack gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
         f"- Pre-registered #59 disposition: **{threshold['status']}** — {threshold['decision']}.",
         f"- Tzim Tier 2 median among strictly smaller candidates (separate implementation result): {aggregate['tzim_tier2_gain_pct']['median']}",
         f"- Direct Tzim array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
