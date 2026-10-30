@@ -125,6 +125,8 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
             self.assertIn("pre-registered-skip", report)
             self.assertIn("source flac pass / metaflac pass; candidate not run", report)
             self.assertIn("not run (no optimized candidate)", report)
+            self.assertIn("Gain among optimized rows: not applicable (zero optimized rows).", report)
+            self.assertNotIn("None%", report)
             self.assertIn(
                 "independent decoder rejected a frame sequence gap; source bytes were preserved without modification",
                 report,

@@ -682,6 +682,11 @@ def write_summary(
     aggregate: dict,
     tool_versions: dict,
 ) -> None:
+    gain_line = (
+        f"- Gain among optimized rows: median {aggregate['optimized_median_gain_pct']}%, mean {aggregate['optimized_mean_gain_pct']}% (no input selection was made by these results)."
+        if aggregate["optimized_rows"]
+        else "- Gain among optimized rows: not applicable (zero optimized rows)."
+    )
     lines = [
         "# Fixed FLAC corpus measurement",
         "",
@@ -699,7 +704,7 @@ def write_summary(
         f"- Handler expectations: `{json.dumps(aggregate['handler_expectation_counts'], sort_keys=True)}`.",
         f"- Tzim statuses: `{json.dumps(aggregate['status_counts'], sort_keys=True)}`.",
         f"- Tzim optimized: {aggregate['optimized_rows']} rows; total bytes {aggregate['input_bytes']:,} → {aggregate['after_bytes']:,}; saved {aggregate['saved_bytes']:,} bytes.",
-        f"- Gain among optimized rows: median {aggregate['optimized_median_gain_pct']}%, mean {aggregate['optimized_mean_gain_pct']}% (no input selection was made by these results).",
+        gain_line,
         f"- Tzim first-pass time: total {aggregate['tzim_total_seconds']}s; median {aggregate['tzim_median_ms']}ms/file.",
         f"- External `flac --test` source passes: {aggregate['external_flac_source_passes']}/{aggregate['rows']}; candidate passes: {aggregate['external_flac_candidate_passes']}.",
         f"- External `metaflac` source reads: {aggregate['external_metaflac_source_passes']}/{aggregate['rows']}; candidate reads: {aggregate['external_metaflac_candidate_passes']}.",
