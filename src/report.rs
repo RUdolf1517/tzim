@@ -532,7 +532,9 @@ pub fn print_capabilities<W: Write + ?Sized>(out: &mut W) -> io::Result<()> {
     line.push_str("\"decline\":{\"status\":\"skipped\",\"original_unchanged\":true},");
     line.push_str("\"never_prompts_for\":[\"--json\",\"--dry-run\",\"recursive_or_batch_runs\",\"nested_work\",\"filtered_or_refused_inputs\",\"candidate_or_verification_failures\"]}]");
 
-    line.push_str(",\"side_effects\":{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}\n");
+    line.push_str(
+        ",\"side_effects\":{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}\n",
+    );
     out.write_all(line.as_bytes())
 }
 
@@ -770,16 +772,28 @@ mod tests {
             (ReasonCode::AboveMaximumSize, "above_maximum_size"),
             (ReasonCode::BelowMinimumSize, "below_minimum_size"),
             (ReasonCode::ConfirmationDeclined, "confirmation_declined"),
-            (ReasonCode::ConfiguredLimitExceeded, "configured_limit_exceeded"),
-            (ReasonCode::DirectoryDepthExceeded, "directory_depth_exceeded"),
+            (
+                ReasonCode::ConfiguredLimitExceeded,
+                "configured_limit_exceeded",
+            ),
+            (
+                ReasonCode::DirectoryDepthExceeded,
+                "directory_depth_exceeded",
+            ),
             (ReasonCode::FailedUnclassified, "failed_unclassified"),
             (ReasonCode::FilesystemError, "filesystem_error"),
             (ReasonCode::FormatNotCompiled, "format_not_compiled"),
             (ReasonCode::FormatNotSelected, "format_not_selected"),
             (ReasonCode::HandlerRefused, "handler_refused"),
-            (ReasonCode::HandlerRejectedSignature, "handler_rejected_signature"),
+            (
+                ReasonCode::HandlerRejectedSignature,
+                "handler_rejected_signature",
+            ),
             (ReasonCode::InputParseError, "input_parse_error"),
-            (ReasonCode::InvalidSymbolicLinkTarget, "invalid_symbolic_link_target"),
+            (
+                ReasonCode::InvalidSymbolicLinkTarget,
+                "invalid_symbolic_link_target",
+            ),
             (ReasonCode::MemoryBudgetExceeded, "memory_budget_exceeded"),
             (ReasonCode::MultipleHardLinks, "multiple_hard_links"),
             (ReasonCode::NoSmallerCandidate, "no_smaller_candidate"),
@@ -791,7 +805,10 @@ mod tests {
             ),
             (ReasonCode::ReadOnlyFile, "read_only_file"),
             (ReasonCode::SkippedUnclassified, "skipped_unclassified"),
-            (ReasonCode::SymbolicLinkNotFollowed, "symbolic_link_not_followed"),
+            (
+                ReasonCode::SymbolicLinkNotFollowed,
+                "symbolic_link_not_followed",
+            ),
             (ReasonCode::UnsupportedFormat, "unsupported_format"),
             (ReasonCode::VerificationFailed, "verification_failed"),
             (ReasonCode::InternalError, "internal_error"),

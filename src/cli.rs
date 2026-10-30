@@ -603,7 +603,10 @@ mod tests {
         assert!(matches!(command(&["--info"]), Command::Info));
         assert!(matches!(command(&["--check-deps"]), Command::CheckDeps));
         assert!(matches!(command(&["--list-formats"]), Command::Formats));
-        assert!(matches!(command(&["--capabilities"]), Command::Capabilities));
+        assert!(matches!(
+            command(&["--capabilities"]),
+            Command::Capabilities
+        ));
         assert!(matches!(command(&["formats"]), Command::Formats));
     }
 

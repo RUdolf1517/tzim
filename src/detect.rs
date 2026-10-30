@@ -232,7 +232,11 @@ pub fn expand(
     let md = match fs::symlink_metadata(path) {
         Ok(md) => md,
         Err(e) => {
-            problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError));
+            problems.push((
+                path.to_path_buf(),
+                Error::Io(e),
+                ReasonCode::FilesystemError,
+            ));
             return;
         }
     };
@@ -260,7 +264,11 @@ pub fn expand(
                     ));
                 }
             }
-            Err(e) => problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError)),
+            Err(e) => problems.push((
+                path.to_path_buf(),
+                Error::Io(e),
+                ReasonCode::FilesystemError,
+            )),
         }
         return;
     }
@@ -298,7 +306,11 @@ fn expand_dir(
     let entries = match fs::read_dir(path) {
         Ok(rd) => rd,
         Err(e) => {
-            problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError));
+            problems.push((
+                path.to_path_buf(),
+                Error::Io(e),
+                ReasonCode::FilesystemError,
+            ));
             return;
         }
     };
@@ -307,7 +319,11 @@ fn expand_dir(
     for entry in entries {
         match entry {
             Ok(e) => children.push(e.path()),
-            Err(e) => problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError)),
+            Err(e) => problems.push((
+                path.to_path_buf(),
+                Error::Io(e),
+                ReasonCode::FilesystemError,
+            )),
         }
     }
     // Deterministic order: sort by raw path bytes so runs are reproducible.

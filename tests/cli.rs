@@ -35,7 +35,10 @@ fn list_formats_describes_jpeg_admission_for_this_build() {
     }
 
     #[cfg(not(feature = "jpeg"))]
-    assert!(!stdout.lines().any(|line| line.starts_with("JPEG ")), "{stdout}");
+    assert!(
+        !stdout.lines().any(|line| line.starts_with("JPEG ")),
+        "{stdout}"
+    );
 }
 
 #[test]
@@ -44,10 +47,8 @@ fn capabilities_is_one_versioned_read_only_json_record() {
         .duration_since(UNIX_EPOCH)
         .expect("clock after epoch")
         .as_nanos();
-    let isolated = std::env::temp_dir().join(format!(
-        "tzim-capabilities-{}-{nonce}",
-        std::process::id()
-    ));
+    let isolated =
+        std::env::temp_dir().join(format!("tzim-capabilities-{}-{nonce}", std::process::id()));
     fs::create_dir(&isolated).expect("create empty capability working directory");
     let output = Command::new(env!("CARGO_BIN_EXE_tzim"))
         .arg("--capabilities")
@@ -56,17 +57,33 @@ fn capabilities_is_one_versioned_read_only_json_record() {
         .output()
         .expect("run capabilities with non-TTY stdin/stdout");
     assert!(output.status.success(), "{output:?}");
-    assert!(output.stderr.is_empty(), "diagnostics on stderr: {output:?}");
-    assert_eq!(fs::read_dir(&isolated).unwrap().count(), 0, "capabilities wrote into its working directory");
+    assert!(
+        output.stderr.is_empty(),
+        "diagnostics on stderr: {output:?}"
+    );
+    assert_eq!(
+        fs::read_dir(&isolated).unwrap().count(),
+        0,
+        "capabilities wrote into its working directory"
+    );
     fs::remove_dir(&isolated).expect("remove empty capability working directory");
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 capabilities output");
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 1, "{stdout}");
-    assert!(lines[0].starts_with("{\"type\":\"capabilities\""), "{stdout}");
-    assert!(lines[0].contains("\"capabilities_schema_version\":1"), "{stdout}");
+    assert!(
+        lines[0].starts_with("{\"type\":\"capabilities\""),
+        "{stdout}"
+    );
+    assert!(
+        lines[0].contains("\"capabilities_schema_version\":1"),
+        "{stdout}"
+    );
     assert!(lines[0].contains("\"result_schema_version\":2"), "{stdout}");
     assert!(lines[0].contains("\"compiled_formats\":["), "{stdout}");
-    assert!(lines[0].contains("\"default_enabled_formats\":["), "{stdout}");
+    assert!(
+        lines[0].contains("\"default_enabled_formats\":["),
+        "{stdout}"
+    );
     assert!(lines[0].contains("\"selection_flags\":["), "{stdout}");
     assert!(lines[0].contains("\"handler_opt_ins\":["), "{stdout}");
     assert!(lines[0].contains("\"confirmation_policies\":["), "{stdout}");
@@ -78,7 +95,10 @@ fn capabilities_is_one_versioned_read_only_json_record() {
     #[cfg(feature = "jpeg")]
     assert!(lines[0].contains("\"jpeg\",\"available\":true"), "{stdout}");
     #[cfg(not(feature = "jpeg"))]
-    assert!(lines[0].contains("\"jpeg\",\"available\":false"), "{stdout}");
+    assert!(
+        lines[0].contains("\"jpeg\",\"available\":false"),
+        "{stdout}"
+    );
 
     #[cfg(feature = "jpeg-v1")]
     assert!(lines[0].contains("\"default_enabled\":true"), "{stdout}");

@@ -165,7 +165,10 @@ fn the_formula_installs_more_than_a_binary() {
 #[test]
 fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
     let installer = read("packaging/windows/install.ps1");
-    assert!(installer.starts_with('\u{feff}'), "PowerShell installer must retain its UTF-8 BOM");
+    assert!(
+        installer.starts_with('\u{feff}'),
+        "PowerShell installer must retain its UTF-8 BOM"
+    );
     let integration_harness = read("packaging/windows/tests/Install.Integration.ps1");
     assert!(
         integration_harness.starts_with('\u{feff}'),
@@ -185,7 +188,10 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
         "Assert-TzimX64Architecture",
         "Unsupported Windows architecture",
     ] {
-        assert!(installer.contains(required), "Windows installer is missing {required}");
+        assert!(
+            installer.contains(required),
+            "Windows installer is missing {required}"
+        );
     }
     assert!(!installer.contains("Invoke-Expression"));
     assert!(!installer.contains("RunAs"));
@@ -205,7 +211,10 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
         "RelativeFilePath: tzim.exe",
         "PortableCommandAlias: tzim",
     ] {
-        assert!(manifest_template.contains(field), "winget template is missing {field}");
+        assert!(
+            manifest_template.contains(field),
+            "winget template is missing {field}"
+        );
     }
 }
 
