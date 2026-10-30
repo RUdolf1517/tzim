@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use crate::report::ReasonCode;
 
 /// Formats Tzim can handle. Detection is by content, never by file name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -212,7 +213,7 @@ pub fn expand(
     recursive: bool,
     follow_symlinks: bool,
     out: &mut Vec<PathBuf>,
-    problems: &mut Vec<(PathBuf, Error)>,
+    problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
     depth: usize,
 ) {
     // A depth guard, and it is *the* guard: a symlink cycle under
@@ -223,6 +224,7 @@ pub fn expand(
         problems.push((
             path.to_path_buf(),
             Error::limit("directory nesting deeper than 64 levels; refused"),
+            ReasonCode::DirectoryDepthExceeded,
         ));
         return;
     }
@@ -230,7 +232,7 @@ pub fn expand(
     let md = match fs::symlink_metadata(path) {
         Ok(md) => md,
         Err(e) => {
-            problems.push((path.to_path_buf(), Error::Io(e)));
+            problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError));
             return;
         }
     };
@@ -240,6 +242,7 @@ pub fn expand(
             problems.push((
                 path.to_path_buf(),
                 Error::parse("symbolic link skipped (use --follow-symlinks)"),
+                ReasonCode::SymbolicLinkNotFollowed,
             ));
             return;
         }
@@ -253,10 +256,11 @@ pub fn expand(
                     problems.push((
                         path.to_path_buf(),
                         Error::parse("symbolic link does not point to a regular file"),
+                        ReasonCode::InvalidSymbolicLinkTarget,
                     ));
                 }
             }
-            Err(e) => problems.push((path.to_path_buf(), Error::Io(e))),
+            Err(e) => problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError)),
         }
         return;
     }
@@ -269,6 +273,7 @@ pub fn expand(
         problems.push((
             path.to_path_buf(),
             Error::parse("not a regular file; skipped"),
+            ReasonCode::NotARegularFile,
         ));
     }
 }
@@ -278,13 +283,14 @@ fn expand_dir(
     recursive: bool,
     follow_symlinks: bool,
     out: &mut Vec<PathBuf>,
-    problems: &mut Vec<(PathBuf, Error)>,
+    problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
     depth: usize,
 ) {
     if depth > 64 {
         problems.push((
             path.to_path_buf(),
             Error::limit("directory nesting deeper than 64 levels; refused"),
+            ReasonCode::DirectoryDepthExceeded,
         ));
         return;
     }
@@ -292,7 +298,7 @@ fn expand_dir(
     let entries = match fs::read_dir(path) {
         Ok(rd) => rd,
         Err(e) => {
-            problems.push((path.to_path_buf(), Error::Io(e)));
+            problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError));
             return;
         }
     };
@@ -301,7 +307,7 @@ fn expand_dir(
     for entry in entries {
         match entry {
             Ok(e) => children.push(e.path()),
-            Err(e) => problems.push((path.to_path_buf(), Error::Io(e))),
+            Err(e) => problems.push((path.to_path_buf(), Error::Io(e), ReasonCode::FilesystemError)),
         }
     }
     // Deterministic order: sort by raw path bytes so runs are reproducible.
@@ -315,7 +321,7 @@ fn expand_dir(
         let md = match fs::symlink_metadata(&child) {
             Ok(md) => md,
             Err(e) => {
-                problems.push((child, Error::Io(e)));
+                problems.push((child, Error::Io(e), ReasonCode::FilesystemError));
                 continue;
             }
         };
@@ -329,7 +335,7 @@ fn expand_dir(
                     expand_dir(&child, recursive, follow_symlinks, out, problems, depth + 1)
                 }
                 Ok(_) => {}
-                Err(e) => problems.push((child, Error::Io(e))),
+                Err(e) => problems.push((child, Error::Io(e), ReasonCode::FilesystemError)),
             }
             continue;
         }

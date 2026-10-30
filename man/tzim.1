@@ -10,7 +10,7 @@ tzim \- shrink a file without ever losing information
 [\fIOPTIONS\fR] \fIPATH\fR...
 .br
 .B tzim
-\fB\-\-info\fR | \fB\-\-list\-formats\fR | \fB\-\-check\-deps\fR | \fB\-\-help\fR | \fB\-\-version\fR
+\fB\-\-info\fR | \fB\-\-list\-formats\fR | \fB\-\-capabilities\fR | \fB\-\-check\-deps\fR | \fB\-\-help\fR | \fB\-\-version\fR
 .SH DESCRIPTION
 .B tzim
 rewrites files into a smaller and equivalent form. It never performs a lossy or
@@ -158,6 +158,11 @@ this build, links.
 .TP
 .B \-\-list\-formats
 List the handlers compiled into this build and what each one preserves.
+.TP
+.B \-\-capabilities
+Print one versioned JSON object describing compiled formats, default admission,
+selection flags, handler opt-ins, transformation behavior and confirmation policy.
+This command does not scan files, write files or prompt.
 .TP
 .B \-\-check\-deps
 Print the external programs needed at run time. There are none.

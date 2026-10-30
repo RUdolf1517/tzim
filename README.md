@@ -63,15 +63,39 @@ sudo dnf install ./tzim.x86_64.rpm
 
 Both packages install `man tzim` and completion for bash, zsh and fish.
 
-Windows, x64 — a zip on the releases page:
+Windows, x64 — download the installer as a file so you can inspect it before running it:
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/RUdolf1517/tzim/releases/latest/download/tzim-x86_64-pc-windows-msvc.zip -OutFile tzim.zip
-Expand-Archive tzim.zip -DestinationPath $HOME\tzim
+$installer = Join-Path $PWD 'tzim-install.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri https://raw.githubusercontent.com/RUdolf1517/tzim/main/packaging/windows/install.ps1 -OutFile $installer
+Get-FileHash $installer -Algorithm SHA256
+# Review the saved script, then run it with a process-scoped policy (no machine-wide change):
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Version latest
 ```
 
-Then put `tzim.exe` on `PATH`. There is no package manager on Windows: the zip is the channel, and nothing is
-written outside the directory you unpack it into.
+The installer resolves `latest` once through the GitHub Releases API, then downloads the x64 archive and
+`SHA256SUMS` from that fixed tag. It verifies the exact asset name, archive hash and `tzim.exe --version`
+before atomically replacing anything. It installs under `%LOCALAPPDATA%\Programs\tzim`, updates only the
+current user's `PATH`, never requests elevation, and preserves a prior working install if a download or
+replacement fails. Open a new terminal to pick up the persisted PATH. To remove only installer-owned files
+and its own PATH entry, run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer -Uninstall`.
+The release currently ships x64 only; the installer rejects 32-bit and ARM64 Windows rather than selecting a
+wrong binary. The original Windows ZIP remains a manual fallback; see the [release guide](docs/releases.md#windows-manual-zip-fallback)
+for fixed-tag checksum verification and extraction commands.
+
+Winget manifests are generated for **local** `--manifest` use; they are not published to or searched through
+a winget community source. From a source checkout with Python 3.9+, generate and use the exact v0.15.0
+manifest against its real release archive like this:
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-pc-windows-msvc.zip -OutFile .\tzim-x86_64-pc-windows-msvc.zip
+python .\packaging\winget\generate.py --tag v0.15.0 --windows-archive .\tzim-x86_64-pc-windows-msvc.zip --output-dir .\winget-local
+winget validate --manifest .\winget-local\0.15.0
+winget install --manifest .\winget-local\0.15.0 --scope user --accept-package-agreements
+```
+
+The release workflow generates and checksums a local manifest bundle for each future release. The already
+published v0.15.0 release and its assets are unchanged.
 
 </details>
 
@@ -88,6 +112,7 @@ tzim ./files -r                 # a whole tree
 tzim ./files -r --dry-run       # do everything except the final rename
 tzim image.png --zopfli         # best ratio, 10-100x slower
 tzim . -r --json                # one JSON object per file
+tzim --capabilities             # versioned build/runtime-policy JSON; read-only
 ```
 
 The path is the command: there is no subcommand and no output file to name. A single file is a first-class

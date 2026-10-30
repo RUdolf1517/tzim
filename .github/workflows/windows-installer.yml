@@ -1,0 +1,76 @@
+name: windows installer
+
+on:
+  push:
+    branches: [main, "arena/**"]
+    paths:
+      - "packaging/windows/**"
+      - "packaging/winget/**"
+      - ".github/workflows/windows-installer.yml"
+      - ".github/workflows/release.yml"
+      - "README.md"
+      - "docs/releases.md"
+  pull_request:
+    paths:
+      - "packaging/windows/**"
+      - "packaging/winget/**"
+      - ".github/workflows/windows-installer.yml"
+      - ".github/workflows/release.yml"
+      - "README.md"
+      - "docs/releases.md"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    name: install, upgrade, rollback, uninstall, and local winget
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Record Windows and winget environment
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          "RUN_ID=$env:GITHUB_RUN_ID" | Set-Content -Path artifacts\run-identity.txt
+          "RUN_ATTEMPT=$env:GITHUB_RUN_ATTEMPT" | Add-Content -Path artifacts\run-identity.txt
+          "HEAD_SHA=$env:GITHUB_SHA" | Add-Content -Path artifacts\run-identity.txt
+          $PSVersionTable | Out-String | Tee-Object -FilePath artifacts\powershell-version.txt
+          winget.exe --version 2>&1 | Tee-Object -FilePath artifacts\winget-version.txt
+          if ($LASTEXITCODE -ne 0) { throw "winget --version failed with exit code $LASTEXITCODE" }
+          python --version 2>&1 | Tee-Object -FilePath artifacts\python-version.txt
+          if ($LASTEXITCODE -ne 0) { throw "python --version failed with exit code $LASTEXITCODE" }
+
+      - name: Run Windows installer integration and winget install
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\packaging\windows\tests\Install.Integration.ps1
+
+      - name: Summarize evidence location and run identity
+        if: always()
+        shell: powershell
+        run: |
+          @"
+          ## Windows installer integration evidence
+
+          - Run ID: $env:GITHUB_RUN_ID (attempt $env:GITHUB_RUN_ATTEMPT)
+          - Exact head SHA: $env:GITHUB_SHA
+          - Raw logs, downloaded release inputs, generated local winget manifests, and command outputs: artifact `windows-installer-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT`
+          - The integration requires `winget validate --manifest` and a real `winget install --manifest`; no community source or publication is used.
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 90

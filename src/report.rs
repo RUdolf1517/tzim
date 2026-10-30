@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::detect::Format;
 use crate::error::Error;
+use crate::formats;
 use crate::style::{Pen, Style};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -14,6 +15,84 @@ pub enum Status {
     Unsupported,
     Skipped,
     Failed,
+}
+
+/// Stable machine-readable explanation for an outcome that did not optimize a
+/// file. The human-facing `note` and `error` remain the detailed diagnostics;
+/// this identifier is deliberately independent of their wording.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReasonCode {
+    AbortedByFailFast,
+    AboveMaximumSize,
+    BelowMinimumSize,
+    ConfirmationDeclined,
+    ConfiguredLimitExceeded,
+    DirectoryDepthExceeded,
+    FailedUnclassified,
+    FilesystemError,
+    FormatNotCompiled,
+    FormatNotSelected,
+    HandlerRefused,
+    HandlerRejectedSignature,
+    InputParseError,
+    InvalidSymbolicLinkTarget,
+    MemoryBudgetExceeded,
+    MultipleHardLinks,
+    NoSmallerCandidate,
+    NotARegularFile,
+    OwnershipChangeDenied,
+    PathFilteredByIncludeExclude,
+    ReadOnlyFile,
+    SkippedUnclassified,
+    SymbolicLinkNotFollowed,
+    UnsupportedFormat,
+    VerificationFailed,
+    InternalError,
+}
+
+impl ReasonCode {
+    pub const fn id(self) -> &'static str {
+        match self {
+            ReasonCode::AbortedByFailFast => "aborted_by_fail_fast",
+            ReasonCode::AboveMaximumSize => "above_maximum_size",
+            ReasonCode::BelowMinimumSize => "below_minimum_size",
+            ReasonCode::ConfirmationDeclined => "confirmation_declined",
+            ReasonCode::ConfiguredLimitExceeded => "configured_limit_exceeded",
+            ReasonCode::DirectoryDepthExceeded => "directory_depth_exceeded",
+            ReasonCode::FailedUnclassified => "failed_unclassified",
+            ReasonCode::FilesystemError => "filesystem_error",
+            ReasonCode::FormatNotCompiled => "format_not_compiled",
+            ReasonCode::FormatNotSelected => "format_not_selected",
+            ReasonCode::HandlerRefused => "handler_refused",
+            ReasonCode::HandlerRejectedSignature => "handler_rejected_signature",
+            ReasonCode::InputParseError => "input_parse_error",
+            ReasonCode::InvalidSymbolicLinkTarget => "invalid_symbolic_link_target",
+            ReasonCode::MemoryBudgetExceeded => "memory_budget_exceeded",
+            ReasonCode::MultipleHardLinks => "multiple_hard_links",
+            ReasonCode::NoSmallerCandidate => "no_smaller_candidate",
+            ReasonCode::NotARegularFile => "not_a_regular_file",
+            ReasonCode::OwnershipChangeDenied => "ownership_change_denied",
+            ReasonCode::PathFilteredByIncludeExclude => "path_filtered_by_include_exclude",
+            ReasonCode::ReadOnlyFile => "read_only_file",
+            ReasonCode::SkippedUnclassified => "skipped_unclassified",
+            ReasonCode::SymbolicLinkNotFollowed => "symbolic_link_not_followed",
+            ReasonCode::UnsupportedFormat => "unsupported_format",
+            ReasonCode::VerificationFailed => "verification_failed",
+            ReasonCode::InternalError => "internal_error",
+        }
+    }
+
+    pub fn for_error(error: &Error) -> ReasonCode {
+        match error {
+            Error::Io(_) => ReasonCode::FilesystemError,
+            Error::Parse(_) => ReasonCode::InputParseError,
+            Error::Limit(_) => ReasonCode::ConfiguredLimitExceeded,
+            Error::Refused(_) => ReasonCode::HandlerRefused,
+            Error::Unsupported(_) => ReasonCode::HandlerRejectedSignature,
+            Error::Verify(_) => ReasonCode::VerificationFailed,
+            Error::Usage(_) | Error::Internal(_) => ReasonCode::InternalError,
+        }
+    }
 }
 
 impl Status {
@@ -60,6 +139,7 @@ pub struct Outcome {
     pub path: PathBuf,
     pub format: Option<Format>,
     pub status: Status,
+    pub reason_code: Option<ReasonCode>,
     pub before: u64,
     pub after: u64,
     pub duration: Duration,
@@ -73,6 +153,7 @@ impl Outcome {
             path,
             format: None,
             status,
+            reason_code: None,
             before,
             after: before,
             duration: Duration::from_secs(0),
@@ -90,6 +171,15 @@ impl Outcome {
 
     pub fn saved(&self) -> u64 {
         self.before.saturating_sub(self.after)
+    }
+
+    fn reason_code(&self) -> Option<ReasonCode> {
+        self.reason_code.or_else(|| match self.status {
+            Status::Unsupported => Some(ReasonCode::UnsupportedFormat),
+            Status::Skipped => Some(ReasonCode::SkippedUnclassified),
+            Status::Failed => Some(ReasonCode::FailedUnclassified),
+            Status::Optimized | Status::WouldOptimize | Status::AlreadyOptimal => None,
+        })
     }
 
     fn failed_by_verify(&self) -> bool {
@@ -316,6 +406,11 @@ pub fn print_json<W: Write + ?Sized>(
         }
         line.push_str(",\"status\":");
         push_json_string(&mut line, o.status.id());
+        line.push_str(",\"reason_code\":");
+        match o.reason_code() {
+            Some(reason) => push_json_string(&mut line, reason.id()),
+            None => line.push_str("null"),
+        }
         line.push_str(&format!(",\"before\":{},\"after\":{}", o.before, o.after));
         line.push_str(&format!(",\"saved\":{}", o.saved()));
         line.push_str(",\"guarantee\":");
@@ -346,7 +441,7 @@ pub fn print_json<W: Write + ?Sized>(
 
     writeln!(
         out,
-        "{{\"type\":\"summary\",\"schema\":1,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
+        "{{\"type\":\"summary\",\"schema\":2,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
         summary.files,
         summary.optimized,
         summary.would_optimize,
@@ -361,6 +456,93 @@ pub fn print_json<W: Write + ?Sized>(
         dry_run,
         strip_metadata
     )
+}
+
+/// Writes a side-effect-free, versioned description of this binary's compiled
+/// formats and admission/confirmation policy. This deliberately reads only
+/// compile-time feature flags; it never scans paths or consults the filesystem.
+pub fn print_capabilities<W: Write + ?Sized>(out: &mut W) -> io::Result<()> {
+    let mut line = String::with_capacity(2048);
+    line.push_str("{\"type\":\"capabilities\",\"capabilities_schema_version\":1");
+    line.push_str(",\"result_schema_version\":2,\"tzim_version\":");
+    push_json_string(&mut line, env!("CARGO_PKG_VERSION"));
+
+    line.push_str(",\"build_features\":{");
+    let build_features = formats::build_features();
+    for (index, (name, enabled)) in build_features.iter().enumerate() {
+        if index > 0 {
+            line.push(',');
+        }
+        push_json_string(&mut line, name);
+        line.push(':');
+        line.push_str(if *enabled { "true" } else { "false" });
+    }
+    line.push('}');
+
+    line.push_str(",\"compiled_formats\":[");
+    let compiled_formats = formats::compiled_names();
+    push_string_array(&mut line, &compiled_formats);
+    line.push_str("],\"default_enabled_formats\":[");
+    let default_enabled_formats = formats::default_enabled_names();
+    push_string_array(&mut line, &default_enabled_formats);
+    line.push_str("]");
+
+    line.push_str(",\"selection_flags\":[{\"flag\":\"--formats\",\"semantics\":\"allowlist\",");
+    line.push_str("\"scope\":\"compiled_formats\",\"default_set\":\"default_enabled_formats\",");
+    line.push_str("\"does_not_grant_handler_opt_ins\":true}]");
+
+    line.push_str(",\"handler_opt_ins\":[");
+    line.push_str(&format!(
+        "{{\"format\":\"jpeg\",\"available\":{},\"kind\":\"independent_verifier_default_gate\",\"build_feature\":\"jpeg\",\"default_admission_feature\":\"jpeg-v1\",\"default_enabled\":{},\"codec_only_selection_flag\":\"--formats jpeg\"}},",
+        cfg!(feature = "jpeg"),
+        cfg!(feature = "jpeg-v1")
+    ));
+    line.push_str(&format!(
+        "{{\"format\":\"fits\",\"available\":{},\"kind\":\"visible_transform_consent\",\"build_feature\":\"fits\",\"runtime_opt_in_flag\":\"--fits-tile\",\"default_enabled\":false,\"allowlist_is_not_consent\":true}},",
+        cfg!(feature = "fits")
+    ));
+    line.push_str(&format!(
+        "{{\"format\":\"flac\",\"available\":{},\"kind\":\"optional_build_feature\",\"build_feature\":\"flac\",\"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\"runtime_opt_in_flag\":null}},",
+        cfg!(feature = "flac")
+    ));
+    line.push_str(&format!(
+        "{{\"format\":\"pdf\",\"available\":{},\"kind\":\"optional_build_feature\",\"build_feature\":\"pdf\",\"feature_in_default_set\":false,\"enabled_by_default_when_compiled\":true,\"runtime_opt_in_flag\":null}}",
+        cfg!(feature = "pdf")
+    ));
+    line.push(']');
+
+    line.push_str(",\"transformations\":[");
+    line.push_str("{\"flag\":\"--strip-metadata\",\"available\":true,\"default\":false,\"effect\":\"removes only the documented per-format metadata list\"},");
+    line.push_str("{\"flag\":\"--nested\",\"available\":true,\"default\":false,\"effect\":\"also considers supported files inside archives\"},");
+    line.push_str(&format!(
+        "{{\"flag\":\"--zopfli\",\"available\":{},\"default\":false,\"effect\":\"uses the slower, stronger DEFLATE encoder where supported\"}},",
+        cfg!(feature = "zopfli")
+    ));
+    line.push_str(&format!(
+        "{{\"flag\":\"--fits-tile\",\"available\":{},\"default\":false,\"effect\":\"converts an eligible FITS IMAGE HDU to a tile-compressed BINTABLE\",\"confirmation_policy\":\"fits_tile_confirmation\"}}",
+        cfg!(feature = "fits")
+    ));
+    line.push(']');
+
+    line.push_str(",\"confirmation_policies\":[{");
+    line.push_str("\"id\":\"fits_tile_confirmation\",\"flag\":\"--fits-tile\",");
+    line.push_str(&format!("\"available\":{},", cfg!(feature = "fits")));
+    line.push_str("\"interactive\":{\"eligible_for_single_direct_regular_file_only\":true,\"requires_stdin_and_stderr_tty\":true,\"prompt_stream\":\"stderr\",\"default_answer\":\"no\",\"runs_after_candidate_verification\":true,\"only_yes_commits\":true},");
+    line.push_str("\"non_interactive\":{\"prompt\":false,\"flag_is_explicit_opt_in\":true},");
+    line.push_str("\"decline\":{\"status\":\"skipped\",\"original_unchanged\":true},");
+    line.push_str("\"never_prompts_for\":[\"--json\",\"--dry-run\",\"recursive_or_batch_runs\",\"nested_work\",\"filtered_or_refused_inputs\",\"candidate_or_verification_failures\"]}]");
+
+    line.push_str(",\"side_effects\":{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}\n");
+    out.write_all(line.as_bytes())
+}
+
+fn push_string_array(into: &mut String, strings: &[&str]) {
+    for (index, value) in strings.iter().enumerate() {
+        if index > 0 {
+            into.push(',');
+        }
+        push_json_string(into, value);
+    }
 }
 
 /// Width of `s` in terminal cells. Shared with the progress line, which has to
@@ -579,6 +761,72 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(&[0xff, 0xfe]), "//4=");
+    }
+
+    #[test]
+    fn reason_codes_are_stable_and_independent_of_diagnostic_prose() {
+        let stable_codes = [
+            (ReasonCode::AbortedByFailFast, "aborted_by_fail_fast"),
+            (ReasonCode::AboveMaximumSize, "above_maximum_size"),
+            (ReasonCode::BelowMinimumSize, "below_minimum_size"),
+            (ReasonCode::ConfirmationDeclined, "confirmation_declined"),
+            (ReasonCode::ConfiguredLimitExceeded, "configured_limit_exceeded"),
+            (ReasonCode::DirectoryDepthExceeded, "directory_depth_exceeded"),
+            (ReasonCode::FailedUnclassified, "failed_unclassified"),
+            (ReasonCode::FilesystemError, "filesystem_error"),
+            (ReasonCode::FormatNotCompiled, "format_not_compiled"),
+            (ReasonCode::FormatNotSelected, "format_not_selected"),
+            (ReasonCode::HandlerRefused, "handler_refused"),
+            (ReasonCode::HandlerRejectedSignature, "handler_rejected_signature"),
+            (ReasonCode::InputParseError, "input_parse_error"),
+            (ReasonCode::InvalidSymbolicLinkTarget, "invalid_symbolic_link_target"),
+            (ReasonCode::MemoryBudgetExceeded, "memory_budget_exceeded"),
+            (ReasonCode::MultipleHardLinks, "multiple_hard_links"),
+            (ReasonCode::NoSmallerCandidate, "no_smaller_candidate"),
+            (ReasonCode::NotARegularFile, "not_a_regular_file"),
+            (ReasonCode::OwnershipChangeDenied, "ownership_change_denied"),
+            (
+                ReasonCode::PathFilteredByIncludeExclude,
+                "path_filtered_by_include_exclude",
+            ),
+            (ReasonCode::ReadOnlyFile, "read_only_file"),
+            (ReasonCode::SkippedUnclassified, "skipped_unclassified"),
+            (ReasonCode::SymbolicLinkNotFollowed, "symbolic_link_not_followed"),
+            (ReasonCode::UnsupportedFormat, "unsupported_format"),
+            (ReasonCode::VerificationFailed, "verification_failed"),
+            (ReasonCode::InternalError, "internal_error"),
+        ];
+        for (code, stable_id) in stable_codes {
+            assert_eq!(code.id(), stable_id);
+        }
+
+        let mut first_skip = Outcome::new(PathBuf::from("a"), Status::Skipped, 10);
+        first_skip.reason_code = Some(ReasonCode::ConfirmationDeclined);
+        first_skip.note = Some("the existing human explanation".to_string());
+        let mut second_skip = Outcome::new(PathBuf::from("b"), Status::Skipped, 10);
+        second_skip.reason_code = Some(ReasonCode::ConfirmationDeclined);
+        second_skip.note = Some("reworded diagnostic, same machine reason".to_string());
+        let mut failed = Outcome::new(PathBuf::from("c"), Status::Failed, 20);
+        failed.reason_code = Some(ReasonCode::FilesystemError);
+        failed.error = Some(Error::Io(io::Error::other("permission denied")));
+        let outcomes = [first_skip, second_skip, failed];
+        let summary = summarize(&outcomes, Duration::from_millis(1));
+        let mut bytes = Vec::new();
+        print_json(&mut bytes, &outcomes, &summary, false, false).unwrap();
+        let json = String::from_utf8(bytes).unwrap();
+
+        assert_eq!(
+            json.matches("\"reason_code\":\"confirmation_declined\"")
+                .count(),
+            2
+        );
+        assert!(json.contains("\"status\":\"skipped\",\"reason_code\":\"confirmation_declined\""));
+        assert!(json.contains("\"note\":\"the existing human explanation\""));
+        assert!(json.contains("\"note\":\"reworded diagnostic, same machine reason\""));
+        assert!(json.contains("\"error\":null"));
+        assert!(json.contains("\"status\":\"failed\",\"reason_code\":\"filesystem_error\""));
+        assert!(json.contains("\"kind\":\"io\",\"message\":\"permission denied\""));
+        assert!(json.contains("\"schema\":2"));
     }
 
     #[test]

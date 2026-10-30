@@ -15,7 +15,7 @@ use tzim::formats;
 use tzim::pipeline;
 use tzim::pool;
 use tzim::progress::Progress;
-use tzim::report::{self, Human, Outcome, Status};
+use tzim::report::{self, Human, Outcome, ReasonCode, Status};
 use tzim::style::{self, Choice, Pen, Style};
 use tzim::walk;
 
@@ -26,6 +26,7 @@ fn main() -> ExitCode {
         Ok(Command::Help) => emit(|out| write!(out, "{}", cli::HELP)),
         Ok(Command::Version) => emit(|out| writeln!(out, "tzim {}", env!("CARGO_PKG_VERSION"))),
         Ok(Command::Formats) => emit(print_formats),
+        Ok(Command::Capabilities) => emit(report::print_capabilities),
         Ok(Command::Info) => emit(print_info),
         Ok(Command::CheckDeps) => emit(print_check_deps),
         Ok(Command::Optimize(args)) => ExitCode::from(run_optimize(&args) as u8),
@@ -169,7 +170,7 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
     writeln!(out)?;
     writeln!(
         out,
-        "Try `tzim photo.png`, `tzim --list-formats` or `tzim --check-deps`."
+        "Try `tzim photo.png`, `tzim --list-formats`, `tzim --capabilities` or `tzim --check-deps`."
     )
 }
 
@@ -288,13 +289,15 @@ fn run_optimize(args: &cli::Args) -> i32 {
 
     // Paths that never reached the pipeline still need a report line: silently
     // dropping an argument would be exactly the kind of surprise to avoid.
-    for (path, reason) in &scan.skipped {
+    for (path, reason, reason_code) in &scan.skipped {
         let mut outcome = Outcome::new(path.clone(), Status::Skipped, 0);
+        outcome.reason_code = Some(*reason_code);
         outcome.note = Some(reason.clone());
         outcomes.push(outcome);
     }
     for (path, err) in &scan.errors {
         let mut outcome = Outcome::new(path.clone(), Status::Failed, 0);
+        outcome.reason_code = Some(ReasonCode::for_error(err));
         outcome.error = Some(clone_error(err));
         outcomes.push(outcome);
     }
@@ -498,7 +501,11 @@ mod prompt_policy_tests {
         ));
 
         let mut filtered = scan(vec![file.clone()]);
-        filtered.skipped.push((file.clone(), "filtered".into()));
+        filtered.skipped.push((
+            file.clone(),
+            "filtered".into(),
+            ReasonCode::PathFilteredByIncludeExclude,
+        ));
         assert!(!should_prompt_fits_tile(&direct, &filtered, true, true));
 
         let mut errored = scan(vec![file.clone()]);

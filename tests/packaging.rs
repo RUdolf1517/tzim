@@ -163,6 +163,53 @@ fn the_formula_installs_more_than_a_binary() {
 }
 
 #[test]
+fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
+    let installer = read("packaging/windows/install.ps1");
+    assert!(installer.starts_with('\u{feff}'), "PowerShell installer must retain its UTF-8 BOM");
+    let integration_harness = read("packaging/windows/tests/Install.Integration.ps1");
+    assert!(
+        integration_harness.starts_with('\u{feff}'),
+        "PowerShell integration harness must retain its UTF-8 BOM"
+    );
+    for required in [
+        "api.github.com/repos/",
+        "releases/download/",
+        "tzim-x86_64-pc-windows-msvc.zip",
+        "SHA256SUMS",
+        "Get-FileHash",
+        "LOCALAPPDATA",
+        "EnvironmentVariableTarget]::User",
+        "path_entry_owned",
+        "Invoke-TzimUninstallCore",
+        "Assert-TzimExecutableAvailable",
+        "Assert-TzimX64Architecture",
+        "Unsupported Windows architecture",
+    ] {
+        assert!(installer.contains(required), "Windows installer is missing {required}");
+    }
+    assert!(!installer.contains("Invoke-Expression"));
+    assert!(!installer.contains("RunAs"));
+    assert!(!installer.contains("EnvironmentVariableTarget]::Machine"));
+    assert!(!installer.contains("microsoft/winget-pkgs"));
+
+    let workflow = read(".github/workflows/release.yml");
+    assert!(workflow.contains("cp packaging/windows/install.ps1 artifacts/install.ps1"));
+    assert!(workflow.contains("packaging/winget/generate.py"));
+    assert!(workflow.contains("sha256sum ./* > SHA256SUMS"));
+
+    let manifest_template = read("packaging/winget/templates/installer.yaml.in");
+    for field in [
+        "Architecture: x64",
+        "InstallerSha256:",
+        "NestedInstallerType: portable",
+        "RelativeFilePath: tzim.exe",
+        "PortableCommandAlias: tzim",
+    ] {
+        assert!(manifest_template.contains(field), "winget template is missing {field}");
+    }
+}
+
+#[test]
 fn the_installer_verifies_what_it_downloads() {
     let script = read("install.sh");
     assert!(

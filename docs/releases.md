@@ -24,7 +24,9 @@ network access.
 | `tzim-aarch64-unknown-linux-musl.tar.gz` | `aarch64-unknown-linux-musl` | ARM64 servers and single-board computers; same static musl build, cross-linked with the toolchain's `rust-lld` |
 | `tzim-aarch64-apple-darwin.tar.gz` | `aarch64-apple-darwin` | Apple silicon |
 | `tzim-x86_64-apple-darwin.tar.gz` | `x86_64-apple-darwin` | Intel Macs |
-| `tzim-x86_64-pc-windows-msvc.zip` | `x86_64-pc-windows-msvc` | needs the Visual C++ 2015–2022 redistributable, which Windows normally has |
+| `tzim-x86_64-pc-windows-msvc.zip` | `x86_64-pc-windows-msvc` | exact Windows x64 release asset; consumed by the per-user PowerShell installer and local winget manifest |
+| `install.ps1` | Windows x64 | per-user installer, included in the release checksums; no machine-wide writes or elevation |
+| local winget manifest bundle | Windows x64 | generated from the exact Windows ZIP hash for local `winget install --manifest` use only |
 | `tzim_amd64.deb`, `tzim_arm64.deb` | Debian, Ubuntu | the same static musl binary; the package declares no dependency at all |
 | `tzim.x86_64.rpm`, `tzim.aarch64.rpm` | Fedora, RHEL | the same static musl binary |
 | `SHA256SUMS` | — | one line per artifact |
@@ -67,9 +69,18 @@ release workflow is the only place a shipped binary is produced.
 | dnf | Fedora, RHEL (x86_64, aarch64) | `curl -fsSLO .../releases/latest/download/tzim.x86_64.rpm` then `sudo dnf install ./tzim.x86_64.rpm` |
 | cargo | anything with Rust 1.88+ | `cargo install --git https://github.com/RUdolf1517/tzim` |
 | archive | everything else | unpack the tarball or zip, put `tzim` on `PATH` |
+| PowerShell installer | Windows x64 | download `packaging/windows/install.ps1` as a file, inspect it, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tzim-install.ps1 -Version latest` |
+| winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.15.0` |
 
 `install.sh` prefers the prebuilt binary and falls back to `cargo install --git` when the platform has no
-published build, so it never guesses a wrong binary.
+published build, so it never guesses a wrong binary. The PowerShell installer resolves `latest` once through
+the GitHub Releases API, then uses fixed-tag URLs for the Windows ZIP and `SHA256SUMS`; explicit versions skip
+the latest lookup. It verifies the exact archive hash, ZIP entries and executable version before an atomic
+per-user replacement, and records only its own files and PATH entry for uninstall. It supports the published
+x64 asset and fails clearly on 32-bit or ARM64 Windows. It sends no telemetry; its only requests are the optional
+single latest-release API lookup and the fixed-tag Windows ZIP/checksum downloads, including GitHub's release
+asset CDN redirects. The release workflow adds the script and generated local winget bundle to the checksum set
+for future releases; the published v0.15.0 release and assets remain unchanged.
 
 **It verifies what it downloads.** The archive is checked against the release's `SHA256SUMS` before it is
 unpacked, and a mismatch aborts the install with both hashes printed — it does not fall back to building from
@@ -83,6 +94,33 @@ the download at a mirror, which is how an air-gapped machine installs this: the 
 `<base>/SHA256SUMS`, and the checksum check is not optional there either. `TZIM_INSECURE=1` skips it, prints a
 warning, and exists for a mirror that publishes binaries but not hashes — an explicit, documented risk rather
 than a silent one.
+
+### Windows manual ZIP fallback
+
+The Windows ZIP remains available for users who prefer to install it themselves. These fixed-tag v0.15.0
+commands download the archive and its matching checksum file, verify the exact asset before extraction, and
+leave user `PATH` unchanged. For a later release, change `$tag` so both requests still use the same tag.
+
+```powershell
+$tag = 'v0.15.0'
+$asset = 'tzim-x86_64-pc-windows-msvc.zip'
+$base = "https://github.com/RUdolf1517/tzim/releases/download/$tag"
+Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile ".\$asset"
+Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile .\SHA256SUMS
+$checksumMatches = @(Select-String -Path .\SHA256SUMS -Pattern '^([0-9a-fA-F]{64})  \./tzim-x86_64-pc-windows-msvc\.zip$')
+if ($checksumMatches.Count -ne 1) { throw 'SHA256SUMS has no unique exact entry for the Windows ZIP.' }
+$expected = $checksumMatches[0].Matches[0].Groups[1].Value
+$actual = (Get-FileHash -LiteralPath ".\$asset" -Algorithm SHA256).Hash
+if ($actual -ine $expected) { throw "SHA-256 mismatch: expected $expected, received $actual." }
+$destination = Join-Path $env:LOCALAPPDATA 'Programs\tzim-manual-v0.15.0'
+New-Item -ItemType Directory -Force -Path $destination | Out-Null
+Expand-Archive -LiteralPath ".\$asset" -DestinationPath $destination -Force
+& (Join-Path $destination 'tzim.exe') --version
+```
+
+This manual path does not add or remove PATH entries; add the extraction directory to the current user's PATH
+only if desired. The PowerShell installer is the supported update/uninstall path and protects an existing
+installer-owned installation during replacement.
 
 ## 3. Verifying a download
 
@@ -106,9 +144,11 @@ files before anything is touched.
 
 ## 4. What is deliberately not provided
 
-- **No MSI, no `.exe` installer, and no Windows package manager.** Windows gets the release zip: unpack it
-  and put `tzim.exe` on `PATH`. Nothing is written outside the directory you unpack into, and there is no
-  manifest in this repository standing in for a package that was never submitted.
+- **No MSI or MSIX package.** Windows gets a per-user PowerShell installer and local winget manifests.
+  Winget manifests are consumed only from a locally generated/extracted version directory, for example
+  `winget install --manifest .\winget-local\0.15.0`; they are
+  not published to or searched through a community source. The release workflow generates the manifest
+  bundle from the exact Windows asset SHA-256 and includes it in that future release's checksums.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
   binary is built and packaged, and this project would rather have fewer of them than stale ones.
 - **No crates.io publication yet.** The crate is packaged and built from the package in CI (`cargo package`),

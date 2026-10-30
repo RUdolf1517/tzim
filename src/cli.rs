@@ -10,6 +10,7 @@ use crate::style::Choice as ColorChoice;
 pub enum Command {
     Optimize(Args),
     Formats,
+    Capabilities,
     Info,
     CheckDeps,
     Help,
@@ -97,6 +98,7 @@ tzim - shrink the file, never the information
 USAGE:
     tzim [OPTIONS] <PATH>...
     tzim --list-formats
+    tzim --capabilities
     tzim --info
     tzim --check-deps
     tzim --help
@@ -155,6 +157,7 @@ METADATA:
 INFORMATION:
     -i, --info                 what this program is: version, promise, links
         --list-formats         the handlers compiled into this build
+        --capabilities         versioned JSON build and runtime-policy description
         --check-deps           external programs needed at run time (none)
     -h, --help                 this text
     -V, --version              the version, one line
@@ -301,6 +304,7 @@ pub fn parse(args: impl Iterator<Item = OsString>) -> Result<Command> {
             "-V" | "--version" => return Ok(Command::Version),
             "-i" | "--info" => return Ok(Command::Info),
             "--list-formats" => return Ok(Command::Formats),
+            "--capabilities" => return Ok(Command::Capabilities),
             "--check-deps" => return Ok(Command::CheckDeps),
             _ => {
                 // Clustered short flags (`-rq`) and attached values (`-j4`), the
@@ -599,6 +603,7 @@ mod tests {
         assert!(matches!(command(&["--info"]), Command::Info));
         assert!(matches!(command(&["--check-deps"]), Command::CheckDeps));
         assert!(matches!(command(&["--list-formats"]), Command::Formats));
+        assert!(matches!(command(&["--capabilities"]), Command::Capabilities));
         assert!(matches!(command(&["formats"]), Command::Formats));
     }
 

@@ -74,6 +74,37 @@ pub fn compiled_names() -> Vec<&'static str> {
     out
 }
 
+/// Formats that can be processed without an additional run-time handler opt-in.
+/// FITS is deliberately omitted even when its parser is compiled: `--fits-tile`
+/// is explicit consent to change an IMAGE HDU into a BINTABLE.
+pub fn default_enabled_names() -> Vec<&'static str> {
+    Allow::default()
+        .names()
+        .into_iter()
+        .filter(|name| *name != "fits")
+        .collect()
+}
+
+/// Cargo features that affect the shipped formats or public optimization flags.
+/// `fuzz-api` is intentionally excluded because it is a private test surface.
+pub fn build_features() -> Vec<(&'static str, bool)> {
+    vec![
+        ("default", cfg!(feature = "default")),
+        ("png", cfg!(feature = "png")),
+        ("gzip", cfg!(feature = "gzip")),
+        ("zip", cfg!(feature = "zip")),
+        ("ico", cfg!(feature = "ico")),
+        ("jpeg", cfg!(feature = "jpeg")),
+        ("jpeg-v1", cfg!(feature = "jpeg-v1")),
+        ("tiff", cfg!(feature = "tiff")),
+        ("zlib", cfg!(feature = "zlib")),
+        ("fits", cfg!(feature = "fits")),
+        ("flac", cfg!(feature = "flac")),
+        ("pdf", cfg!(feature = "pdf")),
+        ("zopfli", cfg!(feature = "zopfli")),
+    ]
+}
+
 /// Which formats a run is allowed to process.
 ///
 /// JPEG is enabled by default only when the independent `jpeg-v1` verifier is
@@ -393,8 +424,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
     #[cfg(feature = "jpeg")]
     rows.push((
         "JPEG",
-        "re-encode the entropy data with optimal Huffman tables",
-        "every marker and every DCT coefficient preserved; opt-in via --formats",
+        "re-encode baseline sequential entropy data with optimal Huffman tables",
+        if cfg!(feature = "jpeg-v1") {
+            "every marker and DCT coefficient preserved; independent V1 verification; default-enabled"
+        } else {
+            "every marker and DCT coefficient preserved; codec-only, opt-in via --formats jpeg"
+        },
     ));
     #[cfg(feature = "tiff")]
     rows.push((
