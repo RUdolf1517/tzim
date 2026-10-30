@@ -496,16 +496,32 @@ try {
     Assert-Equal -Expected 0 -Actual $generationExit -Message 'generate local winget manifests'
 
     $validateLog = Join-Path $artifactRoot 'winget-validate.log'
-    Assert-Equal -Expected $true -Actual (Test-Path -LiteralPath $versionManifest -PathType Leaf) -Message 'canonical local winget version manifest exists'
+    $manifestNames = @(
+        [System.IO.Path]::GetFileName($versionManifest),
+        'RUdolf1517.tzim.installer.yaml',
+        'RUdolf1517.tzim.locale.en-US.yaml'
+    )
+    foreach ($manifestName in $manifestNames) {
+        $manifestPath = Join-Path $manifestDir $manifestName
+        Assert-Equal -Expected $true -Actual (Test-Path -LiteralPath $manifestPath -PathType Leaf) `
+            -Message "canonical local winget manifest exists: $manifestName"
+    }
+    Get-ChildItem -LiteralPath $manifestDir -File | Sort-Object -Property Name | ForEach-Object {
+        Write-Host ("Local manifest file: {0} ({1} bytes)" -f $_.Name, $_.Length)
+    }
 
     $expectedDir = Join-Path $artifactRoot 'winget-expected-binary'
     Expand-Archive -LiteralPath $archiveLatest -DestinationPath $expectedDir -Force
     $expectedExeHash = (Get-FileHash -LiteralPath (Join-Path $expectedDir 'tzim.exe') -Algorithm SHA256).Hash
     $installLog = Join-Path $artifactRoot 'winget-install.log'
+    $previousProcessDirectory = [Environment]::CurrentDirectory
     Push-Location -LiteralPath $manifestDir
     try {
-        # WinGet resolves all three files of a multi-file manifest from the
-        # current directory; a YAML-file path is treated as a single-file set.
+        # Set both PowerShell's location and the native process working
+        # directory. WinGet resolves a multi-file set relative to its CWD.
+        [Environment]::CurrentDirectory = $manifestDir
+        Write-Host "WinGet manifest PowerShell location: $((Get-Location).Path)"
+        Write-Host "WinGet manifest process directory: $([Environment]::CurrentDirectory)"
         $validation = & $winget.Source validate --manifest . 2>&1
         $validationExit = $LASTEXITCODE
         $validation | Tee-Object -FilePath $validateLog
@@ -525,6 +541,7 @@ try {
     }
     finally {
         Pop-Location
+        [Environment]::CurrentDirectory = $previousProcessDirectory
     }
 
     $userPathAfterWinget = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User)
