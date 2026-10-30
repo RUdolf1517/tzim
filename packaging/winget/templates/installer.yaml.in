@@ -2,7 +2,6 @@ PackageIdentifier: RUdolf1517.tzim
 PackageVersion: {{PACKAGE_VERSION}}
 InstallerLocale: en-US
 InstallerType: zip
-Scope: user
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/RUdolf1517/tzim/releases/download/{{RELEASE_TAG}}/tzim-x86_64-pc-windows-msvc.zip

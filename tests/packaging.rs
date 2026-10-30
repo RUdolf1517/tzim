@@ -233,6 +233,10 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
             "winget template is missing {field}"
         );
     }
+    assert!(
+        !manifest_template.contains("Scope:"),
+        "portable installer manifests do not support the Scope field"
+    );
 
     let default_locale_template = read("packaging/winget/templates/locale.en-US.yaml.in");
     assert!(
