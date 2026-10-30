@@ -14,9 +14,10 @@ The earlier exact 21-output #57 run at SHA `7b82c9edb6e5060bc8ce7ed756caebba9150
 The corrected run at exact SHA `5721867ab1439814cead5645d4f443d8f8876c9c` is retained in §12, and the subsequent
 exact-head rerun at `5967e318951f9c3945f0c256c3095b347483e234` is in §13. The original accepted-subset
 `faithful_pct` rule was applied and returned **refused after measurement** in both runs because the median was
-below 1%. This result does not revoke the separate #80 opt-in implementation decision, does not make PDF a release
-default, and does not authorize the forbidden repack comparator. The exact distributions and reports are in
-§§11–13 and the [measurement status](measurement-status.md).
+below 1%. The current-head #57 report publishes each accepted row's `faithful_pct` and raw formula inputs directly
+in the PR comment; that exact source SHA governs the document snapshot. This does not revoke the separate #80
+opt-in implementation decision, make PDF a release default, or authorize the forbidden repack comparator. The
+historical distributions and reports remain in §§11–13 and the [measurement status](measurement-status.md).
 
 Two things in this document are facts about the format and are checkable without a corpus: the structure in §1–§4
 and the refusal list in §6. The gain figures in §3 are **estimates from what produces PDFs**, not measurements,

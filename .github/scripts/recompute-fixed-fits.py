@@ -55,7 +55,7 @@ def positive_control_passed(control):
         and commands_ok
         and "-l" in fitsverify_argv
         and "-C" in funpack_argv
-        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v1"
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
         and comparison.get("diagnostics_complete") is True
         and comparison.get("ok") is True
     )
@@ -265,7 +265,9 @@ def main():
 
     def comparison_diagnostics(rows_to_count, comparison_field, nested_field=None):
         failure_classes = Counter()
+        card_difference_counts = Counter()
         header_card_mismatches = payload_mismatch_hdus = hdu_count_mismatches = mismatch_records = 0
+        header_cards_equal_hdus = header_cards_mismatch_hdus = padding_only_hdus = 0
         complete_comparisons = comparisons_n = 0
         for row in rows_to_count:
             comparison = row.get(comparison_field) or {}
@@ -279,13 +281,23 @@ def main():
             mismatch_records += len(comparison.get("mismatch_records") or [])
             for check in comparison.get("hdu_checks") or []:
                 header_card_mismatches += len(check.get("header_card_differences") or [])
+                card_difference_counts.update(check.get("header_card_difference_counts") or {})
                 payload_mismatch_hdus += int(check.get("storage_payload_equality") is False)
+                header_cards_equal_hdus += int(check.get("header_cards_through_end_equality") is True)
+                header_cards_mismatch_hdus += int(check.get("header_cards_through_end_equality") is False)
+                padding_only_hdus += int(check.get("header_padding_only_difference") is True)
             hdu_count_mismatches += int(comparison.get("hdu_count_equal") is False)
         return {
             "comparisons_n": comparisons_n,
             "complete_comparisons_n": complete_comparisons,
             "failure_class_counts": dict(sorted(failure_classes.items())),
             "header_card_mismatch_count": header_card_mismatches,
+            "header_card_difference_counts": {
+                kind: card_difference_counts.get(kind, 0) for kind in ("inserted", "dropped", "changed")
+            },
+            "header_cards_through_end_equal_hdu_count": header_cards_equal_hdus,
+            "header_cards_through_end_mismatch_hdu_count": header_cards_mismatch_hdus,
+            "padding_only_hdu_count": padding_only_hdus,
             "payload_mismatch_hdu_count": payload_mismatch_hdus,
             "hdu_count_mismatch_count": hdu_count_mismatches,
             "structured_mismatch_record_count": mismatch_records,

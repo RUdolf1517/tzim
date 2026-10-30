@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -161,61 +162,136 @@ def first_byte_difference(before: bytes, after: bytes) -> int | None:
     return min(len(before), len(after)) if len(before) != len(after) else None
 
 
-def _card_keyword(card: bytes) -> str:
-    return card[:8].decode("ascii", errors="replace").strip()
+def _card_keyword(card: bytes | None) -> str | None:
+    if card is None:
+        return None
+    return card[:8].decode("ascii", errors="replace").strip(" ")
+
+
+def _header_cards_and_padding(raw_header: bytes) -> tuple[list[bytes], bytes, bool]:
+    """Return literal 80-byte cards through actual END and only the trailing padding.
+
+    No card is decoded, stripped or normalized for equality. In particular, a
+    genuinely blank card before END remains an ordinary member of the sequence.
+    FITS header record padding starts immediately after the complete END card.
+    """
+    cards = []
+    for start in range(0, len(raw_header), 80):
+        card = raw_header[start : start + 80]
+        if len(card) != 80:
+            return cards, b"", False
+        cards.append(card)
+        if card[:8] == b"END     ":
+            return cards, raw_header[start + 80 :], True
+    return cards, b"", False
 
 
 def _header_card_differences(
-    original_header: bytes,
-    reconstructed_header: bytes,
+    original_cards: list[bytes],
+    reconstructed_cards: list[bytes],
     original_header_file_offset: int,
     reconstructed_header_file_offset: int,
     hdu_index: int,
 ) -> list[dict]:
-    """List every changed 80-byte header record with exact card bytes and offsets."""
-    card_count = (max(len(original_header), len(reconstructed_header)) + 79) // 80
+    """Sequence-align literal cards and retain each exact inserted/dropped/changed card.
+
+    Exact 80-byte equality drives alignment. The comparison does not key by
+    keyword or parsed value, so comments, spacing, duplicates, order, CHECKSUM,
+    DATASUM, blank cards and END all remain significant.
+    """
+    matcher = difflib.SequenceMatcher(
+        a=original_cards,
+        b=reconstructed_cards,
+        autojunk=False,
+    )
     differences = []
-    for card_index in range(card_count):
-        start = card_index * 80
-        before = original_header[start : start + 80]
-        after = reconstructed_header[start : start + 80]
-        if before == after:
-            continue
-        within_card = first_byte_difference(before, after)
-        assert within_card is not None
+
+    def add(kind: str, original_index: int | None, reconstructed_index: int | None,
+            before: bytes | None, after: bytes | None, original_boundary: int,
+            reconstructed_boundary: int) -> None:
+        if kind == "changed" and before == after:
+            return
+        within_card = first_byte_difference(before, after) if kind == "changed" else 0
+        if within_card is None:
+            raise AssertionError("a changed card must have a differing byte")
+        original_header_byte_offset = (
+            original_index * 80 + within_card if original_index is not None else original_boundary * 80
+        )
+        reconstructed_header_byte_offset = (
+            reconstructed_index * 80 + within_card
+            if reconstructed_index is not None else reconstructed_boundary * 80
+        )
         original_keyword = _card_keyword(before)
         reconstructed_keyword = _card_keyword(after)
-        keyword = (
-            original_keyword or reconstructed_keyword or "<blank>"
-            if original_keyword == reconstructed_keyword
-            else f"{original_keyword or '<missing>'} -> {reconstructed_keyword or '<missing>'}"
-        )
-        header_offset = start + within_card
+        if original_keyword == reconstructed_keyword:
+            keyword = original_keyword or "<blank>"
+        elif original_keyword is None:
+            keyword = reconstructed_keyword or "<blank>"
+        elif reconstructed_keyword is None:
+            keyword = original_keyword or "<blank>"
+        else:
+            keyword = f"{original_keyword} -> {reconstructed_keyword}"
+        card_index = original_index if original_index is not None else reconstructed_index
         differences.append({
             "hdu_index": hdu_index,
             "card_index": card_index,
+            "original_card_index": original_index,
+            "reconstructed_card_index": reconstructed_index,
             "keyword": keyword,
             "mismatch_kind": "header_card",
+            "kind": kind,
             "original_keyword": original_keyword,
             "reconstructed_keyword": reconstructed_keyword,
             "first_differing_byte_offset": within_card,
-            "first_differing_header_byte_offset": header_offset,
-            "original_file_offset": (
-                original_header_file_offset + header_offset if header_offset < len(original_header) else None
+            "first_differing_header_byte_offset": (
+                original_header_byte_offset if original_index is not None
+                else reconstructed_header_byte_offset
             ),
-            "reconstructed_file_offset": (
-                reconstructed_header_file_offset + header_offset
-                if header_offset < len(reconstructed_header) else None
+            "first_differing_original_header_byte_offset": original_header_byte_offset,
+            "first_differing_reconstructed_header_byte_offset": reconstructed_header_byte_offset,
+            # For an insertion/deletion, the missing-side file offset denotes
+            # the sequence boundary where the card belongs; card-file offsets
+            # remain null because that side has no corresponding card.
+            "original_file_offset": original_header_file_offset + original_header_byte_offset,
+            "reconstructed_file_offset": reconstructed_header_file_offset + reconstructed_header_byte_offset,
+            "original_card_file_offset": (
+                original_header_file_offset + original_index * 80 if original_index is not None else None
             ),
-            # Keep both the exact 80-column text and hex. The hex retains trailing
-            # spaces and any unexpected non-ASCII byte without lossy rendering.
-            "before_card": before.decode("ascii", errors="replace") if before else None,
-            "after_card": after.decode("ascii", errors="replace") if after else None,
-            "before_card_hex": before.hex() if before else None,
-            "after_card_hex": after.hex() if after else None,
-            "before_card_bytes": len(before),
-            "after_card_bytes": len(after),
+            "reconstructed_card_file_offset": (
+                reconstructed_header_file_offset + reconstructed_index * 80
+                if reconstructed_index is not None else None
+            ),
+            # Keep both exact 80-column text and hex. Hex retains trailing
+            # spaces and unexpected bytes without lossy rendering.
+            "before_card": before.decode("ascii", errors="replace") if before is not None else None,
+            "after_card": after.decode("ascii", errors="replace") if after is not None else None,
+            "before_card_hex": before.hex() if before is not None else None,
+            "after_card_hex": after.hex() if after is not None else None,
+            "before_card_bytes": len(before) if before is not None else 0,
+            "after_card_bytes": len(after) if after is not None else 0,
         })
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        if tag == "replace":
+            paired = min(i2 - i1, j2 - j1)
+            for offset in range(paired):
+                add("changed", i1 + offset, j1 + offset,
+                    original_cards[i1 + offset], reconstructed_cards[j1 + offset],
+                    i1 + offset, j1 + offset)
+            for offset in range(paired, i2 - i1):
+                add("dropped", i1 + offset, None, original_cards[i1 + offset], None,
+                    i1 + offset, j2)
+            for offset in range(paired, j2 - j1):
+                add("inserted", None, j1 + offset, None, reconstructed_cards[j1 + offset],
+                    i2, j1 + offset)
+        elif tag == "delete":
+            for index in range(i1, i2):
+                add("dropped", index, None, original_cards[index], None, index, j1)
+        elif tag == "insert":
+            for index in range(j1, j2):
+                add("inserted", None, index, None, reconstructed_cards[index], i1, index)
     return differences
 
 
@@ -302,10 +378,13 @@ def _payload_comparison(
 def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
     """Compare a `funpack -C` reconstruction to the exact uncompressed source.
 
-    The gate compares every 80-column header record (including END and padding)
-    and exact image storage-array bytes. Non-image HDUs retain their full data
-    area and padding comparison. No checksum filtering or header normalization is
-    applied. The result contains diagnostics and hashes, never FITS payload bytes.
+    Header equality is the sequence of literal 80-byte cards from each HDU
+    through its actual END card. Only record padding after END is excluded from
+    the gate and reported separately. No blank-card, comment, spacing, order,
+    duplicate, CHECKSUM or DATASUM normalization/filtering is applied. Image
+    storage-array bytes remain exact; non-image HDUs retain full data-area and
+    padding comparison. Diagnostics contain hashes and header cards, never FITS
+    data payload bytes.
     """
     with fits.open(original, memmap=False, do_not_scale_image_data=True, uint=False) as before, \
          fits.open(reconstructed, memmap=False, do_not_scale_image_data=True, uint=False) as after:
@@ -319,22 +398,99 @@ def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
             reconstructed_header = raw_header(reconstructed, reconstructed_hdu)
             original_header_offset = int(original_hdu._header_offset or 0)
             reconstructed_header_offset = int(reconstructed_hdu._header_offset or 0)
+            original_cards, original_padding, original_end_found = _header_cards_and_padding(original_header)
+            reconstructed_cards, reconstructed_padding, reconstructed_end_found = _header_cards_and_padding(
+                reconstructed_header
+            )
             header_differences = _header_card_differences(
-                original_header,
-                reconstructed_header,
+                original_cards,
+                reconstructed_cards,
                 original_header_offset,
                 reconstructed_header_offset,
                 index,
             )
-            header_equal = original_header == reconstructed_header
+            header_cards_equal = (
+                original_end_found
+                and reconstructed_end_found
+                and original_cards == reconstructed_cards
+            )
+            padding_equal = original_padding == reconstructed_padding
+            padding_first_difference = (
+                None if padding_equal else first_byte_difference(original_padding, reconstructed_padding)
+            )
+            original_padding_start = len(original_cards) * 80
+            reconstructed_padding_start = len(reconstructed_cards) * 80
+            padding_difference = {
+                "equal": padding_equal,
+                "original_padding_bytes": len(original_padding),
+                "reconstructed_padding_bytes": len(reconstructed_padding),
+                "original_padding_sha256": hashlib.sha256(original_padding).hexdigest(),
+                "reconstructed_padding_sha256": hashlib.sha256(reconstructed_padding).hexdigest(),
+                "first_differing_byte_offset": padding_first_difference,
+                "original_header_byte_offset": (
+                    original_padding_start + padding_first_difference
+                    if padding_first_difference is not None else None
+                ),
+                "reconstructed_header_byte_offset": (
+                    reconstructed_padding_start + padding_first_difference
+                    if padding_first_difference is not None else None
+                ),
+                "original_file_offset": (
+                    original_header_offset + original_padding_start + padding_first_difference
+                    if padding_first_difference is not None
+                    and padding_first_difference < len(original_padding) else None
+                ),
+                "reconstructed_file_offset": (
+                    reconstructed_header_offset + reconstructed_padding_start + padding_first_difference
+                    if padding_first_difference is not None
+                    and padding_first_difference < len(reconstructed_padding) else None
+                ),
+                "original_byte_hex": (
+                    original_padding[padding_first_difference : padding_first_difference + 1].hex()
+                    if padding_first_difference is not None
+                    and padding_first_difference < len(original_padding) else None
+                ),
+                "reconstructed_byte_hex": (
+                    reconstructed_padding[padding_first_difference : padding_first_difference + 1].hex()
+                    if padding_first_difference is not None
+                    and padding_first_difference < len(reconstructed_padding) else None
+                ),
+            }
+            card_kind_counts = Counter(item["kind"] for item in header_differences)
+            header_card_difference_counts = {
+                kind: card_kind_counts.get(kind, 0) for kind in ("inserted", "dropped", "changed")
+            }
+            keyword_counts: dict[str, dict[str, int]] = {}
+            for kind in ("inserted", "dropped", "changed"):
+                counts = Counter(
+                    item["keyword"] for item in header_differences if item["kind"] == kind
+                )
+                keyword_counts[kind] = dict(sorted(counts.items()))
+
+            header_integrity_errors = []
+            if not original_end_found:
+                header_integrity_errors.append({"side": "original", "reason": "actual END card not found"})
+            if not reconstructed_end_found:
+                header_integrity_errors.append({"side": "reconstructed", "reason": "actual END card not found"})
+            for error in header_integrity_errors:
+                mismatch_records.append({
+                    "hdu_index": index,
+                    "card_index": None,
+                    "keyword": "END",
+                    "mismatch_kind": "header_end",
+                    **error,
+                    "first_differing_byte_offset": None,
+                })
+
             payload = _payload_comparison(
                 original, original_hdu, reconstructed, reconstructed_hdu, index
             )
             hdu_type_equal = type(original_hdu).__name__ == type(reconstructed_hdu).__name__
             payload_equal = payload["storage_payload_equal"]
-            if not header_equal and not payload_equal:
+            padding_only_difference = header_cards_equal and not padding_equal
+            if not header_cards_equal and not payload_equal:
                 failure_class = "combined"
-            elif not header_equal:
+            elif not header_cards_equal:
                 failure_class = "header_only"
             elif not payload_equal:
                 failure_class = "payload_only"
@@ -342,6 +498,32 @@ def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
                 failure_class = "hdu_type_only"
             else:
                 failure_class = "match"
+
+            first_actual_difference = None
+            if header_differences:
+                first_actual_difference = dict(header_differences[0])
+            elif header_integrity_errors:
+                first_actual_difference = {
+                    "kind": "header_integrity",
+                    "mismatch_kind": "header_end",
+                    **header_integrity_errors[0],
+                }
+            elif not padding_equal:
+                first_actual_difference = {
+                    "kind": "padding_only",
+                    "mismatch_kind": "header_padding",
+                    **padding_difference,
+                }
+            elif not payload_equal:
+                first_actual_difference = {
+                    "kind": "storage_payload",
+                    "mismatch_kind": "storage_payload",
+                    "first_differing_byte_offset": payload["first_differing_byte_offset"],
+                    "original_file_offset": payload["original_file_offset"],
+                    "reconstructed_file_offset": payload["reconstructed_file_offset"],
+                    "original_byte_hex": payload["original_byte_hex"],
+                    "reconstructed_byte_hex": payload["reconstructed_byte_hex"],
+                }
 
             check = {
                 "hdu_index": index,
@@ -352,10 +534,29 @@ def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
                 "reconstructed_header_file_offset": reconstructed_header_offset,
                 "original_header_record_bytes": len(original_header),
                 "reconstructed_header_record_bytes": len(reconstructed_header),
-                "header_record_equality": header_equal,
+                "original_header_card_count_through_end": len(original_cards),
+                "reconstructed_header_card_count_through_end": len(reconstructed_cards),
+                "original_end_card_found": original_end_found,
+                "reconstructed_end_card_found": reconstructed_end_found,
+                "header_cards_through_end_equality": header_cards_equal,
+                # Retain the old key as an alias, now explicitly card-through-END equality.
+                "header_record_equality": header_cards_equal,
+                "header_record_bytes_equality": original_header == reconstructed_header,
+                "original_header_cards_through_end_sha256": hashlib.sha256(b"".join(original_cards)).hexdigest(),
+                "reconstructed_header_cards_through_end_sha256": hashlib.sha256(
+                    b"".join(reconstructed_cards)
+                ).hexdigest(),
                 "original_header_record_sha256": hashlib.sha256(original_header).hexdigest(),
                 "reconstructed_header_record_sha256": hashlib.sha256(reconstructed_header).hexdigest(),
+                "header_padding_equality": padding_equal,
+                "header_padding_only_difference": padding_only_difference,
+                "header_padding_difference": padding_difference,
+                "header_integrity_errors": header_integrity_errors,
+                "header_card_difference_counts": header_card_difference_counts,
+                "header_keyword_difference_counts": keyword_counts,
                 "header_card_differences": header_differences,
+                "first_header_card_difference": dict(header_differences[0]) if header_differences else None,
+                "first_actual_difference": first_actual_difference,
                 "storage_payload_equality": payload_equal,
                 "storage_payload": payload,
                 "failure_class": failure_class,
@@ -415,15 +616,15 @@ def compare_reference_funpack(original: Path, reconstructed: Path) -> dict:
         elif not hdu_count_equal:
             reason = "hdu_count_mismatch"
         else:
-            reason = "header-only, payload-only, combined, or HDU-type mismatch"
+            reason = "header cards through END, storage payload, HDU type or END-card integrity mismatch"
         return {
-            "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+            "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
             "diagnostics_complete": True,
             "ok": ok,
             "reason": reason,
             "comparison": (
-                "exact 80-column header records including padding and checksum cards; exact storage-array bytes; "
-                "non-image data bytes and padding"
+                "literal 80-byte header-card sequences through actual END; record padding excluded from equality "
+                "and reported separately; exact storage-array bytes; non-image data bytes and padding"
             ),
             "original_hdus": len(before),
             "reconstructed_hdus": len(after),
@@ -633,7 +834,7 @@ def positive_control_passed(control: dict) -> bool:
         and command_results_ok
         and "-l" in fitsverify_argv
         and "-C" in funpack_argv
-        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v1"
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
         and comparison.get("diagnostics_complete") is True
         and comparison.get("ok") is True
     )
@@ -711,7 +912,7 @@ def run_funpack_positive_control(
                     control["literal_header_storage_array_comparison"] = comparison
                 else:
                     control["literal_header_storage_array_comparison"] = {
-                        "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                        "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                         "diagnostics_complete": False,
                         "ok": False,
                         "reason": "funpack -C produced no reconstructed FITS output",
@@ -723,7 +924,7 @@ def run_funpack_positive_control(
                 control["fitsverify"] = {"status": "not_run", "reason": "fpack produced no candidate"}
                 control["funpack"] = {"status": "not_run", "reason": "fpack produced no candidate"}
                 control["literal_header_storage_array_comparison"] = {
-                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                     "diagnostics_complete": False,
                     "ok": False,
                     "reason": "fpack produced no candidate",
@@ -835,7 +1036,7 @@ def validate_reference_candidate(
                 roundtrip = compare_reference_funpack(source, unpacked)
             except Exception as error:
                 roundtrip = {
-                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                     "diagnostics_complete": False,
                     "ok": False,
                     "reason": f"{type(error).__name__}: {error}",
@@ -851,7 +1052,7 @@ def validate_reference_candidate(
             result["reconstructed_array_literal_header_comparison"] = roundtrip
         else:
             result["reconstructed_array_literal_header_comparison"] = {
-                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                 "diagnostics_complete": False,
                 "ok": False,
                 "reason": "funpack -C failed or produced no reconstructed FITS output",
@@ -1219,24 +1420,24 @@ def main() -> int:
         unpack_candidate = work / f"{order:02d}-{product['id']}.candidate-unpacked.fits"
         funpack_source_argv = [str(Path(args.funpack).resolve()), "-C", "-O", str(unpack_source), str(source)]
         funpack_candidate_argv = [str(Path(args.funpack).resolve()), "-C", "-O", str(unpack_candidate), str(candidate)]
-        if tzim_record.get("unchanged_nonoptimized"):
-            funpack_source = {
-                "status": "not_applicable",
-                "argv": funpack_source_argv,
-                "reason": "unchanged non-optimized row; verified by Tzim status and byte identity",
+        # Run the same external -C reconstruction path for every frozen product,
+        # including unchanged/non-optimized rows. The direct candidate-layer
+        # compare_fits below still enforces raw byte identity for each untransformed
+        # HDU; this is a separate storage/header reconstruction check, not a waiver.
+        funpack_source = run(funpack_source_argv, logs)
+        funpack_candidate = run(funpack_candidate_argv, logs)
+        if funpack_source.get("returncode") == 0 and unpack_source.is_file():
+            funpack_source_bytes, funpack_source_sha = digest(unpack_source)
+            row["external_checks"]["funpack_source_output"] = {
+                "bytes": funpack_source_bytes,
+                "sha256": funpack_source_sha,
             }
-            funpack_candidate = {
-                "status": "not_applicable",
-                "argv": funpack_candidate_argv,
-                "reason": "unchanged non-optimized row; verified by Tzim status and byte identity",
+        if funpack_candidate.get("returncode") == 0 and unpack_candidate.is_file():
+            funpack_candidate_bytes, funpack_candidate_sha = digest(unpack_candidate)
+            row["external_checks"]["funpack_candidate_output"] = {
+                "bytes": funpack_candidate_bytes,
+                "sha256": funpack_candidate_sha,
             }
-        else:
-            funpack_source = run(funpack_source_argv, logs)
-            funpack_candidate = run(funpack_candidate_argv, logs)
-            if funpack_source.get("returncode") == 0 and unpack_source.is_file():
-                row["external_checks"]["funpack_source_output"] = {"bytes": digest(unpack_source)[0], "sha256": digest(unpack_source)[1]}
-            if funpack_candidate.get("returncode") == 0 and unpack_candidate.is_file():
-                row["external_checks"]["funpack_candidate_output"] = {"bytes": digest(unpack_candidate)[0], "sha256": digest(unpack_candidate)[1]}
         row["external_checks"]["funpack_source"] = funpack_source
         row["external_checks"]["funpack_candidate"] = funpack_candidate
         row["external_checks"]["funpack_checksum_mode"] = "-C used for source and candidate reconstructions; CHECKSUM/DATASUM are retained and compared"
@@ -1246,13 +1447,7 @@ def main() -> int:
             row["array_header_roundtrip"] = direct
         except Exception as error:
             row["array_header_roundtrip"] = {"ok": False, "reason": f"{type(error).__name__}: {error}"}
-        if tzim_record.get("unchanged_nonoptimized"):
-            row["funpack_array_header_roundtrip"] = {
-                "ok": None,
-                "status": "not_applicable",
-                "reason": "unchanged non-optimized rows are verified by Tzim status and source/candidate byte identity",
-            }
-        elif unpack_source.is_file() and unpack_candidate.is_file():
+        if unpack_source.is_file() and unpack_candidate.is_file():
             try:
                 unpacked = compare_reference_funpack(unpack_source, unpack_candidate)
                 unpacked["attribution"] = (
@@ -1263,7 +1458,7 @@ def main() -> int:
                 row["funpack_array_header_roundtrip"] = unpacked
             except Exception as error:
                 row["funpack_array_header_roundtrip"] = {
-                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                    "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                     "diagnostics_complete": False,
                     "ok": False,
                     "reason": f"{type(error).__name__}: {error}",
@@ -1278,10 +1473,10 @@ def main() -> int:
                 }
         else:
             row["funpack_array_header_roundtrip"] = {
-                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v1",
+                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                 "diagnostics_complete": False,
                 "ok": False,
-                "reason": "funpack -C output missing",
+                "reason": "funpack -C source or candidate output missing",
                 "failure_class_counts": {"funpack_failed": 1},
                 "mismatch_records": [],
                 "hdu_checks": [],
@@ -1328,7 +1523,7 @@ def main() -> int:
                 "diagnostics": reference_comparison,
             })
         tzim_comparison = row.get("funpack_array_header_roundtrip")
-        if tzim_comparison is not None and tzim_comparison.get("status") != "not_applicable":
+        if tzim_comparison is not None:
             hdu_diagnostics.append({
                 "product_id": row.get("product_id"),
                 "comparison_kind": "tzim_candidate_funpack_C_vs_source_funpack_C",
@@ -1338,6 +1533,15 @@ def main() -> int:
                 "attribution": tzim_comparison.get("attribution"),
                 "diagnostics": tzim_comparison,
             })
+    positive_control_comparison = positive_control.get("literal_header_storage_array_comparison") or {}
+    if positive_control_comparison:
+        hdu_diagnostics.append({
+            "product_id": positive_control.get("control_id", "external-integer-positive-control"),
+            "comparison_kind": "external_integer_positive_control_funpack_C_vs_source",
+            "positive_control_status": positive_control.get("status"),
+            "attribution": "control_validation",
+            "diagnostics": positive_control_comparison,
+        })
     (out / "reference-hdu-diagnostics.jsonl").write_text(
         "".join(json.dumps(item, sort_keys=True, ensure_ascii=False) + "\n" for item in hdu_diagnostics),
         encoding="utf-8",
@@ -1379,7 +1583,11 @@ def main() -> int:
     def comparison_diagnostics(rows_to_count: list[dict], comparison_field: str, nested_field: str | None = None) -> dict:
         failure_classes: Counter = Counter()
         header_card_mismatches = 0
+        card_difference_counts: Counter = Counter()
         payload_mismatch_hdus = 0
+        header_cards_equal_hdus = 0
+        header_cards_mismatch_hdus = 0
+        padding_only_hdus = 0
         hdu_count_mismatches = 0
         mismatch_records = 0
         complete_comparisons = 0
@@ -1396,14 +1604,26 @@ def main() -> int:
                 failure_classes[name] += count
             mismatch_records += len(comparison.get("mismatch_records") or [])
             for check in comparison.get("hdu_checks") or []:
-                header_card_mismatches += len(check.get("header_card_differences") or [])
+                differences = check.get("header_card_differences") or []
+                header_card_mismatches += len(differences)
+                for kind, count in (check.get("header_card_difference_counts") or {}).items():
+                    card_difference_counts[kind] += count
                 payload_mismatch_hdus += int(check.get("storage_payload_equality") is False)
+                header_cards_equal_hdus += int(check.get("header_cards_through_end_equality") is True)
+                header_cards_mismatch_hdus += int(check.get("header_cards_through_end_equality") is False)
+                padding_only_hdus += int(check.get("header_padding_only_difference") is True)
             hdu_count_mismatches += int(comparison.get("hdu_count_equal") is False)
         return {
             "comparisons_n": comparisons_n,
             "complete_comparisons_n": complete_comparisons,
             "failure_class_counts": dict(sorted(failure_classes.items())),
             "header_card_mismatch_count": header_card_mismatches,
+            "header_card_difference_counts": {
+                kind: card_difference_counts.get(kind, 0) for kind in ("inserted", "dropped", "changed")
+            },
+            "header_cards_through_end_equal_hdu_count": header_cards_equal_hdus,
+            "header_cards_through_end_mismatch_hdu_count": header_cards_mismatch_hdus,
+            "padding_only_hdu_count": padding_only_hdus,
             "payload_mismatch_hdu_count": payload_mismatch_hdus,
             "hdu_count_mismatch_count": hdu_count_mismatches,
             "structured_mismatch_record_count": mismatch_records,
@@ -1483,7 +1703,7 @@ def main() -> int:
         },
         "reference_hdu_diagnostics": reference_hdu_diagnostics,
         "tzim_hdu_diagnostics": tzim_hdu_diagnostics,
-        "funpack_checksum_mode": "-C used for reference candidates and any optimized Tzim source/candidate reconstructions; checksum cards are not filtered",
+        "funpack_checksum_mode": "-C used for every available reference-candidate and all 14 Tzim source/candidate reconstructions; checksum cards are not filtered",
         "pre_registered_threshold_disposition": threshold_result,
         "fitsverify_candidate_nonzero": sum(1 for row in rows if row.get("tier2_tzim", {}).get("status") == "optimized" and row.get("external_checks", {}).get("fitsverify_candidate", {}).get("returncode") != 0),
         "array_header_roundtrip_passes": sum(1 for row in rows if row.get("array_header_roundtrip", {}).get("ok") is True),
@@ -1538,15 +1758,16 @@ def main() -> int:
         f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
         f"- External positive control: **{positive_control_summary['status']}** via pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → this same literal-header/storage-array comparator; integer-only fixture, no fpack float-array oracle.",
         f"- Reference candidate HEASARC/funpack -C gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
-        f"- Reference per-HDU classes: `{json.dumps(reference_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; header-card differences={reference_hdu_diagnostics['header_card_mismatch_count']}, payload-mismatch HDUs={reference_hdu_diagnostics['payload_mismatch_hdu_count']}, HDU-count mismatches={reference_hdu_diagnostics['hdu_count_mismatch_count']}; attribution enabled={positive_control_summary['ok']}.",
-        "- Full, non-truncated per-HDU diagnostics (including exact before/after 80-column cards, card indexes, keywords, and byte/file offsets) are in `run/reference-hdu-diagnostics.jsonl` and each raw row; only hashes and header-card records are stored, not FITS payload bytes.",
+        f"- Reference per-HDU classes: `{json.dumps(reference_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; cards-through-END equal={reference_hdu_diagnostics['header_cards_through_end_equal_hdu_count']}, unequal={reference_hdu_diagnostics['header_cards_through_end_mismatch_hdu_count']}, padding-only={reference_hdu_diagnostics['padding_only_hdu_count']}, inserted/dropped/changed cards=`{json.dumps(reference_hdu_diagnostics['header_card_difference_counts'], sort_keys=True)}`, storage-payload mismatches={reference_hdu_diagnostics['payload_mismatch_hdu_count']}; attribution enabled={positive_control_summary['ok']}.",
+        f"- Tzim per-HDU classes: `{json.dumps(tzim_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; cards-through-END equal={tzim_hdu_diagnostics['header_cards_through_end_equal_hdu_count']}, unequal={tzim_hdu_diagnostics['header_cards_through_end_mismatch_hdu_count']}, padding-only={tzim_hdu_diagnostics['padding_only_hdu_count']}, inserted/dropped/changed cards=`{json.dumps(tzim_hdu_diagnostics['header_card_difference_counts'], sort_keys=True)}`, storage-payload mismatches={tzim_hdu_diagnostics['payload_mismatch_hdu_count']}.",
+        "- Non-truncated per-product/per-HDU evidence is included below and retained in `run/reference-hdu-diagnostics.jsonl` plus raw rows. The first differing card is represented by exact 80-byte hex; FITS payload bytes are never retained.",
         f"- Pre-registered #59 disposition: **{threshold['status']}** — {threshold['decision']}.",
         f"- Tzim Tier 2 median among strictly smaller candidates (separate implementation result): {aggregate['tzim_tier2_gain_pct']['median']}",
         f"- Direct Tzim array/header comparisons: {aggregate['array_header_roundtrip_passes']} passed, {aggregate['array_header_roundtrip_failures']} failed, {len(rows) - aggregate['array_header_roundtrip_passes'] - aggregate['array_header_roundtrip_failures']} not measured.",
-        f"- Tzim-candidate funpack array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed, {aggregate['funpack_roundtrip_not_applicable']} not applicable for unchanged non-optimized rows.",
+        f"- Tzim-candidate funpack -C array/header comparisons: {aggregate['funpack_roundtrip_passes']} passed, {aggregate['funpack_failures']} failed across the 14 fixed source/candidate pairs; unchanged rows are also reconstructed and checked.",
         f"- Exact reference-candidate funpack round trips: {aggregate['reference_funpack_roundtrip_passes']} passed, {aggregate['reference_funpack_roundtrip_failures']} failed.",
         "",
-        "All 14 fixed source rows are retained. The two-tier reference-candidate identities and HEASARC commands/results are separate from Tzim's unchanged/skipped rows. Tier 1 is a comparator derived from each source, never an extra survey input. Every compared reconstruction uses `funpack -C`; checksum cards are preserved, not filtered. The structured diagnostics retain exact changed header cards and byte offsets without storing any FITS data payload bytes. The artifact contains hashes and tool output only—no source FITS bytes, reference-candidate bytes, Tzim candidate bytes, reconstructed FITS bytes, or ROSAT data.",
+        "All 14 fixed source rows are retained. Tier 1 is a comparator derived from each source, never an extra survey input. Every source/candidate pair, including unchanged rows, is reconstructed with `funpack -C`; checksum cards are preserved, not filtered. The direct candidate-layer check remains byte-for-byte strict for every untransformed HDU, including header and data padding. Only the separate reconstructed-header comparator excludes record padding after END; it compares literal cards through END. The artifact retains hashes and tool output only—no source FITS bytes, reference-candidate bytes, Tzim candidate bytes, reconstructed FITS bytes, or ROSAT data.",
         "",
         "## All fixed product rows — distinct reference and Tzim dispositions",
         "",
@@ -1612,6 +1833,84 @@ def main() -> int:
             f"{tzim.get('candidate_bytes', '—')} / `{tzim.get('candidate_sha256', '—')}` | "
             f"{direct_status} | {funpack_status}; fitsverify {fitsverify_status} |"
         )
+
+    def compact_first_difference(check: dict) -> str:
+        difference = check.get("first_actual_difference")
+        if not isinstance(difference, dict):
+            return "none"
+        kind = difference.get("mismatch_kind")
+        if kind == "header_card":
+            fields = (
+                "kind", "keyword", "original_card_index", "reconstructed_card_index",
+                "first_differing_byte_offset", "first_differing_original_header_byte_offset",
+                "first_differing_reconstructed_header_byte_offset", "original_file_offset",
+                "reconstructed_file_offset", "before_card_hex", "after_card_hex",
+            )
+        elif kind == "header_padding":
+            fields = (
+                "kind", "mismatch_kind", "first_differing_byte_offset", "original_file_offset",
+                "reconstructed_file_offset", "original_byte_hex", "reconstructed_byte_hex",
+            )
+        elif kind == "storage_payload":
+            fields = (
+                "kind", "mismatch_kind", "first_differing_byte_offset", "original_file_offset",
+                "reconstructed_file_offset", "original_byte_hex", "reconstructed_byte_hex",
+            )
+        else:
+            fields = ("kind", "mismatch_kind", "side", "reason")
+        compact = {field: difference.get(field) for field in fields if field in difference}
+        return json.dumps(compact, ensure_ascii=True, separators=(",", ":"))
+
+    compact_hdu_rows = []
+    comparison_labels = {
+        "astropy_reference_candidate_funpack_C_vs_source": "reference -C",
+        "tzim_candidate_funpack_C_vs_source_funpack_C": "Tzim source/candidate -C",
+        "external_integer_positive_control_funpack_C_vs_source": "external integer control -C",
+    }
+    for diagnostic in hdu_diagnostics:
+        product_id = str(diagnostic.get("product_id") or "unknown-product")
+        comparison_kind = comparison_labels.get(diagnostic.get("comparison_kind"), diagnostic.get("comparison_kind", "unknown"))
+        comparison = diagnostic.get("diagnostics") or {}
+        hdu_checks = comparison.get("hdu_checks") or []
+        if not hdu_checks:
+            compact_hdu_rows.append(
+                f"| `{product_id}` | {comparison_kind} | — | unavailable | unavailable | unavailable | — | no HDU comparison |"
+            )
+            continue
+        for check in hdu_checks:
+            cards_equal = check.get("header_cards_through_end_equality")
+            cards_status = "true" if cards_equal is True else "false" if cards_equal is False else "unknown"
+            payload_equal = check.get("storage_payload_equality")
+            payload_status = "true" if payload_equal is True else "false" if payload_equal is False else "unknown"
+            if check.get("header_padding_only_difference") is True:
+                padding_status = "yes"
+            elif check.get("header_padding_equality") is True:
+                padding_status = "no"
+            elif check.get("header_padding_equality") is False:
+                padding_status = "different-with-card-diff"
+            else:
+                padding_status = "unknown"
+            counts = check.get("header_card_difference_counts") or {}
+            count_text = (
+                f"I={counts.get('inserted', 0)},D={counts.get('dropped', 0)},C={counts.get('changed', 0)}"
+            )
+            hdu_index = check.get("hdu_index", "—")
+            first = compact_first_difference(check)
+            cells = (product_id, comparison_kind, str(hdu_index), cards_status,
+                     payload_status, padding_status, count_text, first)
+            escaped = [str(cell).replace("|", "\\|").replace("\n", " ") for cell in cells]
+            compact_hdu_rows.append("| " + " | ".join(escaped) + " |")
+
+    summary.extend([
+        "",
+        "## Corrected FITS raw comparator diagnostics — per product and HDU",
+        "",
+        "Cards-through-END equality compares exact 80-byte cards through the actual END card; only post-END record padding is excluded. `Padding-only=yes` means cards through END are equal but padding bytes differ. `I/D/C` are inserted/dropped/changed keyword-card counts. The first-difference cell gives offsets and exact before/after card hex (or exact differing padding/payload bytes). Every per-product/per-HDU row is present and no diagnostic value is truncated; full structured records remain in the evidence JSONL. No FITS payload bytes are shown.",
+        "",
+        "| Product / control | Comparison | HDU | Cards through END equal | Storage payload equal | Padding-only | I/D/C keyword counts | First actual difference |",
+        "| --- | --- | ---: | --- | --- | --- | --- | --- |",
+        *compact_hdu_rows,
+    ])
 
     def diagnostic_excerpt(value: object, limit: int = 600) -> str:
         text = str(value or "").strip()

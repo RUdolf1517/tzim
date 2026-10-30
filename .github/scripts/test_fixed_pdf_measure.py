@@ -22,6 +22,31 @@ RECOMPUTE_PATH = ROOT / ".github/scripts/recompute-fixed-pdf.py"
 
 
 class FixedPdfGainTests(unittest.TestCase):
+    def test_raw_faithful_rows_are_the_accepted_subset_and_include_formula_inputs(self) -> None:
+        rows = [
+            {
+                "id": "latex/readme",
+                "classification": "accepted",
+                "bytes": 1234,
+                "sha256": "a" * 64,
+                "streams": 2,
+                "flate_bytes": 300,
+                "flate_after": 280,
+                "faithful_pct": 100.0 * (300 - 280) / 1234,
+            },
+            {"id": "latex/unsafe", "classification": "refused", "bytes": 1000},
+        ]
+        self.assertEqual(MEASURE.accepted_faithful_rows(rows), [{
+            "id": "latex/readme",
+            "bytes": 1234,
+            "sha256": "a" * 64,
+            "streams": 2,
+            "flate_bytes": 300,
+            "flate_after": 280,
+            "faithful_pct": 100.0 * (300 - 280) / 1234,
+            "faithful_error": None,
+        }])
+
     def test_registered_threshold_uses_faithful_pct_and_publishes_both_qpdf_distributions(self) -> None:
         rows = [
             {

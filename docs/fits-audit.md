@@ -453,6 +453,8 @@ report and raw structured diagnostics are recorded in §12; no FITS bytes are up
 
 ### Exact-SHA measurement and gated disposition
 
+> **Historical instrument outcome; not a candidate-content verdict.** The 5721867 run used `funpack -C`, but its comparator counted record padding and aligned cards by position. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. Preserve the measured source identities, positive-control result, exact storage-payload comparisons and independent `fitsverify -l` findings as historical evidence; the four TESS checksum warnings remain valid blockers. Do not use the padded-comparator header counts as final content verdicts.
+
 The correction changes the `funpack` reader mode and diagnostics, not the pre-registered acceptance protocol,
 source identities, sample, threshold, or raw-row retention. The corrected fixed-sample run used exact source SHA
 `5721867ab1439814cead5645d4f443d8f8876c9c`, workflow
@@ -525,6 +527,8 @@ the four independent TESS checksum warnings. #70/full FITS admission remains sep
 
 ## 13. Corrected #59 exact-head rerun at `5967e31`
 
+> **Historical instrument outcome; not a candidate-content verdict.** This 5967e31 rerun used the same padded, positional card comparator. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. The four independent TESS `fitsverify -l` checksum warnings remain blockers and are not superseded.
+
 The same owner-fixed 14-product survey was rerun at exact source SHA
 `5967e318951f9c3945f0c256c3095b347483e234` in workflow
 [41049496855](https://github.com/RUdolf1517/tzim/actions/runs/41049496855). Frozen 14-product source-manifest
@@ -568,3 +572,29 @@ HDU/card indexes, keyword, first differing byte offsets and before/after 80-colu
 [PR comment `6521814144`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6521814144). The artifact contains
 no FITS bytes or payload data. No input repair, checksum-card filtering, header normalization, or scaling removal
 occurred; the ROSAT permission boundary remains unchanged.
+
+## 14. Reconstructed-header comparator correction
+
+The 5721867 (§12), 5967e31 (§13), and f05f6d2 report outcomes used a padded, positional reconstructed-header
+comparison. Their header-only HDU/card counts and full-gate conclusions are retained historically but are
+**superseded instrument results, not final candidate-content verdicts**. In particular, the f05 report is
+[comment `6522056780`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6522056780). Keep the independent
+TESS `fitsverify -l` checksum warnings as blockers; those verifier findings are not superseded.
+
+The corrected comparator treats each header as the exact sequence of literal 80-byte cards through the actual
+END card. It excludes only record padding after END from the header equality decision. It does not trim or
+normalize real blank cards, comments, spacing, duplicate cards, order, CHECKSUM or DATASUM. Differences are
+sequence-aligned and reported as inserted, dropped or changed cards, without shifting all later cards after a
+single insertion/deletion; exact before/after card bytes, keyword names and first-difference offsets remain
+available. Padding equality and padding-only differences are separately reported. Exact image storage-payload
+comparisons and non-image data-area/padding comparisons remain strict.
+
+This comparator change does **not** relax preservation of Tzim candidates: the untransformed-candidate layer
+still requires the complete original HDU bytes to match byte-for-byte, including header and data padding. The
+fixed #59 rerun applies `funpack -C` to all 14 source/candidate pairs, including unchanged rows, and retains the
+external integer-only CFITSIO positive control on the same comparator path. The current exact-SHA PR report
+contains the non-truncated per-product/per-HDU card-through-END equality, storage-payload equality, padding-only
+status, inserted/dropped/changed keyword counts, and first actual differences; only SHA-256 identities and
+header diagnostics are published, not survey/candidate/reconstruction payload bytes. The four TESS warnings keep
+the registered threshold `not_applied` unless every required candidate gate passes. #78 stays open with its
+existing final-evidence and review limitations; no baseline, threshold, protocol, or release status changes here.

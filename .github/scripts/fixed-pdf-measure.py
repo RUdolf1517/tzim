@@ -157,6 +157,23 @@ def aggregate(rows: list[dict]) -> dict:
     }
 
 
+def accepted_faithful_rows(rows: list[dict]) -> list[dict]:
+    """Compact, owner-reviewable raw inputs for the registered accepted-subset metric."""
+    return [
+        {
+            "id": row.get("id"),
+            "bytes": row.get("bytes"),
+            "sha256": row.get("sha256"),
+            "streams": row.get("streams"),
+            "flate_bytes": row.get("flate_bytes"),
+            "flate_after": row.get("flate_after"),
+            "faithful_pct": row.get("faithful_pct"),
+            "faithful_error": row.get("faithful_error"),
+        }
+        for row in rows if row.get("classification") == "accepted"
+    ]
+
+
 def threshold_disposition(rows: list[dict], summary: dict, pdf_feature_delta_bytes: int | None = None) -> dict:
     """Apply #57's pre-registered rule to accepted-subset `faithful_pct`, not Tzim gains."""
     accepted_n = summary["accepted_n"]
@@ -601,6 +618,16 @@ def main() -> int:
         )
 
     threshold_result = aggregate_result["pre_registered_threshold_disposition"]
+    faithful_rows_markdown = []
+    for faithful_row in accepted_faithful_rows(rows):
+        faithful_pct = faithful_row.get("faithful_pct")
+        faithful_pct_text = str(faithful_pct) if isinstance(faithful_pct, (int, float)) else "not measured"
+        faithful_rows_markdown.append(
+            f"| `{faithful_row.get('id', 'unknown')}` | {faithful_row.get('bytes', '—')} | "
+            f"`{faithful_row.get('sha256', '—')}` | {faithful_row.get('streams', '—')} | "
+            f"{faithful_row.get('flate_bytes', '—')} | {faithful_row.get('flate_after', '—')} | "
+            f"{faithful_pct_text} | {faithful_row.get('faithful_error') or '—'} |"
+        )
     markdown = [
         "# Fixed #57 PDF measurement",
         "",
@@ -623,6 +650,14 @@ def main() -> int:
         f"mean {aggregate_result['tzim_gain_pct']['mean']}%.",
         f"- Render differences: {aggregate_result['render_differences']}",
         f"- qpdf candidate check failures: {aggregate_result['qpdf_candidate_check_failures']}",
+        "",
+        "## Accepted-subset `faithful_pct` rows — raw recomputation inputs",
+        "",
+        "The table below is posted directly in this PR report. Each value uses the registered formula `100 * (flate_bytes - flate_after) / bytes`; all accepted rows are shown, including a missing value/error if one occurred.",
+        "",
+        "| Fixed ID | Input bytes | Input SHA-256 | Streams | `flate_bytes` | `flate_after` | `faithful_pct` | Error |",
+        "| --- | ---: | --- | ---: | ---: | ---: | ---: | --- |",
+        *faithful_rows_markdown,
         "",
         "`raw-rows.jsonl` and `qpdf-and-tzim-tool-output.jsonl` retain every result and command. "
         "The source manifest was fixed before any gain was computed. The forbidden repack output is a comparator only; it is not an optimization proposal.",
