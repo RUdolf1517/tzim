@@ -197,6 +197,10 @@ fn the_windows_installer_is_checksum_pinned_per_user_and_release_wired() {
     assert!(!installer.contains("RunAs"));
     assert!(!installer.contains("EnvironmentVariableTarget]::Machine"));
     assert!(!installer.contains("microsoft/winget-pkgs"));
+    assert!(installer.contains("TZIM_GITHUB_TOKEN"));
+
+    let integration_workflow = read(".github/workflows/windows-installer.yml");
+    assert!(integration_workflow.contains("TZIM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
 
     let workflow = read(".github/workflows/release.yml");
     assert!(workflow.contains("cp packaging/windows/install.ps1 artifacts/install.ps1"));

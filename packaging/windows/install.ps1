@@ -55,6 +55,12 @@ function Get-TzimLatestReleaseTag {
         'X-GitHub-Api-Version' = '2022-11-28'
         'User-Agent' = 'tzim-install.ps1'
     }
+    # CI may provide a read-only token to avoid anonymous API rate limits;
+    # end-user installs remain anonymous unless they opt in to this variable.
+    $token = [Environment]::GetEnvironmentVariable('TZIM_GITHUB_TOKEN')
+    if (-not [string]::IsNullOrWhiteSpace($token)) {
+        $headers.Authorization = "Bearer $token"
+    }
     $release = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
     if ($null -eq $release -or [string]::IsNullOrWhiteSpace([string]$release.tag_name)) {
         throw 'GitHub latest-release response did not contain tag_name.'

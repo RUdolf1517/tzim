@@ -57,6 +57,8 @@ jobs:
 
       - name: Run Windows installer integration and winget install
         shell: powershell
+        env:
+          TZIM_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
           try {
