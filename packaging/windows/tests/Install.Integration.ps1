@@ -401,7 +401,10 @@ try {
     Assert-InstalledVersion -InstallPath $latestRoot -ExpectedVersion $latestVersion
     Assert-Equal -Expected 1 -Actual (Get-UserPathMatchCount -InstallPath $latestRoot) -Message 'latest user PATH remains unique'
     Assert-Equal -Expected $preexistingLatestPath -Actual ([Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User)) -Message 'latest did not rewrite an existing user PATH entry'
-    $latestMarker = Get-Content -LiteralPath (Join-Path $latestRoot '.tzim-installer.json') -Raw | ConvertFrom-Json
+    $latestMarkerPath = Join-Path $latestRoot '.tzim-installer.json'
+    $latestMarkerJson = [System.IO.File]::ReadAllText($latestMarkerPath, [System.Text.Encoding]::UTF8)
+    $latestMarker = ConvertFrom-Json -InputObject $latestMarkerJson
+    Assert-Equal -Expected $latestRoot -Actual $latestMarker.install_root -Message 'UTF-8 marker round-tripped the Unicode install path'
     Assert-Equal -Expected $false -Actual ([bool]$latestMarker.path_entry_owned) -Message 'pre-existing PATH ownership marker'
 
     # The public script wrapper accepts an explicit version and is idempotent.
@@ -462,7 +465,10 @@ try {
     # Genuine package upgrade and repeat install; the path entry stays singular.
     & $installerPath -Version $latestVersion -InstallRoot $upgradeRoot
     Assert-InstalledVersion -InstallPath $upgradeRoot -ExpectedVersion $latestVersion
-    $upgradeMarker = Get-Content -LiteralPath (Join-Path $upgradeRoot '.tzim-installer.json') -Raw | ConvertFrom-Json
+    $upgradeMarkerPath = Join-Path $upgradeRoot '.tzim-installer.json'
+    $upgradeMarkerJson = [System.IO.File]::ReadAllText($upgradeMarkerPath, [System.Text.Encoding]::UTF8)
+    $upgradeMarker = ConvertFrom-Json -InputObject $upgradeMarkerJson
+    Assert-Equal -Expected $upgradeRoot -Actual $upgradeMarker.install_root -Message 'UTF-8 marker round-tripped the upgrade path'
     Assert-Equal -Expected $true -Actual ([bool]$upgradeMarker.path_entry_owned) -Message 'installer-owned PATH marker'
     Assert-Equal -Expected 1 -Actual (Get-UserPathMatchCount -InstallPath $upgradeRoot) -Message 'upgrade retained a single PATH entry'
     & $installerPath -Version $latestVersion -InstallRoot $upgradeRoot

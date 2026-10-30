@@ -335,7 +335,8 @@ function Read-TzimInstallerMarker {
         throw "'$InstallPath' is not owned by this installer; no files were changed."
     }
     try {
-        $marker = Get-Content -LiteralPath $markerPath -Raw | ConvertFrom-Json
+        $markerJson = [System.IO.File]::ReadAllText($markerPath, [System.Text.Encoding]::UTF8)
+        $marker = ConvertFrom-Json -InputObject $markerJson
     }
     catch {
         throw "Installer ownership marker is malformed; no files were changed: $($_.Exception.Message)"
