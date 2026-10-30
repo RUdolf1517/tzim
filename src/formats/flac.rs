@@ -249,11 +249,7 @@ struct DecoderSource<'a> {
 }
 
 impl<'a> DecoderSource<'a> {
-    fn new(
-        data: &'a [u8],
-        frame_start: usize,
-        info: claxon::metadata::StreamInfo,
-    ) -> Result<Self> {
+    fn new(data: &'a [u8], frame_start: usize, info: claxon::metadata::StreamInfo) -> Result<Self> {
         let total_samples = usize::try_from(info.samples.unwrap_or(0))
             .map_err(|_| refusal("sample count does not fit this platform"))?;
         let audio = data
@@ -299,11 +295,7 @@ impl<'a> DecoderSource<'a> {
             return Ok(None);
         };
         self.sequence
-            .observe(
-                &decoded,
-                self.channels,
-                self.streaminfo_max_block_size,
-            )
+            .observe(&decoded, self.channels, self.streaminfo_max_block_size)
             .map_err(|_| invalid_frame_source())?;
         Ok(Some(decoded.block))
     }
@@ -460,8 +452,8 @@ fn read_decoded_frame(
         let end = frames.into_inner().position();
         (decoded, end)
     };
-    let Some(block) = decoded
-        .map_err(|error| refusal(format!("independent decoder rejected frame: {error}")))?
+    let Some(block) =
+        decoded.map_err(|error| refusal(format!("independent decoder rejected frame: {error}")))?
     else {
         if end != start as u64 {
             return Err(refusal("independent decoder consumed bytes at frame EOF"));
@@ -1360,9 +1352,8 @@ mod tests {
         let mut rewritten = frame[..header.number_start].to_vec();
         rewritten[1] = (rewritten[1] & !1) | u8::from(variable_blocking);
         rewritten.extend_from_slice(&encode_flac_number(number));
-        rewritten.extend_from_slice(
-            &frame[header.number_start + header.number_len..header.crc_index],
-        );
+        rewritten
+            .extend_from_slice(&frame[header.number_start + header.number_len..header.crc_index]);
         let crc_index = rewritten.len();
         rewritten.push(flac_crc8(&rewritten[..crc_index]));
         rewritten.extend_from_slice(&frame[header.crc_index + 1..frame.len() - 2]);
@@ -1428,9 +1419,11 @@ mod tests {
         let input = fixed_as_variable(&fixed);
         let file = parse(&input).unwrap();
         let info = decode_info(&input).unwrap();
-        assert!(frame_header(&input[file.frame_start..], 0)
-            .unwrap()
-            .variable_blocking);
+        assert!(
+            frame_header(&input[file.frame_start..], 0)
+                .unwrap()
+                .variable_blocking
+        );
         validate_frame_sequence(&input, file.frame_start, info).unwrap();
 
         let options = test_options();
