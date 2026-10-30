@@ -487,6 +487,7 @@ try {
     $winget = Get-Command -Name winget.exe -ErrorAction Stop
     $wingetRoot = Join-Path $artifactRoot 'winget-local'
     $manifestDir = Join-Path $wingetRoot $latestVersion
+    $versionManifest = Join-Path $manifestDir 'RUdolf1517.tzim.yaml'
     $generator = Join-Path $repositoryRoot 'packaging\winget\generate.py'
     $generateLog = Join-Path $artifactRoot 'winget-generate.log'
     $generation = & $python.Source $generator --tag $latestTag --windows-archive $archiveLatest --output-dir $wingetRoot 2>&1
@@ -495,16 +496,17 @@ try {
     Assert-Equal -Expected 0 -Actual $generationExit -Message 'generate local winget manifests'
 
     $validateLog = Join-Path $artifactRoot 'winget-validate.log'
-    $validation = & $winget.Source validate --manifest $manifestDir 2>&1
+    Assert-Equal -Expected $true -Actual (Test-Path -LiteralPath $versionManifest -PathType Leaf) -Message 'canonical local winget version manifest exists'
+    $validation = & $winget.Source validate --manifest $versionManifest 2>&1
     $validationExit = $LASTEXITCODE
     $validation | Tee-Object -FilePath $validateLog
-    Assert-Equal -Expected 0 -Actual $validationExit -Message 'winget validate --manifest local directory'
+    Assert-Equal -Expected 0 -Actual $validationExit -Message 'winget validate --manifest local version file'
 
     $expectedDir = Join-Path $artifactRoot 'winget-expected-binary'
     Expand-Archive -LiteralPath $archiveLatest -DestinationPath $expectedDir -Force
     $expectedExeHash = (Get-FileHash -LiteralPath (Join-Path $expectedDir 'tzim.exe') -Algorithm SHA256).Hash
     $installLog = Join-Path $artifactRoot 'winget-install.log'
-    $installOutput = & $winget.Source install --manifest $manifestDir --scope user `
+    $installOutput = & $winget.Source install --manifest $versionManifest --scope user `
         --accept-package-agreements --silent --disable-interactivity 2>&1
     $installExit = $LASTEXITCODE
     $installOutput | Tee-Object -FilePath $installLog
