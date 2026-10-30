@@ -728,7 +728,9 @@ jobs:
             echo "sections:"
             llvm-size -A /tmp/tzim-full 2>/dev/null | head -12 || true
           } | tee /tmp/tzim-size-report.txt
-          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size report
+          # Keep the detailed measurements separate from the size-gate log so
+          # the failure report cannot overwrite the feature/section breakdown.
+          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size-report report
 
       - name: Publish failure log
         if: steps.size.outcome == 'failure'

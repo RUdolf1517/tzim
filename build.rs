@@ -166,7 +166,7 @@ fn build_capabilities() -> String {
     )
     .unwrap();
 
-    write!(
+    writeln!(
         json,
         ",\"confirmation_policies\":[{{\"id\":\"fits_tile_confirmation\",\
          \"flag\":\"--fits-tile\",\"available\":{},\
@@ -179,7 +179,7 @@ fn build_capabilities() -> String {
          \"never_prompts_for\":[\"--json\",\"--dry-run\",\"recursive_or_batch_runs\",\
          \"nested_work\",\"filtered_or_refused_inputs\",\
          \"candidate_or_verification_failures\"]}}],\
-         \"side_effects\":{{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}}}\n",
+         \"side_effects\":{{\"scans_files\":false,\"writes_files\":false,\"prompts\":false}}}}",
         bool_text(enabled("fits")),
     )
     .unwrap();

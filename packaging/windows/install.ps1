@@ -162,7 +162,7 @@ function Get-TzimArchiveVersion {
     $exitCode = $LASTEXITCODE
     $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
     if ($exitCode -ne 0) {
-        throw "tzim.exe --version exited with $exitCode: $text"
+        throw "tzim.exe --version exited with ${exitCode}: $text"
     }
     $versionMatch = [System.Text.RegularExpressions.Regex]::Match(
         $text.Trim(),
