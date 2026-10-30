@@ -38,7 +38,13 @@ Homebrew formula and the Linux packages install, so all four channels describe t
 that disagreed with `--help` would be a second source of truth, and this project does not keep one.
 `tests/packaging.rs` fails when an option in `--help` is missing from the man page or from any completion. The
 fuzz entry points are behind a `fuzz-api` feature that no release enables; `--all-features` would put them in
-the binary. JPEG still has to be enabled at run time with `--formats jpeg`.
+the binary.
+
+The release default includes the eligible baseline sequential JPEG subset and its independent V1 pixel
+verification; users do not need to name JPEG with `--formats`. `--formats` is an allowlist for narrowing the
+handlers in a run (`--formats png` excludes JPEG). Progressive and arithmetic-coded JPEG are not included in
+the supported subset. FLAC and PDF remain separate non-default opt-in features. FITS is also non-default, and
+requires both a build with `--features fits` and the explicit `--fits-tile` run option.
 
 Asset names are the Rust target triples and carry no version. That is deliberate: it makes
 `https://github.com/RUdolf1517/tzim/releases/latest/download/<asset>` a stable URL, which is what

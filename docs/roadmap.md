@@ -328,36 +328,43 @@ The tag is cut from `main` only after each test fails before its fix and passes 
   the current differences, unavailable Zopfli cells and supplemental samples remain disclosed. This release
   does not claim full FITS or PDF admission.
 
-### v0.14+ — the queue after this
+### v0.15 — baseline JPEG and evidence-bounded opt-in formats
 
-The v0.14 implementation queue is complete. The following #84 work is an **unreleased follow-up**, not part of
-the v0.14.0 release notes or artifacts. Its acceptance status is deliberately kept separate from the historical
-v0.13/v0.14 decisions above:
+The #84 implementation and reviewed measurements form the v0.15.0 release scope. The #57/#59/#79 results below
+are bound to reviewed source SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`; they are not test or full/bundle
+evidence for the later release-candidate SHA. Final release-gate evidence must be read from the exact-SHA bundle.
 
-| Issue | Unreleased status | Remaining evidence or blocker |
+| Issue | v0.15.0 scope / disposition | Evidence and limits |
 | --- | --- | --- |
-| #57 — PDF measurement | Measured at exact SHA `5967e318951f9c3945f0c256c3095b347483e234`; original threshold applied and refused | The 21-row fixed sample retained all outputs: 18 accepted, 3 refused as incremental updates. The accepted-subset `faithful_pct` median was 0.00034127460376596526% (<1% refusal bar); permitted-qpdf and forbidden-repack distributions, qpdf checks and MuPDF comparisons are in [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31). The separate #80 implementation remains non-default and authorized. |
-| #59 — FITS measurement | Corrected reader mode is implemented; threshold **not applied** | The a1 default-checksum `funpack` outcome is superseded as an instrument result, not evidence of candidate content failure. The 14 fixed source identities remain unchanged; each exact-SHA rerun records its generated candidate hashes separately. The corrected path uses `funpack -C`, an external integer-only positive control through the same literal-header/storage-array comparator, and structured per-HDU diagnostics. Four TESS `fitsverify -l` checksum warnings remain blockers; all 14 Tzim rows remain unchanged skips. See [FITS audit §13](fits-audit.md#13-corrected-59-exact-head-rerun-at-5967e31); §11 retains the historical default-mode report. |
-| #82 — default JPEG V1 | implemented; evidence is recorded per source SHA | The fixed stripped-musl ceiling is **1,082,208 bytes**. Use only the exact-head size report and `size-<source SHA>` / `jpeg-runtime-<source SHA>` artifacts; never carry evidence to a later head. |
-| #83 — FITS confirmation | implemented; tests are part of the cross-platform CI matrix | The prompt is limited to one direct TTY `--fits-tile` run; the candidate is fully verified before default-No confirmation and only Yes reaches atomic install. |
-| #79 — FLAC re-encoding | Implemented behind the non-default `flac` feature; fixed 43-row corpus run and external checks recorded at exact SHA `5967e318951f9c3945f0c256c3095b347483e234` | 23 optimized candidates passed `flac --test`, `metaflac`, exact PCM, and STREAMINFO-MD5 checks; 744,570 bytes saved. The whole-corpus and optimized-only byte denominators are distinct; see [FLAC audit](flac-audit.md) and [measurement status](measurement-status.md). This sample does not claim full format admission. |
-| #80 — narrow PDF FlateDecode | Implemented behind the non-default `pdf` feature; remains independently authorized from #57 | The #57 original `faithful_pct` rule still returns refusal on the 21-output sample. This does not change #80's implementation scope; the feature remains opt-in, repacking remains forbidden, and full PDF admission is not claimed. See [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31). |
+| #82 — default JPEG V1 | Eligible baseline sequential JPEG is in the release default with independent pixel verification; `--formats` narrows the allowlist and is not a JPEG opt-in | The fixed stripped-musl ceiling remains **1,082,208 bytes**. Exact-head size/performance reports are source-SHA-specific; do not carry them to another SHA. Progressive JPEG is not supported or claimed. |
+| #79 — FLAC re-encoding | Implemented behind the non-default `flac` feature | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, 23 of the fixed 43 rows were optimized; all 23 passed `flac --test`, `metaflac`, exact PCM and STREAMINFO-MD5 checks; 744,570 bytes saved. This sample is not full format admission. See [FLAC audit](flac-audit.md) and [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524900373). |
+| #80 — narrow PDF FlateDecode | Implemented behind the non-default `pdf` feature, separately authorized from #57 | Preserves existing `/ObjStm` bytes; repacking remains forbidden. It does not change #57's refusal and is not full PDF admission. |
+| #83 — FITS confirmation | A direct single-file TTY `--fits-tile` run verifies a staged candidate before default-No confirmation; only Yes installs it | Noninteractive, JSON, batch, nested and dry-run paths do not prompt; the flag remains explicit consent there. |
+| #57 — PDF measurement | Original pre-registered threshold applied; **refused after measurement** | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, all 21 outputs were retained; 18 were accepted for the measured subset and three were refused as `incremental_update`. Accepted-subset `faithful_pct` median was 0.00034122090736326286% (Q1 0%, Q3 0.205778828129944%; 72.22% positive), below the 1% refusal bar. See [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6525030959) and [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31). This is not an admission result. |
+| #59 — FITS measurement | Corrected reader mode; threshold **not applied** | At reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60`, reference-candidate acceptance was 0/14; Tzim strict preservation passed 14/14. Cards-through-actual-END equality was 0/20, storage-payload mismatches 0, with 94 changed, 66 dropped and 12 inserted cards. Four independent TESS `fitsverify -l` checksum warnings remain blockers. No green reference-candidate claim is made; see [exact-head report](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6524986515) and [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol). |
+| #78 — full-scope HEASARC evidence | Exact final-SHA full-scope run with bundle is a release gate | Its requested and checked-out identities and raw per-file evidence must be reviewed from that release candidate's run. Passing a fixed sample or this gate does not establish full FITS admission. |
 
-Full-format admission and other examined candidates remain separate follow-ups rather than reasons to smuggle
-another format into the v0.14.0 release:
+### Separate follow-ups and measurement limits
 
-| Candidate | State | Why |
+The v0.15.0 format implementations remain bounded subsets, not full-format admissions or universal stability claims.
+FITS stays out of the default feature set and requires both `--features fits` and `--fits-tile`; FLAC and PDF stay
+separate non-default opt-in features. Baseline JPEG is the supported sequential subset only; progressive JPEG is
+not claimed.
+
+| Candidate | State | Why / remaining boundary |
 | --- | --- | --- |
-| FLAC | non-default opt-in implementation present for #79; a fixed 43-row run is recorded, broader admission remains open | Historical §7 figures remain unchanged. Exact-SHA run `41049496908` at `5967e318951f9c3945f0c256c3095b347483e234` optimized 23 rows, saved 744,570 bytes, and measured 6.371 seconds total first-pass time; all 23 candidates passed external tools, PCM comparison, and STREAMINFO-MD5. The feature-only build was 836,384 bytes. This is sample evidence, not a full-admission claim. |
-| WOFF2 | refused | Brotli re-encoding cannot be verified without the encoder itself |
-| FITS full-admission follow-up | open, outside the v0.14.0 opt-in release | The v0.14.0 handler remains behind `--fits-tile` and the non-default `fits` feature. The a1 default-checksum `funpack` result is superseded as an instrument outcome and must not be treated as 14 candidate content failures. The corrected #59 path uses `funpack -C` and an external integer-only positive control through the same literal-header/storage-array comparison; structured mismatches are retained. Four TESS `fitsverify -l` checksum warnings remain blockers, so the threshold stays not applied; all Tzim rows remain unchanged skips. Do not repair inputs or claim acceptance from the Tier-2 median. See the corrected protocol in [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol), with the historical report preserved in §11. |
-| DICOM | audited, under measurement | the old row asked whether the dictionary or the refusal list costs more; the answer is the dictionary — 5 189 measured entries — and it is needed by one tier of three. The cheap tier recompresses a data set that is already deflated (raw DEFLATE, no checksum), specified in [guarantees §4.13](guarantees.md#413-dicom--contract-written-not-implemented); [dicom-audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance) fixes the thresholds in advance |
-| PDF | non-default opt-in #80 implementation present; #57 fixed sample measured and refused under its original rule | The historical 2,208-file audit remains unchanged. The exact 21-output run at SHA `5967e318951f9c3945f0c256c3095b347483e234` measured accepted-subset `faithful_pct` median 0.00034127460376596526% (below 1%), so the pre-registered result is refusal. The owner-authorized #80 code remains independent and opt-in; repacking is forbidden ([guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31)). |
-| WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | refused | [formats §5](formats.md#5-refused-formats) |
-| raw DEFLATE | refused | no signature: recognition would be a guess |
+| FLAC | Non-default opt-in #79 implementation; broader admission remains open | The fixed 43-row sample at reviewed SHA `ce31ac81b968f8d9e727ea6a5d4fc43c5abb2a60` optimized 23 rows and saved 744,570 bytes; all 23 passed external tools, PCM comparison and STREAMINFO-MD5. Sample evidence only; see [measurement status](measurement-status.md). |
+| WOFF2 | Refused | Brotli re-encoding cannot be verified without the encoder itself. |
+| FITS full-admission follow-up | Open; outside the v0.15.0 opt-in release | The handler remains behind the non-default `fits` feature and `--fits-tile`. The a1 default-checksum `funpack` result is superseded as an instrument outcome, not evidence of 14 content failures. The corrected #59 path uses `funpack -C` and an external integer-only positive control through the same literal-header/storage-array comparison; structured mismatches are retained. Four TESS checksum warnings keep the threshold not applied. Do not repair inputs or claim acceptance from the Tier-2 median. See [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol); §11 preserves the historical report. |
+| DICOM | Audited, under measurement | The 5,189-entry dictionary is needed by one of three tiers. The cheap tier recompresses a dataset already using raw DEFLATE (no checksum); the thresholds are fixed in advance in [DICOM audit §8](dicom-audit.md#8-the-measurement-and-the-rule-fixed-in-advance). |
+| PDF | Non-default #80 implementation; #57 fixed sample refused under its original rule | The historical 2,208-file audit is unchanged. The exact 21-output #57 result is a refusal; #80 remains separate, opt-in and does not repack ([guarantees §4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in), [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31)). |
+| WebP, AVIF, HEIC, JXL, MP4, MP3, xz/zstd/7z, GIF | Refused | [formats §5](formats.md#5-refused-formats). |
+| Raw DEFLATE | Refused | No signature: recognition would be a guess. |
 
-A new format is admitted only by [formats §4](formats.md#4-admission-criteria-for-a-new-format), and the
-first question it now asks is not "can it be verified" but "is there anything left to win".
+The separate `measure-repro` comparison remains a disclosed failure: published and measured corpus/PDF figures differ,
+and five historical per-file Zopfli rows are unavailable. No baseline or threshold is changed to manufacture a green
+result; exact current release-candidate outcomes are retained in the raw evidence bundle. The release makes no
+full-format admission or universal-stability claims.
 
 ---
 
