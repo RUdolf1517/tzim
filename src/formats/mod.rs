@@ -5,10 +5,14 @@ use crate::error::{Error, Result};
 
 #[cfg(feature = "fits")]
 pub mod fits;
+#[cfg(feature = "flac")]
+pub mod flac;
 #[cfg(feature = "gzip")]
 pub mod gzip;
 #[cfg(feature = "jpeg")]
 pub mod jpeg;
+#[cfg(feature = "pdf")]
+pub mod pdf;
 #[cfg(feature = "png")]
 pub mod png;
 #[cfg(feature = "tiff")]
@@ -29,6 +33,8 @@ pub const fn compiled(format: Format) -> bool {
         Format::Tiff => cfg!(feature = "tiff"),
         Format::Zlib => cfg!(feature = "zlib"),
         Format::Fits => cfg!(feature = "fits"),
+        Format::Flac => cfg!(feature = "flac"),
+        Format::Pdf => cfg!(feature = "pdf"),
     }
 }
 
@@ -59,14 +65,20 @@ pub fn compiled_names() -> Vec<&'static str> {
     if cfg!(feature = "fits") {
         out.push("fits");
     }
+    if cfg!(feature = "flac") {
+        out.push("flac");
+    }
+    if cfg!(feature = "pdf") {
+        out.push("pdf");
+    }
     out
 }
 
 /// Which formats a run is allowed to process.
 ///
-/// Only JPEG is off by default: it is opt-in because its gain is small and its
-/// code path is the most intricate in the project. `--formats` turns it on and
-/// can also narrow the set for everything else.
+/// JPEG is enabled by default only when the independent `jpeg-v1` verifier is
+/// compiled in; a narrower build with the codec alone keeps JPEG opt-in. `--formats` can also
+/// narrow the set for everything else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Allow {
     pub png: bool,
@@ -77,18 +89,21 @@ pub struct Allow {
     pub tiff: bool,
     pub zlib: bool,
     pub fits: bool,
+    pub flac: bool,
+    pub pdf: bool,
 }
 
 impl Default for Allow {
-    /// Everything this build can do, except JPEG: it is opt-in because its gain
-    /// is small and its code path is the most intricate in the project.
+    /// Every compiled handler is enabled except that JPEG requires the
+    /// independent verifier for default admission. The release default includes
+    /// `jpeg-v1`; a codec-only build still requires `--formats jpeg`.
     fn default() -> Self {
         Allow {
             png: cfg!(feature = "png"),
             gzip: cfg!(feature = "gzip"),
             zip: cfg!(feature = "zip"),
             ico: cfg!(feature = "ico"),
-            jpeg: false,
+            jpeg: cfg!(feature = "jpeg-v1"),
             tiff: cfg!(feature = "tiff"),
             zlib: cfg!(feature = "zlib"),
             // The handler changes an `IMAGE` HDU into a `BINTABLE`, which is a
@@ -96,6 +111,8 @@ impl Default for Allow {
             // for it with `--fits-tile` (`Options::fits_tile`). Being compiled
             // in is not the same as being on.
             fits: cfg!(feature = "fits"),
+            flac: cfg!(feature = "flac"),
+            pdf: cfg!(feature = "pdf"),
         }
     }
 }
@@ -114,6 +131,8 @@ impl Allow {
             tiff: false,
             zlib: false,
             fits: false,
+            flac: false,
+            pdf: false,
         };
         for name in names {
             let (format, slot) = match name.as_str() {
@@ -125,10 +144,12 @@ impl Allow {
                 "tiff" | "tif" => (Format::Tiff, &mut allow.tiff),
                 "zlib" => (Format::Zlib, &mut allow.zlib),
                 "fits" => (Format::Fits, &mut allow.fits),
+                "flac" => (Format::Flac, &mut allow.flac),
+                "pdf" => (Format::Pdf, &mut allow.pdf),
                 other => {
                     return Err(Error::usage(format!(
                         "unknown format `{other}`; expected png, gzip, zip, ico, jpeg, tiff, \
-                         zlib or fits"
+                         zlib, fits, flac or pdf"
                     )))
                 }
             };
@@ -159,6 +180,8 @@ impl Allow {
             Format::Tiff => self.tiff,
             Format::Zlib => self.zlib,
             Format::Fits => self.fits,
+            Format::Flac => self.flac,
+            Format::Pdf => self.pdf,
         }
     }
 
@@ -188,6 +211,12 @@ impl Allow {
         }
         if self.fits {
             out.push("fits");
+        }
+        if self.flac {
+            out.push("flac");
+        }
+        if self.pdf {
+            out.push("pdf");
         }
         out
     }
@@ -272,6 +301,10 @@ pub fn optimize(format: Format, input: &[u8], dst: &mut dyn Write, opts: &Option
         Format::Zlib => zlib::optimize(input, dst, opts)?,
         #[cfg(feature = "fits")]
         Format::Fits => fits::optimize(input, dst, opts)?,
+        #[cfg(feature = "flac")]
+        Format::Flac => flac::optimize(input, dst, opts)?,
+        #[cfg(feature = "pdf")]
+        Format::Pdf => pdf::optimize(input, dst, opts)?,
         #[allow(unreachable_patterns)]
         other => {
             return Err(Error::internal(format!(
@@ -322,6 +355,10 @@ pub fn verify(format: Format, original: &[u8], candidate: &[u8], opts: &Options)
         Format::Zlib => zlib::verify(original, candidate, opts),
         #[cfg(feature = "fits")]
         Format::Fits => fits::verify(original, candidate, opts),
+        #[cfg(feature = "flac")]
+        Format::Flac => flac::verify(original, candidate, opts),
+        #[cfg(feature = "pdf")]
+        Format::Pdf => pdf::verify(original, candidate, opts),
         #[allow(unreachable_patterns)]
         other => Err(Error::internal(format!(
             "format `{}` is not compiled into this build",
@@ -382,6 +419,18 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
         "FITS",
         "tile-compress image HDUs (--fits-tile)",
         "the array round-trips byte for byte; every other HDU copied verbatim",
+    ));
+    #[cfg(feature = "flac")]
+    rows.push((
+        "FLAC",
+        "re-encode audio frames when smaller",
+        "Claxon PCM comparison; metadata preserved; seek offsets rebuilt",
+    ));
+    #[cfg(feature = "pdf")]
+    rows.push((
+        "PDF",
+        "recompress eligible FlateDecode streams",
+        "object IDs/order and non-target bytes preserved; classic or supported stream xref, ObjStm retained",
     ));
     rows
 }

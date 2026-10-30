@@ -113,32 +113,31 @@ Full flag reference: [docs/cli.md](docs/cli.md).
 | ICO / CUR | v0.3 | Optimize embedded PNGs; bitmap entries copied verbatim | G3 |
 | APNG | v0.3 | Recompress every frame, keeping chunk count and sequence numbers | G3 |
 | Nested containers | v0.3 | Optimize supported files inside ZIP archives (`--nested`) | G3 |
-| JPEG | v0.4 | Entropy re-encoding with optimal Huffman tables; DCT coefficients and every marker untouched; baseline sequential only, opt-in | G3 |
+| JPEG | v0.4 / #82 | Entropy re-encoding with optimal Huffman tables; exact coefficient comparison plus independent V1 pixel verification; baseline sequential only, enabled by default | G3 |
 | TIFF (classic, strips) | v0.7 | Recompress strips; every tag, entry order and geometry preserved; BigTIFF, tiling and LZW refused | G3 |
 | zlib (`.zlib`, `.zz`) | v0.9 | Recompress the DEFLATE stream; header and Adler-32 preserved byte for byte | G3 |
-| FLAC | — | **Refused after measurement**: a stronger encoder buys 0.4 % on music for ~150–300 KiB of binary ([audit](docs/flac-audit.md)) | — |
-| FITS | v0.14 (not in the default build) | Tile-compress an uncompressed image HDU into a `BINTABLE` (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off); every other HDU copied verbatim; opt-in via `--fits-tile`, and the `fits` feature is off by default | G3 |
-| PDF | — | **Refused after measurement**: the permitted slice covers 45.7 % of the corpus and saves a median 0.08 %, while the repacking that would save 20.1 % is exactly what the contract forbids ([contract](docs/guarantees.md#411-pdf--refused-after-measurement) · [audit](docs/pdf-audit.md)) | — |
+| FLAC | #79 | **Implemented in this unreleased branch behind the non-default `flac` feature.** At exact SHA `5967e318951f9c3945f0c256c3095b347483e234`, the frozen 43-row corpus optimized 23 files, left 7 already optimal, and retained 7 documented refusals plus 6 invalid controls. All 23 optimized candidates passed `flac --test`, `metaflac`, exact PCM comparison, and STREAMINFO-MD5 checks. The whole-corpus total was 109,472,390 → 108,727,820 bytes; the 23 optimized inputs were 91,284,082 → 90,539,512 bytes; 744,570 saved either way. This is limited corpus evidence, not full format admission ([audit](docs/flac-audit.md) · [status](docs/measurement-status.md) · [contract](docs/guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in)) | — |
+| FITS | v0.14 (not in the default build) | Tile-compress an uncompressed image HDU into a `BINTABLE` (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off); every other HDU copied verbatim; opt-in via `--fits-tile` (a single-file TTY run asks default No after verification); the `fits` feature is off by default | G3 |
+| PDF | #57 / #80 | **Implemented in this unreleased branch behind the non-default `pdf` feature.** The 21-output #57 run at exact SHA `5967e318951f9c3945f0c256c3095b347483e234` applied the original accepted-subset `faithful_pct` rule: median 0.00034127460376596526%, below the 1% refusal bar, so the threshold result is **refused after measurement**. Permitted-qpdf and forbidden-repack distributions, qpdf checks, and MuPDF render results are in the audit; the separately owner-authorized #80 implementation remains opt-in and repacking remains forbidden ([contract](docs/guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) · [audit](docs/pdf-audit.md) · [status](docs/measurement-status.md)) | — |
 | WebP, AVIF/HEIC, MP4/MKV, MP3, GIF, xz/zstd/7z | — | **Not planned** ([why](docs/formats.md#5-refused-formats)) | — |
 
-A format is listed as supported only when its contract and its tests exist. JPEG is off by default and enabled
-by name (`--formats jpeg`), because it is the riskiest handler here and typically saves only 1–3 %.
+A format is listed as supported only when its contract and its tests exist. The release default processes only
+eligible baseline JPEGs with exact coefficient comparison and independent V1 pixel verification. `--formats`
+remains an allowlist for narrowing a mixed run; use `--formats png` to exclude JPEG.
 
 FITS is the first format with **two** switches, and both are off. `--fits-tile` is the transformation: without
 it the handler only says why it did nothing, because turning an `IMAGE` HDU into a `BINTABLE` is visible to
 every reader that indexes `NAXIS1`. The `fits` cargo feature is the code: it is not in `default`, so a build
 that wants FITS is `cargo build --release --features fits`, and [size-budget §3](docs/size-budget.md#3-feature-matrix)
 measures what it costs: **+36 KiB**, which is enough to break the byte-exact gate on the default build. `--list-formats` names FITS only when the feature is compiled in.
-FITS is an opt-in implementation, not full format admission or a stability claim. Historical FITS audit figures
-are not current release/performance evidence; the remaining measurement and supplemental-sample limits are
-recorded in [measurement status](docs/measurement-status.md).
+FITS is an opt-in implementation, not full format admission or a stability claim. The a1 fixed #59 report's 14 default-checksum `funpack` comparisons are superseded as an instrument outcome and are not evidence of candidate content failures: every literal-header comparison must use `funpack -C`. The corrected gate also requires an external integer-only CFITSIO positive control through the same `funpack -C` and exact-header/storage-array path before attributing survey differences to candidates. Four independent TESS `fitsverify -l` checksum warnings remain blockers, so the registered threshold stays **not applied**; Tzim skipped all 14 rows unchanged. No source repair or FITS-byte upload occurred. Historical and corrected reports, candidate identities, and limits are recorded in [measurement status](docs/measurement-status.md), [the historical fits report §11](docs/fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), and [the corrected reader-mode record §12](docs/fits-audit.md#12-corrected-59-reader-mode-protocol).
 
 ## Why tzim
 
 | | |
 | --- | --- |
 | **It refuses instead of guessing** | Progressive and arithmetic-coded JPEG, LZW TIFF, signed ZIPs, preset-dictionary zlib, BigTIFF: each is skipped with a precise reason and exit code 0. None of them is approximated. |
-| **Its verification does not reuse the encoder** | PNG pixels are decoded with the `png` crate; gzip and zlib payloads through `flate2`; JPEG coefficients with the project codec. Where the reader is independent and where code is shared are stated explicitly in [the verification matrix](docs/guarantees.md#26-verification-independence). |
+| **Its verification does not rely on one reader** | PNG pixels are decoded with the `png` crate; gzip and zlib payloads through `flate2`; JPEG coefficients with the project codec plus independent pixel verification (`jpeg-decoder`) in release-default builds. Where readers are independent and where code is shared are stated explicitly in [the verification matrix](docs/guarantees.md#26-verification-independence). |
 | **It writes nothing unless it is smaller** | Equal or larger candidate: discarded, file untouched, `already optimal`. |
 | **It is one static binary** | No C, no `unsafe` in our code, no shell-outs. Built with `panic = "abort"`, LTO and `opt-level = "s"`; the size is measured by CI on every pull request ([budget](docs/size-budget.md)). |
 | **It costs what it costs, measured** | `docs/benchmarks.md` compares the ratio, the wall clock and the memory against `oxipng`, `optipng`, `jpegtran` and `gzip -9` — including the rows where the other tool wins. |

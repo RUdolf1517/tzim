@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "fits")]
+mod confirmation;
+
 use std::io::{self, BufWriter, IsTerminal, Write};
+#[cfg(feature = "fits")]
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -114,8 +119,10 @@ fn print_info(out: &mut dyn Write) -> io::Result<()> {
     writeln!(
         out,
         "{}",
-        if cfg!(feature = "jpeg") {
-            "JPEG is opt-in: name it with `--formats jpeg`."
+        if cfg!(feature = "jpeg-v1") {
+            "JPEG V1 is enabled by default."
+        } else if cfg!(feature = "jpeg") {
+            "JPEG is opt-in in this build: name it with `--formats jpeg`."
         } else {
             "JPEG is not compiled into this build."
         }
@@ -232,15 +239,44 @@ fn run_optimize(args: &cli::Args) -> i32 {
     let scan = walk::scan(args);
     let config = pipeline::Config::from_args(args);
     let config = &config;
+    #[cfg(feature = "fits")]
+    let confirm_fits = should_prompt_fits_tile(
+        args,
+        &scan,
+        io::stdin().is_terminal(),
+        io::stderr().is_terminal(),
+    );
 
     // The animation is decided before any work starts and lives only as long as
     // it: `drop(progress)` erases the line before the first result is printed.
     // Colour is the same decision the report uses, taken from stderr's own probe.
-    let progress = Progress::new(
-        scan.files.len(),
-        progress_wanted(args, scan.files.len()),
-        stderr_style(args.color),
-    );
+    #[cfg(feature = "fits")]
+    let progress_enabled = progress_wanted(args, scan.files.len()) && !confirm_fits;
+    #[cfg(not(feature = "fits"))]
+    let progress_enabled = progress_wanted(args, scan.files.len());
+    let progress = Progress::new(scan.files.len(), progress_enabled, stderr_style(args.color));
+
+    // The FITS confirmation path is compiled only with the optional `fits`
+    // feature, so it cannot increase the release-default binary. When present,
+    // a single-file prompt runs synchronously on the main thread.
+    #[cfg(feature = "fits")]
+    let mut outcomes = if confirm_fits {
+        let mut confirm = |path: &Path| confirm_fits_tile(path);
+        vec![pipeline::process_with_confirmation(
+            &scan.files[0],
+            config,
+            &mut confirm,
+        )]
+    } else {
+        pool::run(
+            &scan.files,
+            jobs,
+            args.fail_fast,
+            |path| pipeline::process(path, config),
+            |_| progress.advance(),
+        )
+    };
+    #[cfg(not(feature = "fits"))]
     let mut outcomes = pool::run(
         &scan.files,
         jobs,
@@ -302,6 +338,51 @@ fn run_optimize(args: &cli::Args) -> i32 {
     }
 }
 
+/// Whether this invocation qualifies for the FITS-only interactive
+/// confirmation. The pipeline still decides eligibility and verifies the full
+/// candidate before calling the prompt; these checks only ensure the callback
+/// runs on the main thread for a single explicit file, never for batch/nested,
+/// machine-readable, dry-run, or non-terminal work.
+#[cfg(feature = "fits")]
+fn should_prompt_fits_tile(
+    args: &cli::Args,
+    scan: &walk::Scan,
+    stdin_is_terminal: bool,
+    stderr_is_terminal: bool,
+) -> bool {
+    if !stdin_is_terminal
+        || !stderr_is_terminal
+        || !args.fits_tile
+        || !args.allow.fits
+        || args.paths.len() != 1
+        || scan.files.len() != 1
+        || !scan.skipped.is_empty()
+        || !scan.errors.is_empty()
+        || args.recursive
+        || args.nested
+        || args.dry_run
+        || args.json
+    {
+        return false;
+    }
+    if scan.files.first() != args.paths.first() {
+        return false;
+    }
+    matches!(
+        std::fs::symlink_metadata(&args.paths[0]),
+        Ok(metadata) if metadata.file_type().is_file()
+    )
+}
+
+#[cfg(feature = "fits")]
+fn confirm_fits_tile(path: &Path) -> bool {
+    let stdin = io::stdin();
+    let stderr = io::stderr();
+    let mut input = stdin.lock();
+    let mut output = stderr.lock();
+    confirmation::ask_fits_tile(path, &mut input, &mut output)
+}
+
 /// Whether to animate. A line of `\r` frames belongs on a terminal, never in a
 /// log file, a CI transcript or a pipe someone is parsing.
 fn progress_wanted(args: &cli::Args, files: usize) -> bool {
@@ -320,5 +401,112 @@ fn clone_error(err: &error::Error) -> error::Error {
         error::Error::Verify(m) => error::Error::verify(m.clone()),
         error::Error::Usage(m) => error::Error::usage(m.clone()),
         error::Error::Internal(m) => error::Error::internal(m.clone()),
+    }
+}
+
+#[cfg(all(test, feature = "fits"))]
+mod prompt_policy_tests {
+    use super::*;
+    use std::ffi::OsString;
+    #[cfg(feature = "fits")]
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn args(flags: &[&str], paths: &[&Path]) -> cli::Args {
+        let mut argv: Vec<OsString> = flags.iter().map(OsString::from).collect();
+        argv.extend(paths.iter().map(|path| path.as_os_str().to_os_string()));
+        match cli::parse(argv.into_iter()).unwrap() {
+            Command::Optimize(args) => args,
+            other => panic!("expected optimize command, got {other:?}"),
+        }
+    }
+
+    fn scan(files: Vec<PathBuf>) -> walk::Scan {
+        walk::Scan {
+            files,
+            skipped: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "fits")]
+    #[test]
+    fn only_a_single_direct_tty_fits_opt_in_is_prompt_eligible() {
+        let dir = std::env::temp_dir().join(format!("tzim-prompt-policy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("image.fits");
+        let second = dir.join("other.fits");
+        fs::write(&file, b"not parsed by the policy gate").unwrap();
+        fs::write(&second, b"also not parsed").unwrap();
+        let files = scan(vec![file.clone()]);
+
+        let direct = args(&["--fits-tile"], &[&file]);
+        assert!(should_prompt_fits_tile(&direct, &files, true, true));
+        let no_tile_consent = args(&[], &[&file]);
+        let formats_is_not_consent = args(&["--formats", "fits"], &[&file]);
+        assert!(!should_prompt_fits_tile(
+            &no_tile_consent,
+            &files,
+            true,
+            true
+        ));
+        assert!(!should_prompt_fits_tile(
+            &formats_is_not_consent,
+            &files,
+            true,
+            true
+        ));
+        // `--jobs` does not create a worker for this one eligible interactive
+        // file; processing stays synchronous so the prompt remains on main.
+        let with_jobs = args(&["--fits-tile", "--jobs", "4"], &[&file]);
+        assert!(should_prompt_fits_tile(&with_jobs, &files, true, true));
+        // Quiet mode cannot turn the confirmation flag into an implicit Yes.
+        let quiet = args(&["--fits-tile", "--quiet"], &[&file]);
+        assert!(should_prompt_fits_tile(&quiet, &files, true, true));
+        assert!(!should_prompt_fits_tile(&direct, &files, false, true));
+        assert!(!should_prompt_fits_tile(&direct, &files, true, false));
+
+        for flags in [
+            vec!["--fits-tile", "--json"],
+            vec!["--fits-tile", "--dry-run"],
+            vec!["--fits-tile", "--recursive"],
+            vec!["--fits-tile", "--nested"],
+            vec!["--fits-tile", "--formats", "png"],
+        ] {
+            let parsed = args(&flags, &[&file]);
+            assert!(
+                !should_prompt_fits_tile(&parsed, &files, true, true),
+                "unexpected prompt eligibility for {flags:?}"
+            );
+        }
+
+        let batch = args(&["--fits-tile"], &[&file, &second]);
+        assert!(!should_prompt_fits_tile(
+            &batch,
+            &scan(vec![file.clone(), second]),
+            true,
+            true
+        ));
+
+        let directory = args(&["--fits-tile"], &[&dir]);
+        assert!(!should_prompt_fits_tile(
+            &directory,
+            &scan(vec![file.clone()]),
+            true,
+            true
+        ));
+
+        let mut filtered = scan(vec![file.clone()]);
+        filtered.skipped.push((file.clone(), "filtered".into()));
+        assert!(!should_prompt_fits_tile(&direct, &filtered, true, true));
+
+        let mut errored = scan(vec![file.clone()]);
+        errored
+            .errors
+            .push((file.clone(), error::Error::Io(io::Error::other("test"))));
+        assert!(!should_prompt_fits_tile(&direct, &errored, true, true));
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

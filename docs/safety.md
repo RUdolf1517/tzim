@@ -187,7 +187,15 @@ For very large files on nearly full volumes, free at least the size of the large
 few-hundred-megabyte image is a legitimate `--jobs 4`. Bytes are bounded by `--memory-budget` instead
 (issue #51, decision O2-D).
 
-What a single file can cost, and what the guard therefore charges for it:
+What a single file can cost, and what the guard therefore charges for it. The non-default `pdf` and `flac`
+features are included in this model: PDF accepts at most 100,000 objects and shares a 100,000-value-node cap
+across the xref/trailer, direct objects, and all decoded object-stream members. Each member is parsed within the
+remaining budget. Decoded `/ObjStm` data is limited to 8 MiB, and a 128 MiB reserve covers parser collections
+plus bounded xref/object-stream decode buffers. Its name copies and rewrite patches are charged per input byte.
+FLAC encodes
+a stream frame by frame but retains a frame-start index and a copy of retained metadata. These scratch bounds
+are charged in addition to the input and candidate; the implementation table and corresponding
+`worst_case_bytes` tests are kept together in [`src/pipeline.rs`](../src/pipeline.rs).
 
 | Item | Worst case | Charged |
 | --- | --- | --- |
@@ -196,11 +204,16 @@ What a single file can cost, and what the guard therefore charges for it:
 | a decoded PNG image, both sides | `8 × pixels` | the `IHDR` count when the header carries it, `--max-pixels` otherwise |
 | a decoded JPEG image, both sides | `7 × pixels` | `--max-pixels` |
 | a decoded TIFF strip | `4 × len` | `len` |
+| PDF parser and rewrite scratch | `4 × len + 128 MiB` | `4 × len + 128 MiB` (the fixed term bounds the capped parser collections and decoded xref/`/ObjStm` buffers) |
+| FLAC frame-start index and copied metadata, plus bounded frame/PCM buffers | `4 × len + 8 MiB` | `4 × len + 8 MiB` |
 | a decompressed ZIP entry | `--max-uncompressed`, 8 GiB by default | `--max-uncompressed` |
 
-The PNG and JPEG numbers include the verification step, which decodes a second buffer: a budget that
-counted only the file on disk would be a third incorrect size predicate. gzip and zlib are absent because
-they are inflated in 64 KiB blocks and never materialise the payload.
+The PNG and JPEG charges include verification. For JPEG, `7 × pixels` remains the #51 accounting term and
+includes the independent `jpeg-decoder` frame: each side is decoded, CRC-32 hashed and dropped before the other
+side is decoded. After the exact local coefficient comparison, both coefficient-plane sets are explicitly
+dropped before V1 starts, so they do not overlap that frame. No two independent full-frame pixel buffers are
+live at once. gzip and zlib are absent because they are inflated in 64 KiB blocks and never materialise the
+payload.
 
 The check happens **before the file is read**. A file whose charge exceeds the budget is `skipped`, with a
 reason naming the flag, and it is never opened by the pipeline — so an input that would have been killed by
@@ -210,7 +223,7 @@ an error, and the file is untouched.
 The default is derived from the other ceilings:
 
 ```
---memory-budget = 4 × --max-size + 8 × --max-pixels + --max-uncompressed
+--memory-budget = 6 × --max-size + 8 × --max-pixels + --max-uncompressed + 128 MiB
 ```
 
 which is an upper bound on every row above, so the defaults never skip a file that `--max-size`,

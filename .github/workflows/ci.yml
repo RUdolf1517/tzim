@@ -13,11 +13,9 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  # Two configurations, on every platform (#68). Until v0.13 the only `cargo
-  # test` in this repository was `--all-features`, which is the configuration
-  # nobody ships: `default` turns `jpeg-v1` off, so `--info` prints a different
-  # sentence and `verify` takes a different path for a JPEG candidate. A branch
-  # that only a release executes is a branch nothing executes.
+  # Two configurations, on every platform (#68): `default` is exactly what a
+  # published binary ships with, including the independent JPEG V1 verifier;
+  # `all-features` additionally exercises FITS, FLAC and PDF.
   test:
     name: test (${{ matrix.os }}, ${{ matrix.features }})
     runs-on: ${{ matrix.os }}
@@ -76,6 +74,24 @@ jobs:
         if: steps.test.outcome == 'failure'
         shell: bash
         run: exit 1
+
+  # Exercise each newly admitted opt-in handler as its own feature on all three
+  # operating systems. `all-features` above catches interactions; this catches
+  # accidental reliance on an unrelated default or optional feature.
+  opt-in-format-matrix:
+    name: test (${{ matrix.os }}, ${{ matrix.format }} only)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        format: [flac, pdf]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and run the isolated format tests
+        shell: bash
+        run: cargo test --locked --no-default-features --features "${{ matrix.format }}" --lib
 
   # The smallest build that still has a handler (#68): `png` alone, with every
   # feature that is not PNG switched off. Nothing in this repository had ever
@@ -136,12 +152,54 @@ jobs:
         shell: bash
         run: exit 1
 
-  # FITS has a separate Astropy/CFITSIO check for the array round trip. This is
-  # not the HEASARC release gate: `fits-heasarc.yml` runs fitsverify and funpack
-  # on exact-SHA candidates. Keep their evidence and guarantees distinct; neither
-  # job alone is full-format admission or a runtime read-back in every binary.
+  # A script/docs-only change must not replay already reviewed FITS candidates.
+  # The exact-SHA HEASARC residual gate has its own selected rows for that case;
+  # this broader Astropy oracle runs when the FITS implementation or its oracle
+  # harness changes, and on non-PR pushes where the changed range is explicit.
+  fits-change-scope:
+    name: detect FITS implementation changes
+    runs-on: ubuntu-latest
+    outputs:
+      run_oracle: ${{ steps.scope.outputs.run_oracle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Select implementation diff
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            base="$PUSH_BEFORE_SHA"
+          else
+            base="$(git merge-base origin/main "$EVENT_SHA")"
+          fi
+          git diff --name-only "$base" "$EVENT_SHA" | tee /tmp/fits-changed-files.txt
+          if grep -Eq '^(src/|\.github/scripts/fits-oracle\.py$|Cargo\.toml$|Cargo\.lock$|build\.rs$)' /tmp/fits-changed-files.txt; then
+            run_oracle=true
+          else
+            run_oracle=false
+          fi
+          echo "run_oracle=$run_oracle" >> "$GITHUB_OUTPUT"
+          echo "Astropy FITS oracle required: $run_oracle"
+
+  # FITS has a separate Astropy `astropy.io.fits` check for the array round
+  # trip. Its GZIP_1/GZIP_2 decoder is not CFITSIO's `funpack`; the HEASARC gate
+  # below runs CFITSIO `fitsverify` and `funpack -C` on exact-SHA candidates.
+  # Keep their evidence and guarantees distinct; neither is full-format admission
+  # or a runtime read-back in every binary.
   fits-oracle:
     name: fits oracle (astropy)
+    needs: [fits-change-scope]
+    if: needs.fits-change-scope.outputs.run_oracle == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -547,15 +605,11 @@ jobs:
           echo "$bytes" > /tmp/tzim-size-bytes.txt
           # Keep the shipping binary: the matrix below overwrites the path.
           cp target/x86_64-unknown-linux-musl/release/tzim /tmp/tzim-full
-          # The gate is this release's own measurement, to the byte, and not a
-          # percentage above it: v0.12.1 left 150 KiB of headroom underneath a
-          # "green" check and the assets still grew, which is what #62 was
-          # about. v0.13 measures 979 808 bytes; `jpeg-v1` was measured at
-          # +118 784 and stays off for that reason (#39). A toolchain bump is
-          # the one thing that moves this number without a code change, and it
-          # is updated in the pull request that needs it, with the reason in
-          # docs/size-budget.md §1.
-          budget=979808
+          # Owner-authorized #82 ceiling for the default JPEG V1 build. This is
+          # the already measured -Os decoder result; never raise it or remove a
+          # verification path to make the gate green. The final SHA's actual
+          # byte count is reported and retained by this job.
+          budget=1082208
           echo "bytes: $bytes, budget: $budget"
           test "$bytes" -le "$budget" || {
             echo "the static binary is $((bytes / 1024)) KiB, over the $((budget / 1024)) KiB budget" >&2
@@ -573,12 +627,13 @@ jobs:
           out=/tmp/tzim-features.txt
           printf '%-38s %10s %8s\n' "features" "bytes" "KiB" > "$out"
           printf '%-38s %10s %8s\n' "--------------------------------------" "----------" "--------" >> "$out"
-          # The row after `+jpeg` is what a release ships (no `jpeg-v1`); the rows
-          # after it carry the decoders and formats that are off by default —
-          # `jpeg-v1`, `fits` — which is how their cost is measured rather than
-          # guessed.
+          # Include the pre-#82 default as a historical comparison and the
+          # current default with `jpeg-v1`. `fits` remains optional; the final
+          # release row is checked against the fixed 1,082,208-byte ceiling.
           for features in \
             "png" \
+            "flac" \
+            "pdf" \
             "png,gzip" \
             "png,gzip,zip" \
             "png,gzip,zip,ico" \
@@ -597,15 +652,29 @@ jobs:
           cat "$out"
 
       - name: Report size
-        if: steps.size.outcome == 'success'
+        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           {
-            bytes=$(cat /tmp/tzim-size-bytes.txt)
+            echo "source head SHA: ${SOURCE_SHA}"
+            echo "checkout SHA: $(git rev-parse HEAD)"
+            echo "target: x86_64-unknown-linux-musl"
+            echo "rustc: $(rustc --version)"
+            echo "cargo: $(cargo --version)"
+            bytes=$(cat /tmp/tzim-size-bytes.txt 2>/dev/null || echo unavailable)
             deps=$(cargo tree --locked --edges normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)
-            echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
+            if [[ "$bytes" =~ ^[0-9]+$ ]]; then
+              echo "static musl binary: ${bytes} bytes ($((bytes / 1024)) KiB)"
+            else
+              echo "static musl binary: ${bytes} (size step did not produce an artifact)"
+            fi
+            if [[ -f /tmp/tzim-full ]]; then
+              echo "binary SHA-256: $(sha256sum /tmp/tzim-full | cut -d' ' -f1)"
+              echo "binary type: $(file -b /tmp/tzim-full)"
+            fi
             echo "normal dependency lines: ${deps}"
             echo
             echo "feature builds:"
@@ -623,7 +692,115 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/ci-report.sh /tmp/tzim-size.log size
 
+      - name: Hash size evidence
+        if: always()
+        shell: bash
+        run: |
+          {
+            for file in /tmp/tzim-size-report.txt /tmp/tzim-size-bytes.txt /tmp/tzim-features.txt /tmp/tzim-full; do
+              if [[ -f "$file" ]]; then sha256sum "$file"; fi
+            done
+          } > /tmp/tzim-size-SHA256SUMS
+
       - name: Fail the job
-        if: steps.size.outcome == 'failure'
+        if: steps.size.outcome == 'failure' || steps.matrix.outcome == 'failure'
         shell: bash
         run: exit 1
+
+      - name: Retain raw size evidence and binary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: size-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/tzim-size-report.txt
+            /tmp/tzim-size-bytes.txt
+            /tmp/tzim-features.txt
+            /tmp/tzim-full
+            /tmp/tzim-size-SHA256SUMS
+          if-no-files-found: warn
+          retention-days: 90
+
+  # Measure the actual per-file runtime and peak RSS of the new default JPEG
+  # verifier against the same source built with the pre-#82 feature set. Raw
+  # rows, hashes, tool identities, and GNU time reports are retained as an
+  # artifact for the exact commit under review.
+  jpeg-runtime:
+    name: JPEG default runtime cost
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the release default
+        run: cargo build --release --locked
+
+      - name: Measure baseline and default JPEG runs
+        id: measure
+        continue-on-error: true
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -o pipefail
+          work="${RUNNER_TEMP}/tzim-jpeg-runtime"
+          mkdir -p "$work"
+          bash .github/scripts/jpeg-runtime.sh target/release/tzim "$work" 2>&1 | tee "$work/runner.log"
+
+      - name: Add measurement report to the run summary
+        if: always()
+        shell: bash
+        run: |
+          report="${RUNNER_TEMP}/tzim-jpeg-runtime/summary.md"
+          if [[ -f "$report" ]]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish runtime summary
+        if: steps.measure.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-jpeg-runtime/summary.md" jpeg-runtime report full
+
+      - name: Publish runtime failure log
+        if: steps.measure.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "${RUNNER_TEMP}/tzim-jpeg-runtime/runner.log" jpeg-runtime
+
+      - name: Hash raw JPEG runtime evidence
+        if: always()
+        shell: bash
+        run: |
+          work="${RUNNER_TEMP}/tzim-jpeg-runtime"
+          if [[ -d "$work" ]]; then
+            (
+              cd "$work"
+              find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+            )
+          fi
+
+      - name: Fail the job
+        if: steps.measure.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+      - name: Retain raw JPEG runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jpeg-runtime-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.md
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.txt
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.tsv
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.jsonl
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.stderr
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.exit
+            ${{ runner.temp }}/tzim-jpeg-runtime/*.log
+            ${{ runner.temp }}/tzim-jpeg-runtime/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90

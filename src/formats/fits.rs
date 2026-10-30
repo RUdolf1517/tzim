@@ -45,15 +45,18 @@
 //! # What is refused
 //!
 //! Refusals are decisions, not gaps: `GROUPS = T`, `PCOUNT`/`GCOUNT` that are not
-//! the identity, a zero-length axis, `BITPIX` outside 8/16/32/64/−32/−64,
-//! a `Z*` card on an image HDU, an image whose `BSCALE`/`BZERO` is not the
-//! identity, tiles whose `ZCMPTYPE` is
+//! the identity, a zero-length axis, `BITPIX` outside this writer's 8/16/32/−32/−64
+//! subset, an image rank above six, a `Z*` card on an image HDU, an image whose
+//! `BSCALE`/`BZERO` is not the identity, tiles whose `ZCMPTYPE` is
 //! `RICE_1`/`PLIO_1`/`HCOMPRESS_1` (this build has no codec for them, and
 //! `HCOMPRESS_1` may already be lossy), and **an HDU carrying
 //! `CHECKSUM`/`DATASUM`** — a stale checksum is a corrupted file by the format's
 //! own definition, and this build does not recompute them yet (fits-audit §9,
 //! question 3). Such an HDU is copied verbatim; the rest of the file is still
-//! rewritten.
+//! rewritten. If any image would be rewritten, a file containing `EPOCH` or
+//! `BLOCKED` is kept byte-identical: the pinned HEASARC `fitsverify` warns on the
+//! deprecated `EPOCH` card and rejects `BLOCKED` in a compressed extension, and
+//! this handler does not normalize source headers.
 //!
 //! `--strip-metadata` removes nothing here: every FITS card is either structure
 //! or a record of the observation, and the convention has no decorative field.
@@ -81,6 +84,16 @@ const MAX_HEADER_RECORDS: usize = 4096;
 const GZIP_1: &str = "GZIP_1";
 const GZIP_2: &str = "GZIP_2";
 
+/// Axis-rank ceiling for this writer, aligned with pinned CFITSIO's
+/// `MAX_COMPRESS_DIM = 6` (`fitsio.h` at commit
+/// `113781d8aa442cf8d3c27295d9084674b8b039f2`); the HEASARC gate enforces
+/// independent read-back. The FITS parser still accepts ranks through 999.
+const MAX_REWRITE_NAXIS: usize = 6;
+/// Standard BITPIX values the FITS reader can parse.
+const BITPIX_VALUES: [i64; 6] = [8, 16, 32, 64, -32, -64];
+/// The narrower integer/float types accepted by this tile writer.
+const REWRITE_BITPIX_VALUES: [i64; 5] = [8, 16, 32, -32, -64];
+
 /// A standard, interoperable `P` descriptor stores both values as signed
 /// 32-bit integers, so its exact largest non-negative count or heap offset is
 /// `2^31 - 1 = 2,147,483,647` (FITS Standard v4.0). The pinned CFITSIO gate
@@ -100,9 +113,6 @@ fn p_descriptor_value(value: u64, field: &str) -> Result<i32> {
         ))
     })
 }
-
-/// `BITPIX` values the standard defines, and the only ones this handler writes.
-const BITPIX_VALUES: [i64; 6] = [8, 16, 32, 64, -32, -64];
 
 // ---------------------------------------------------------------------------
 // Cards
@@ -155,16 +165,26 @@ impl Card {
 
     /// A character string value, without its quotes.
     ///
-    /// FITS escapes a quote inside a value by doubling it; a keyword this
-    /// handler reads (`XTENSION`, `ZCMPTYPE`, `TFORMn`, `EXTNAME`) never
-    /// contains one, so the closing quote is the last quote in the field and a
-    /// doubled quote would leave a visible artefact rather than being silently
-    /// mangled.
+    /// A FITS string may extend past column 30. Scan the complete card value
+    /// area and stop at its closing quote, before any trailing comment. A slash
+    /// before that quote is part of the value, and doubled quotes are skipped
+    /// while locating the terminator but kept in the returned slice.
     fn text(&self) -> Option<&str> {
-        let text = self.field().trim_start();
-        let rest = text.strip_prefix('\'')?;
-        let end = rest.rfind('\'')?;
-        Some(&rest[..end])
+        let value_area = std::str::from_utf8(&self.raw[10..]).ok()?.trim_start();
+        let rest = value_area.strip_prefix('\'')?;
+        let bytes = rest.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if bytes[index] == b'\'' {
+                if bytes.get(index + 1) == Some(&b'\'') {
+                    index += 2;
+                    continue;
+                }
+                return Some(&rest[..index]);
+            }
+            index += 1;
+        }
+        None
     }
 }
 
@@ -696,8 +716,18 @@ fn decide_image(hdu: &Hdu) -> Decision {
     if header.count("EXTNAME") > 1 {
         return Decision::Decline("fits: more than one EXTNAME card".to_string());
     }
-    if !BITPIX_VALUES.contains(&hdu.bitpix) {
-        return Decision::Decline(format!("fits: BITPIX {}", hdu.bitpix));
+    if !REWRITE_BITPIX_VALUES.contains(&hdu.bitpix) {
+        return Decision::Decline(format!(
+            "fits: BITPIX {} is outside this build's tile-rewrite subset",
+            hdu.bitpix
+        ));
+    }
+    if hdu.axes.len() > MAX_REWRITE_NAXIS {
+        return Decision::Decline(format!(
+            "fits: NAXIS = {} exceeds this build's tile-rewrite limit of {}",
+            hdu.axes.len(),
+            MAX_REWRITE_NAXIS
+        ));
     }
     if hdu.axes.contains(&0) {
         return Decision::Decline("fits: an axis of length zero".to_string());
@@ -1045,6 +1075,23 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
         // Never a larger candidate, and never an equal one: the pipeline's own
         // rule, applied here first so that nothing is written for nothing.
         return Ok(Cand::NoGain);
+    }
+    let legacy_card = hdus.iter().enumerate().find_map(|(index, hdu)| {
+        ["BLOCKED", "EPOCH"]
+            .into_iter()
+            .find(|keyword| hdu.header.has(keyword))
+            .map(|keyword| (index, keyword))
+    });
+    if let Some((index, keyword)) = legacy_card {
+        let detail = match keyword {
+            "BLOCKED" => "is not allowed in a compressed image extension",
+            "EPOCH" => "is deprecated and causes the pinned fitsverify gate to warn",
+            _ => unreachable!("only checked legacy keywords are returned"),
+        };
+        return Err(Error::refused(format!(
+            "fits: HDU {index} contains {keyword}, which {detail}; \
+             preserving the original file unchanged"
+        )));
     }
     dst.write_all(&out)?;
     Ok(Cand::Written(out.len() as u64))
@@ -1546,6 +1593,82 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_all_standard_bitpix_values_and_rank_999() {
+        for bitpix in BITPIX_VALUES {
+            let width = (bitpix.unsigned_abs() / 8) as usize;
+            let original = image_hdu(bitpix, &[1], &vec![0; width], &[]);
+            let parsed = scan(&original).expect("all six standard BITPIX values remain parseable");
+            assert_eq!(parsed[0].bitpix, bitpix);
+            assert_eq!(parsed[0].axes, vec![1]);
+        }
+
+        let axes = vec![1; MAX_NAXIS as usize];
+        let original = image_hdu(16, &axes, &[0, 0], &[]);
+        let parsed = scan(&original).expect("the parser retains the standard rank limit");
+        assert_eq!(parsed[0].axes.len(), MAX_NAXIS as usize);
+        assert!(matches!(
+            decide_image(&parsed[0]),
+            Decision::Decline(reason) if reason == "fits: NAXIS = 999 exceeds this build's tile-rewrite limit of 6"
+        ));
+    }
+
+    #[test]
+    fn bitpix_64_and_rank_7_parse_but_are_declined_for_rewriting() {
+        let cases: [(i64, Vec<u64>, Vec<u8>, &str); 2] = [
+            (
+                64,
+                vec![2],
+                vec![0; 16],
+                "fits: BITPIX 64 is outside this build's tile-rewrite subset",
+            ),
+            (
+                16,
+                vec![2, 1, 1, 1, 1, 1, 1],
+                vec![0; 4],
+                "fits: NAXIS = 7 exceeds this build's tile-rewrite limit of 6",
+            ),
+        ];
+        for (bitpix, axes, data, reason) in cases {
+            let original = image_hdu(bitpix, &axes, &data, &[]);
+            let parsed = scan(&original).expect("valid-but-unsupported FITS remains parseable");
+            assert!(matches!(
+                decide_image(&parsed[0]),
+                Decision::Decline(actual) if actual == reason
+            ));
+            let mut output = Vec::new();
+            let error = optimize(&original, &mut output, &options(true))
+                .expect_err("unsupported rewrite subset is a refusal");
+            assert!(error.to_string().contains(reason), "{error}");
+            assert!(output.is_empty(), "a declined HDU must not produce output");
+        }
+    }
+
+    #[test]
+    fn rank_six_is_rewritten_and_passes_repository_verification() {
+        let axes = [1_048_576, 1, 1, 1, 1, 1];
+        let data = sample(16, 1, axes[0]);
+        let original = image_hdu(16, &axes, &data, &[]);
+        let opts = options(true);
+        let mut candidate = Vec::new();
+        let result = optimize(&original, &mut candidate, &opts).expect("rank six is supported");
+        assert!(matches!(result, Cand::Written(_)));
+        assert!(candidate.len() < original.len());
+        verify(&original, &candidate, &opts).expect("rank-six candidate round-trips internally");
+    }
+
+    #[test]
+    fn znaxis100_still_fails_the_keyword_field_defense_in_depth_check() {
+        let original = image_hdu(16, &[1; 100], &[0, 0], &[]);
+        let parsed = scan(&original).expect("rank 100 remains parseable by the FITS reader");
+        assert_eq!(z_form_keyword("NAXIS100").as_deref(), Some("ZNAXIS100"));
+        let card = parsed[0].header.get("NAXIS100").expect("NAXIS100 card");
+        let error = renamed_card(card, "ZNAXIS100").expect_err("nine characters do not fit");
+        assert!(error
+            .to_string()
+            .contains("ZNAXIS100 does not fit in eight columns"));
+    }
+
+    #[test]
     fn a_float_array_is_shuffled_and_round_trips() {
         let data = sample(-32, 60, 80);
         let original = image_hdu(-32, &[80, 60], &data, &[]);
@@ -1610,6 +1733,19 @@ mod tests {
         let err = optimize(&original, &mut candidate, &opts)
             .expect_err("a checksum this build cannot recompute is a refusal");
         assert!(err.to_string().contains("CHECKSUM"), "{err}");
+    }
+
+    #[test]
+    fn deprecated_or_primary_only_validation_cards_refuse_the_whole_rewrite() {
+        let data = sample(16, 100, 200);
+        for (keyword, value) in [("EPOCH", "2000"), ("BLOCKED", "T")] {
+            let original = image_hdu(16, &[200, 100], &data, &[(keyword, value)]);
+            let mut candidate = Vec::new();
+            let error = optimize(&original, &mut candidate, &options(true))
+                .expect_err("legacy validation cards must not be moved into a compressed table");
+            assert!(error.to_string().contains(keyword), "{error}");
+            assert!(candidate.is_empty(), "the source must remain untouched");
+        }
     }
 
     #[test]
@@ -1910,5 +2046,25 @@ mod tests {
             raw: assemble("ZCMPTYPE= 'GZIP_2'", ""),
         };
         assert_eq!(card.text(), Some("GZIP_2"));
+    }
+
+    #[test]
+    fn a_padded_long_codec_string_uses_the_complete_card_value_area() {
+        let card = Card {
+            raw: string_card("ZCMPTYPE", "HCOMPRESS_1         ", ""),
+        };
+        assert_eq!(card.text(), Some("HCOMPRESS_1         "));
+    }
+
+    #[test]
+    fn quoted_text_stops_before_a_comment_containing_quotes_and_slashes() {
+        let card = Card {
+            raw: string_card(
+                "OBJECT",
+                "science/field",
+                "comment has 'quoted text' / note",
+            ),
+        };
+        assert_eq!(card.text(), Some("science/field"));
     }
 }

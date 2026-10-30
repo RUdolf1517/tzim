@@ -3,10 +3,10 @@
 Related: [size budget](size-budget.md) · [formats](formats.md)
 
 Tzim exists partly as a reaction to file optimizers with enormous dependency trees. Every dependency is
-therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. Two
-exceptions have been granted and both are on this page: `indicatif`, added in v0.10 for the progress line and
-**removed again in v0.13** (§2.9), and `jpeg-decoder`, added in v0.13 to put a decoder that shares no code
-with this repository on the far side of the JPEG comparison (§2.10).
+therefore a deliberate exception, and the default answer to "should we add a crate?" is **no**. `indicatif`,
+added in v0.10 for the progress line, was **removed in v0.13** (§2.9). `jpeg-decoder` is the independent JPEG
+verifier (§2.10). The owner later authorized the non-default #79 FLAC feature, which adds `flacenc`,
+`claxon`, and `md-5`; these optional dependencies are present only when that feature is selected.
 
 The project targets **Rust 1.88** (edition 2021). The floor is set by the optional Zopfli encoder; the PNG
 decoder requires 1.81 and `flate2` requires 1.67. Keeping the floor at 1.88 means one toolchain for
@@ -96,20 +96,23 @@ Additional requirements:
 | `crc32fast` | yes | features `png`, `gzip`, `zip`, `fits` | checksums | with any of those |
 | `png` | yes | feature `png` (and `ico`, which requires it) | independent verification decoder | with `png` |
 | `zopfli` | yes | feature `zopfli` | strongest encoder | only with `zopfli` |
-| `jpeg-decoder` | yes | feature `jpeg-v1` (**not** in `default`) | second opinion on a JPEG candidate | only with `jpeg-v1` |
+| `jpeg-decoder` | yes | `jpeg-v1` (included in `default` under #82) | independent pixel verification of JPEG candidates | release default and `jpeg-v1` builds |
+| `flacenc` | yes | non-default feature `flac` | FLAC frame encoder | only with `flac` |
+| `claxon` | yes | non-default feature `flac` | independent FLAC decoder/PCM verifier | only with `flac` |
+| `md-5` | yes | non-default feature `flac` | STREAMINFO MD5 over decoded PCM | only with `flac` |
 
-Five direct dependencies, and every one of them is behind a feature: a build with
+Every direct dependency remains behind a feature: a build with
 `--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
 unconditional crate any more — the progress line, which used to be one (§2.9), is drawn by
-`src/progress.rs` again. `jpeg-v1` is the first dependency since v0.1 that a *published* build does not carry:
-it is available, tested on every CI run, and off by default (§2.10).
+`src/progress.rs` again. Under #82 the release default includes `jpeg-v1`; only deliberately narrowed builds
+without that feature omit the independent JPEG verifier.
 
-The JPEG, ICO, TIFF, zlib and FITS handlers add code, not crates. **v0.4, v0.6, v0.7, v0.9 and v0.14 added
-none**: §2.6 explains JPEG, and zlib costs even less — an Adler-32 is twelve lines of arithmetic next to a
-codec that was already in the tree. FITS (§2.11) needs a gzip member and its inflater, both of which `flate2`
-already provides, so it is the first format since v0.9 that went through §1 and was granted nothing. **v0.10 added one** for the progress line and **v0.13 removed it** (§2.9);
+The JPEG, ICO, TIFF, zlib, PDF and FITS handlers add no format-specific dependency; PDF uses the existing
+`flate2` zlib path, and FITS uses `flate2` plus `crc32fast`. Historically, **v0.4, v0.6, v0.7, v0.9 and
+v0.14 added none**. The unreleased #84 FLAC follow-up adds the three crates in §2.7, all behind `flac` and
+outside `default`. **v0.10 added `indicatif`** for the progress line and **v0.13 removed it** (§2.9);
 **v0.13 added `jpeg-decoder`** for the `jpeg-v1` feature after the argument in §2.10. Each grant is argued on
-its own, and the next candidate still has to answer every question in §1.
+its own, and no new dependency is enabled in the default build.
 
 ### 2.6 JPEG: why there is no JPEG dependency
 
@@ -140,26 +143,32 @@ instead of using a vetted crate.
   therefore used for *verification*, never for the transformation — the distinction the first bullet above
   turns on, and the reason v0.4 needed no crate even though v0.13 uses one.
 
-### 2.7 FLAC: the crates it would have needed
+### 2.7 FLAC: the opt-in dependency set authorized by #79
 
-**FLAC is refused** ([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)): a
-stronger encoder buys 0.4 % on musical material and 0 % on files already written at `flac -8`, while the
-encoder and an independent decoder together would add roughly 150–300 KiB to a 920 KiB binary. The table below
-is kept as the record of what the "yes" would have cost, and of why the encoder and the decoder cannot be the
-same crate.
+The historical audit measured 0.4 % on musical material and 0 % on files already written at `flac -8`, while
+the encoder and independent decoder were estimated to add 150–300 KiB
+([flac-audit §7](flac-audit.md#7-decision-refused-and-the-measurement-behind-it)). Those values remain
+historical, not current size/speed evidence. The owner authorized #79 despite that result. The unreleased #84
+implementation pins the reviewed versions below behind `flac`; none is enabled in `default`.
 
-| Crate | Version at audit | Licence | Size | Role | Why it is the right one |
-| --- | --- | --- | --- | --- | --- |
-| `flacenc` | 0.5.1 | Apache-2.0 | ~10 k lines | encoder | the only maintained pure-Rust FLAC encoder; no C, no `build.rs` beyond `built`; with `default-features = false` the `log`, `serde` and `crossbeam-channel` features are dropped, which leaves `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro` |
-| `claxon` | 0.4.3 | Apache-2.0 | ~2.2 k lines | verification decoder | a different implementation by a different author, with no dependencies of its own — the independence requirement of [guarantees §2.6](guarantees.md#26-verification-independence) |
-| `md-5` | 0.10.6 | MIT OR Apache-2.0 | ~400 lines | stream MD5 | RustCrypto; already a dependency of `flacenc`, so it adds no crate to the tree |
+| Crate | Locked version | Licence | Role | Selected configuration and dependency effect |
+| --- | --- | --- | --- | --- |
+| `flacenc` | 0.5.1 ([tag commit](https://github.com/yotarok/flacenc-rs/tree/a040b004497346132d9a8a8f144f7ecf6fd9d4d8)) | Apache-2.0 | frame encoder | `default-features = false`; excludes optional `log`, `serde`, and `crossbeam-channel` (`par`). Mandatory dependencies are `crc`, `heapless`, `md-5`, `num-traits`, `rustversion`, `seq-macro`; its `built` build dependency runs a Rust build script to embed compile-time package metadata. |
+| `claxon` | 0.4.3 ([tag commit](https://github.com/ruuda/claxon/tree/2f053855d581cfe3b9e7cef67fed5b0b0ccc45aa)) | Apache-2.0 | independent decoder and PCM verifier | Different implementation/author from the writer; no runtime dependencies of its own. |
+| `md-5` | 0.10.6 | MIT OR Apache-2.0 | STREAMINFO MD5 over decoded PCM | Also required by `flacenc`; shared rather than duplicated in the dependency graph. |
 
-`flacenc` can decode as well, and using its own decoder for verification is explicitly rejected: the encoder
-would be confirming itself, which is the failure mode the independence rule exists to prevent. The same
-reasoning rejects `flacenc`'s `decode` feature even as a convenience.
+`flacenc` can decode as well, but its decoder is not used for verification: the writer must not confirm
+itself. The independent Claxon path compares decoded PCM and checks a nonzero input STREAMINFO MD5; if the
+input carries FLAC's legal all-zero "not computed" sentinel, the candidate receives the MD5 computed from the
+exact decoded PCM and the verifier requires it to match. The handler also validates frame sequence/statistics
+and retained metadata. Both upstream crates contain internal `unsafe` blocks (`flacenc`'s SIMD slice views and
+Claxon's checked/initialized-buffer paths), so this is not a no-unsafe dependency set; neither requires a native
+codec or C compiler. `flacenc`'s Rust build script uses `built` for compile-time package metadata. Exact
+transitive dependencies and licenses are in `Cargo.lock` and the table above; Cargo CI must verify compilation,
+tests and `cargo deny` before these dependencies are accepted.
 
-Binary cost is unmeasured, and the budget will not be raised in advance: the feature matrix in
-[size-budget §3](size-budget.md#3-feature-matrix) is where the number will appear.
+Binary cost and current size/speed/gain are unmeasured; the historical estimate is not a result. The feature
+matrix in [size-budget §3](size-budget.md#3-feature-matrix) is where a measured number will appear.
 
 ---
 
@@ -210,42 +219,29 @@ sample and a frame that could be wider than the terminal.
   animation thread would have stayed ours); `crossterm`/`termion` (terminal manipulation, raw mode, key
   reading — none of which this program does).
 
-### 2.10 `jpeg-decoder` — the second opinion on a JPEG candidate
+### 2.10 `jpeg-decoder` — the independent pixel check for JPEG
 
-- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, **off in `default`** · **Granted v0.13** (issue
-  #39, owner decision "option 3")
-- **Why:** the JPEG comparison had one author on both sides. `verify` compares coefficients, marker structure
-  and bytes, all through code in this repository; a defect symmetric in the encoder and the decoder — a
-  wrong DC prediction direction that both agree on — would be invisible. `jpeg-decoder` is an independent
-  implementation: it shares no line with `src/formats/jpeg.rs`, so its pixels and ours disagreeing is
-  evidence one of us has a bug.
-- **Configuration:** `default-features = false` with `platform_independent`. That drops `rayon` (this
-  repository has no async runtime and no thread pool in a handler), `nasm`/SIMD assembly paths, and the
-  platform-specific intrinisics that would put `unsafe` and a second build toolchain in the tree. The
-  remaining code is pure Rust — the crate's own `unsafe` is in the paths we do not compile — and the
-  `forbid(unsafe_code)` lint on our crate is untouched.
-- **What it is not for:** it cannot replace the handler. It returns pixels, and re-encoding from pixels is
-  the lossy transformation the invariant forbids (§2.6). It is a *verifier*, called once per accepted
-  candidate, on the two byte buffers that verification already has in memory.
-- **Cost:** the pixels of one side at a time are hashed with CRC-32 and dropped, so verification is not
-  charged two extra decoded images; the memory accounting in
-  [safety §7.1](safety.md#71-memory--an-enforced-budget) says `7 × pixels` per side with that in mind.
-- **Why the published builds do not have it.** #39 was approved on one condition: the shipping binary must not
-  grow past 1 049 440 bytes, the v0.12.1 measurement. It does not fit — [size budget §3](size-budget.md#3-feature-matrix)
-  has the two numbers — so the feature ships off rather than the condition being renegotiated. What the user
-  gets instead is the same check in CI, on real files, with a decoder that is even further from this
-  repository: the `third-party` job decodes the corpus with Pillow before and after
-  ([testing](testing.md#the-third-party-decoder-job)). A build that wants the check inside the binary has one
-  command for it: `cargo build --release --features jpeg-v1`.
-- **What it changes for a user:** a file whose candidate disagrees with an independent decoder is `failed`,
-  exit 1, original untouched — a class of defect that previously would have been reported as `optimized`. If
-  the independent decoder refuses the *original*, the file is `skipped` with that reason: the oracle cannot
-  be used as a verdict on a file it cannot read, and a JPEG this program understands but `jpeg-decoder` does
-  not is not a reason to fail a run.
-- **Turning it on and off:** the shipped set is `default`, which does not include it;
-  `cargo build --release --features jpeg-v1` adds it, and `--no-default-features --features
-  png,gzip,zip,ico,jpeg,tiff,zlib,zopfli` reproduces the shipped set from a named list.
-  `docs/guarantees.md` §2.6 says in the JPEG row what each kind of build can prove.
+- **Version:** 0.3 · **Licence:** MIT · **Feature:** `jpeg-v1`, included in the release default under #82.
+  The owner-authorized stripped `x86_64-unknown-linux-musl` ceiling is fixed at **1,082,208 bytes**; the
+  final-SHA run, not this dependency review, supplies the acceptance measurement.
+- **Why:** coefficient, marker and byte comparisons in `verify` are implemented by this repository. A defect
+  symmetric in the encoder and decoder could otherwise pass. `jpeg-decoder` shares no code with
+  `src/formats/jpeg.rs`, so differing pixel digests expose a class of such defects.
+- **Configuration:** `default-features = false` with `platform_independent`. That drops `rayon`, SIMD assembly
+  paths and platform-specific intrinsics; the selected path is pure Rust and does not add `unsafe` or a second
+  build toolchain. `Cargo.toml` applies the measured dependency-specific `opt-level = "s"` override while the
+  rest of the codecs retain their existing release profile.
+- **Role:** this crate cannot replace the handler. It returns pixels; re-encoding from pixels would be lossy.
+  It is called only to verify the original and candidate byte buffers already held by the pipeline.
+- **Memory:** each side is decoded, CRC-32 hashed and dropped before decoding the other. The exact local
+  coefficient-plane results are dropped after comparison and before the independent decoder allocates its
+  pixel frame; no pair of independent full-frame buffers overlaps. The existing #51 accounting charges
+  `7 × pixels` ([safety §7.1](safety.md#71-memory--an-enforced-budget)).
+- **Runtime outcome:** a candidate disagreement is `failed`, exit 1, original untouched. If the independent
+  decoder refuses the original, the file is `skipped` with that reason; the oracle cannot give a verdict on a
+  file it cannot read. Builds that deliberately omit `jpeg-v1` retain the coefficient/structure check only.
+- **Additional evidence:** the `third-party` job independently decodes the real-file corpus with Pillow before
+  and after, and includes a negative control ([testing](testing.md#the-third-party-decoder-job)).
 
 ---
 
@@ -258,9 +254,13 @@ the symmetry [guarantees §2.6](../docs/guarantees.md#26-verification-independen
 
 What the transformation actually needs is a gzip member (§2.1), an inflater and a CRC-32, so `fits` is
 `fits = ["dep:flate2", "dep:crc32fast"]` and nothing else. The CRC crate is the verifier's: the writer's
-framing comes from `flate2`, and the candidate's trailer is recomputed with an implementation it never calls. The second implementation lives outside the binary, in
-`.github/scripts/fits-oracle.py`, where `astropy` — CFITSIO underneath — reads every candidate back. It costs
-the binary nothing and the CI job one `pip install`.
+framing comes from `flate2`, and the candidate's trailer is recomputed with an implementation it never calls.
+The second implementation lives outside the binary, in `.github/scripts/fits-oracle.py`, where Astropy's own
+`astropy.io.fits` reader reads the GZIP_1/GZIP_2 candidates. Those paths use Python's `gzip` and Astropy's own
+GZIP2 byte shuffle; they do not call CFITSIO's `funpack`. Astropy has CFITSIO-derived C routines for other
+codecs, but tzim does not emit those codecs and this oracle does not exercise them. The separate HEASARC gate
+runs the actual CFITSIO `fitsverify` and `funpack -C` tools. The Astropy reader costs the binary nothing and the
+CI job one `pip install`.
 
 ## 3. Rejected dependencies
 

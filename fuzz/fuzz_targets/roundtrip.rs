@@ -3,9 +3,10 @@
 use libfuzzer_sys::fuzz_target;
 
 // Format detection, the handler for the detected format, and verification of the
-// candidate the handler produced. This covers the PNG chunk walker, the gzip
-// header/body splitter, the ZIP central-directory reader and the ICO directory on
-// top of what `jpeg_decode` reaches.
+// candidate the handler produced. The fuzz workspace enables every optional
+// handler. The checked-in workflow supplies JPEG, PNG/TIFF, zlib and fixed FLAC
+// seeds plus a deterministic valid PDF seed; it does not claim dedicated seed
+// coverage for gzip, ZIP/ICO or FITS.
 //
 // The additional property checked here is the contract itself: when
 // `roundtrip` returns true, a candidate was produced, it is smaller than the

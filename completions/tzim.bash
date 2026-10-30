@@ -22,7 +22,7 @@ _tzim() {
             return 0
             ;;
         --formats)
-            COMPREPLY=( $(compgen -W "png gzip zip ico jpeg tiff zlib" -- "$cur") )
+            COMPREPLY=( $(compgen -W "png gzip zip ico jpeg tiff zlib fits flac pdf" -- "$cur") )
             return 0
             ;;
         --include|--exclude)

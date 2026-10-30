@@ -1,13 +1,18 @@
 name: fits-heasarc
 
-# Manual dispatch defaults to the exact-SHA end-to-end path: this HEASARC gate,
+# Manual dispatch can run the exact-SHA end-to-end path: this HEASARC gate,
 # the measurement workflow, and one bundle. Other workflows can call just this
-# gate through `workflow_call`; pull requests run it directly.
+# gate through `workflow_call`; pull requests start with the additive residual
+# rows, then the full scope can be dispatched against that same PR-head SHA.
 #
 # This is a release gate, not a required merge check. It is not allowed to be
 # quiet: there is no `continue-on-error` anywhere in it, and a tool that cannot
-# be built, a warning from `fitsverify` or a header that does not diff clean
-# fails the run.
+# be built, a nonzero `fitsverify` result on a registered positive original or
+# rewritten candidate, or a registered candidate header that does not diff clean
+# fails the run. The separate HDRLET preservation-only case uses its inherited
+# per-file diagnostic baseline. Valid but unsupported no-rewrite inputs have no candidate; their
+# original `fitsverify` result is retained as source diagnostic evidence, not
+# candidate acceptance.
 #
 # The tools are built from one archive whose SHA-256 is pinned below, so the
 # provenance of the verifier is a hash and not a package manager's mood:
@@ -23,22 +28,43 @@ on:
         description: Full 40-character commit SHA for both final-SHA gates and the evidence bundle.
         required: true
         type: string
+      pull_request_head_sha:
+        description: Optional PR source SHA to bind a full exact-head rerun to its residual PR run.
+        required: false
+        type: string
       bundle:
         description: Also run the measurement gate and create the final-SHA evidence bundle.
         required: false
         default: true
         type: boolean
+      scope:
+        description: Full gate or only new residual #78 rows.
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - residual
   workflow_call:
     inputs:
       sha:
         description: Exact commit to check out for the final-SHA gate.
         required: true
         type: string
+      pull_request_head_sha:
+        description: Optional PR source SHA to bind a full exact-head rerun to its residual PR run.
+        required: false
+        type: string
       bundle:
         description: Also run measurement and evidence bundling from a caller.
         required: false
         default: false
         type: boolean
+      scope:
+        description: Full gate or only new residual #78 rows.
+        required: false
+        default: full
+        type: string
     outputs:
       requested_sha:
         description: SHA requested by the caller.
@@ -46,6 +72,9 @@ on:
       checked_out_sha:
         description: SHA actually checked out by the gate.
         value: ${{ jobs.heasarc.outputs.checked_out_sha }}
+      pull_request_head_sha:
+        description: PR source SHA from the event or an explicitly bound exact-head rerun.
+        value: ${{ jobs.heasarc.outputs.pull_request_head_sha }}
       result:
         description: The original HEASARC gate job result.
         value: ${{ jobs.heasarc.outputs.gate_result }}
@@ -55,6 +84,7 @@ on:
       - "tests/integration.rs"
       - "tests/common/mod.rs"
       - ".github/scripts/fits-heasarc.py"
+      - ".github/scripts/test_fits_heasarc.py"
       - ".github/scripts/evidence-bundle.py"
       - ".github/scripts/test_evidence_bundle.py"
       - ".github/workflows/fits-heasarc.yml"
@@ -87,13 +117,17 @@ jobs:
     outputs:
       requested_sha: ${{ steps.identity.outputs.requested_sha }}
       checked_out_sha: ${{ steps.identity.outputs.checked_out_sha }}
+      pull_request_head_sha: ${{ steps.identity.outputs.pull_request_head_sha }}
       gate_result: ${{ steps.gate_outcome.outputs.result }}
     env:
       REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+      PULL_REQUEST_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.pull_request_head_sha || '' }}
+      FITS_HEASARC_SCOPE: ${{ inputs.scope || 'full' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
 
       - name: Record exact run identity
         id: identity
@@ -102,27 +136,52 @@ jobs:
           set -euo pipefail
           requested="${REQUESTED_SHA,,}"
           checked_out="$(git rev-parse HEAD)"
+          pull_request_head="${PULL_REQUEST_HEAD_SHA,,}"
+          checked_out_parents="$(git show -s --format=%P "$checked_out")"
           echo "REQUESTED_SHA=$requested" >> "$GITHUB_ENV"
           echo "CHECKED_OUT_SHA=$checked_out" >> "$GITHUB_ENV"
+          echo "PULL_REQUEST_HEAD_SHA=$pull_request_head" >> "$GITHUB_ENV"
+          echo "CHECKED_OUT_PARENTS=$checked_out_parents" >> "$GITHUB_ENV"
           echo "requested_sha=$requested" >> "$GITHUB_OUTPUT"
           echo "checked_out_sha=$checked_out" >> "$GITHUB_OUTPUT"
+          echo "pull_request_head_sha=$pull_request_head" >> "$GITHUB_OUTPUT"
           mkdir -p "${RUNNER_TEMP}/evidence"
           {
-            echo "requested SHA: $requested"
+            echo "requested SHA (test-merge SHA for PR events): $requested"
             echo "checked-out SHA: $checked_out"
+            echo "checked-out parents: $checked_out_parents"
+            echo "pull request head SHA: ${pull_request_head:-}"
+            echo "event name: ${GITHUB_EVENT_NAME}"
             echo "run ID: ${GITHUB_RUN_ID}"
             echo "run attempt: ${GITHUB_RUN_ATTEMPT}"
             echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } | tee "${RUNNER_TEMP}/evidence/run-identity.txt"
-          python3 - "$requested" "$checked_out" > "${RUNNER_TEMP}/evidence/run-identity.json" <<'PY'
+          python3 - "$requested" "$checked_out" "$pull_request_head" "$checked_out_parents" > "${RUNNER_TEMP}/evidence/run-identity.json" <<'PY'
           import json
           import os
           import sys
 
-          requested, checked_out = sys.argv[1:]
+          requested, checked_out, pull_request_head, parents = sys.argv[1:]
+          parent_shas = parents.split()
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          head_is_parent = pull_request_head in parent_shas if event_name == "pull_request" else None
+          head_is_checked_out = pull_request_head == checked_out if pull_request_head else None
+          exact_sha_match = requested == checked_out
+          source_identity_valid = exact_sha_match and (
+              head_is_parent if event_name == "pull_request"
+              else head_is_checked_out if pull_request_head
+              else True
+          )
           print(json.dumps({
               "requested_sha": requested,
               "checked_out_sha": checked_out,
+              "requested_sha_matches_checkout": exact_sha_match,
+              "checked_out_parents": parent_shas,
+              "pull_request_head_sha": pull_request_head,
+              "pull_request_head_is_parent": head_is_parent,
+              "pull_request_head_is_checked_out": head_is_checked_out,
+              "source_identity_valid": source_identity_valid,
+              "event_name": event_name,
               "run_id": os.environ["GITHUB_RUN_ID"],
               "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "run_url": "%s/%s/actions/runs/%s" % (
@@ -136,6 +195,49 @@ jobs:
             echo "::error::requested SHA does not match the checked-out commit"
             exit 1
           fi
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            if [ -z "$pull_request_head" ]; then
+              echo "::error::pull-request head SHA is missing"
+              exit 1
+            fi
+            case " $checked_out_parents " in
+              *" $pull_request_head "*) ;;
+              *)
+                echo "::error::PR head $pull_request_head is not a parent of checked-out test merge $checked_out"
+                exit 1
+                ;;
+            esac
+          elif [ -n "$pull_request_head" ] && [ "$pull_request_head" != "$checked_out" ]; then
+            echo "::error::a non-PR exact-head rerun must check out the recorded PR head SHA"
+            exit 1
+          fi
+
+      - name: Select exact-SHA FITS evidence scope
+        id: scope
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          REQUESTED_SCOPE: ${{ inputs.scope || '' }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            if [ -z "$PR_BASE_SHA" ]; then
+              echo "::error::pull-request base SHA is missing"
+              exit 2
+            fi
+            # Every PR head gets the additive residual first. After it passes,
+            # dispatch the full scope against that exact PR-head SHA.
+            scope=residual
+          else
+            scope="${REQUESTED_SCOPE:-full}"
+          fi
+          case "$scope" in
+            full|residual) ;;
+            *) echo "::error::unknown FITS evidence scope: $scope"; exit 2 ;;
+          esac
+          echo "FITS_HEASARC_SCOPE=$scope" >> "$GITHUB_ENV"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+          echo "FITS exact-SHA gate scope: $scope"
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -284,6 +386,7 @@ jobs:
           } | tee "${RUNNER_TEMP}/evidence/tool-versions.txt"
 
       - name: Fetch and verify the external Astropy EXTNAMX fixture
+        if: steps.scope.outputs.scope == 'full'
         shell: bash
         run: |
           set -euo pipefail
@@ -329,12 +432,18 @@ jobs:
       - name: Run the HEASARC gate
         shell: bash
         run: |
-          set -o pipefail
-          python3 .github/scripts/fits-heasarc.py \
-            --binary target/release/tzim \
-            --external-double-ext "${RUNNER_TEMP}/astropy-double-ext.fits" \
-            --work "${RUNNER_TEMP}/fits-heasarc-work" \
-            --evidence "${RUNNER_TEMP}/evidence" 2>&1 | tee "${RUNNER_TEMP}/fits-heasarc.log"
+          set -euo pipefail
+          args=(
+            --binary target/release/tzim
+            --work "${RUNNER_TEMP}/fits-heasarc-work"
+            --evidence "${RUNNER_TEMP}/evidence"
+            --scope "$FITS_HEASARC_SCOPE"
+          )
+          if [ "$FITS_HEASARC_SCOPE" = "full" ]; then
+            args+=(--external-double-ext "${RUNNER_TEMP}/astropy-double-ext.fits")
+          fi
+          python3 .github/scripts/fits-heasarc.py "${args[@]}" 2>&1 \
+            | tee "${RUNNER_TEMP}/fits-heasarc.log"
 
       - name: Seal the evidence
         if: always()
@@ -349,10 +458,13 @@ jobs:
             ( cd "$dir" && sha256sum * 2>/dev/null | grep -v ' checksums.txt$' > checksums.txt || true )
           fi
           {
-            echo "requested SHA: ${REQUESTED_SHA:-unknown}"
+            echo "requested SHA (test-merge SHA for PR events): ${REQUESTED_SHA:-unknown}"
             echo "checked-out SHA: ${CHECKED_OUT_SHA:-unknown}"
+            echo "checked-out parents: ${CHECKED_OUT_PARENTS:-}"
+            echo "pull request head SHA: ${PULL_REQUEST_HEAD_SHA:-}"
             echo "run ID: ${GITHUB_RUN_ID}"
             echo "run attempt: ${GITHUB_RUN_ATTEMPT}"
+            echo "evidence scope: ${FITS_HEASARC_SCOPE:-unknown}"
             echo "run URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           } >> "$dir/run.txt"
           ( cd "$dir" && find . -type f ! -name workflow-SHA256SUMS -print0 | sort -z | \
@@ -415,7 +527,7 @@ jobs:
 
   measurement:
     name: measurement reproducibility gate
-    if: ${{ inputs.bundle }}
+    if: ${{ inputs.bundle && inputs.scope != 'residual' }}
     uses: ./.github/workflows/measure-repro.yml
     with:
       sha: ${{ inputs.sha || github.sha }}
@@ -423,7 +535,7 @@ jobs:
 
   bundle:
     name: build and verify final-SHA evidence bundle
-    if: ${{ always() && inputs.bundle }}
+    if: ${{ always() && inputs.bundle && inputs.scope != 'residual' }}
     needs: [heasarc, measurement]
     runs-on: ubuntu-latest
     permissions:

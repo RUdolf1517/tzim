@@ -46,9 +46,11 @@ Two things the audit insists on, and this script honours:
 import argparse
 import glob
 import gzip
+import hashlib
 import json
 import os
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
 from astropy.io import fits
@@ -85,6 +87,14 @@ def eligible_count(path):
     """
     with fits.open(path) as hdul:
         return sum(1 for h in hdul if eligible(h))
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def rebuild(path, out):
@@ -199,7 +209,15 @@ def main():
     ap.add_argument("--root", default="/tmp/corpus")
     ap.add_argument("--manifest", default="", help="per-file manifest from measure-fetch.py")
     ap.add_argument("--out", default="/tmp/fits.jsonl")
+    ap.add_argument(
+        "--candidate-dir", default="",
+        help="retain the exact per-row Astropy reference candidates here for external validation",
+    )
     args = ap.parse_args()
+
+    candidate_dir = Path(args.candidate_dir).resolve() if args.candidate_dir else None
+    if candidate_dir is not None:
+        candidate_dir.mkdir(parents=True, exist_ok=True)
 
     if args.manifest:
         manifest, files = from_manifest(args.manifest)
@@ -247,16 +265,33 @@ def main():
                              "reason": "other_codec:" + ",".join(codecs) if codecs else "no_image"})
                 continue
 
-            out = "/tmp/fits-measure.fits"
+            if candidate_dir is None:
+                out = Path("/tmp/fits-measure.fits")
+            else:
+                candidate_id = recorded.get("product_id") if isinstance(recorded, dict) else None
+                candidate_id = candidate_id or Path(path).stem
+                safe_id = "".join(character if character.isalnum() or character in "-_." else "_"
+                                   for character in candidate_id)
+                out = candidate_dir / f"{safe_id}.reference.fits"
             try:
-                images, mapping = rebuild(path, out)
+                images, mapping = rebuild(path, str(out))
             except Exception as e:              # noqa: BLE001
                 rows.append({**row, "status": "refused", "reason": "cannot_compress",
                              "err": str(e)[:80]})
                 continue
-            ok, why = verify(path, out, mapping)
-            new_size = os.path.getsize(out)
-            result = recompress(tiles(out))
+            new_size = out.stat().st_size
+            if candidate_dir is not None:
+                row["reference_candidate"] = {
+                    "product_id": recorded.get("product_id") if isinstance(recorded, dict) else None,
+                    "filename": out.name,
+                    "bytes": new_size,
+                    "sha256": sha256_file(out),
+                    "generation": "fits-measure.py: rebuild(source_path, candidate_path)",
+                    "eligible_images": images,
+                    "mapping": mapping,
+                }
+            ok, why = verify(path, str(out), mapping)
+            result = recompress(tiles(str(out)))
             row.update(status="tier2", images=images, eligible_images=n, new_size=new_size,
                        pct=100.0 * (size - new_size) / size if size else 0.0,
                        exact=ok, why=why)

@@ -14,6 +14,8 @@ on:
     paths:
       - "src/**"
       - "fuzz/**"
+      - ".github/data/flac-corpus.json"
+      - ".github/scripts/prepare_flac_fuzz_seeds.py"
       - ".github/workflows/fuzz.yml"
   workflow_dispatch:
     inputs:
@@ -45,9 +47,9 @@ jobs:
       - name: Seed corpus
         shell: bash
         run: |
-          # Two small pinned archives: the PNG and JPEG suites that the corpus run
-          # uses. They give libFuzzer valid structures to mutate instead of
-          # waiting for random bytes to reach a deep branch.
+          # Pinned PNG, JPEG, TIFF, zlib and FLAC fixtures give libFuzzer valid
+          # structures to mutate instead of waiting for random bytes to reach a
+          # deep branch. FLAC seeds are copied from a manifest-pinned CC0 testbench.
           work="${RUNNER_TEMP}/fuzz-seed"
           mkdir -p "$work"
           curl -fsSL -o "$work/libpng.tar.gz" \
@@ -95,7 +97,49 @@ jobs:
           PY
           cp fuzz/corpus/zlib/* fuzz/corpus/roundtrip/
           cp fuzz/corpus/zlib/* fuzz/corpus/strip/
+          # Build a deterministic one-page PDF whose eligible stream has room
+          # for a FlateDecode rewrite; mutations then reach the xref/object parser
+          # instead of starting with random bytes. This is a fuzz seed, not part
+          # of the real-toolchain #57 measurement set.
+          python3 - <<'PY'
+          import zlib
+          from pathlib import Path
+
+          payload = b"q 1 0 0 1 0 0 cm Q\n" * 8000
+          compressed = zlib.compress(payload, 1)
+          objects = [
+              b"<< /Type /Catalog /Pages 2 0 R >>",
+              b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+              b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> /Contents 4 0 R >>",
+              b"<< /Length " + str(len(compressed)).encode() + b" /Filter /FlateDecode >>\nstream\n"
+              + compressed + b"\nendstream",
+          ]
+          pdf = bytearray(b"%PDF-1.4\n")
+          offsets = [0]
+          for number, body in enumerate(objects, start=1):
+              offsets.append(len(pdf))
+              pdf.extend(f"{number} 0 obj\n".encode())
+              pdf.extend(body)
+              pdf.extend(b"\nendobj\n")
+          xref = len(pdf)
+          pdf.extend(f"xref\n0 {len(offsets)}\n".encode())
+          pdf.extend(b"0000000000 65535 f \n")
+          for offset in offsets[1:]:
+              pdf.extend(f"{offset:010d} 00000 n \n".encode())
+          pdf.extend(f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+          for target in ("roundtrip", "strip"):
+              Path(f"fuzz/corpus/{target}/seed-valid-flate.pdf").write_bytes(pdf)
+          PY
           echo "seeds: $(find fuzz/corpus -type f | wc -l)"
+
+      - name: Add fixed FLAC decoder-testbench seeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/prepare_flac_fuzz_seeds.py \
+            --manifest .github/data/flac-corpus.json \
+            --roundtrip-dir fuzz/corpus/roundtrip \
+            --strip-dir fuzz/corpus/strip
 
       - name: Run targets
         shell: bash

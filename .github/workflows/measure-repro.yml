@@ -146,13 +146,19 @@ jobs:
         # numbers were recorded with cannot slip in. The versions this installs
         # are written to the evidence below.
         run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check --require-hashes \
-            -r .github/scripts/measure-requirements.txt
+          set -o pipefail
           {
-            python -VV
-            python -m pip freeze
-          } | tee evidence/environment.txt
+            set -euo pipefail
+            python -m pip --version
+            python -m pip install --disable-pip-version-check --require-hashes \
+              -r .github/scripts/build-requirements.txt
+            python -m pip install --disable-pip-version-check --require-hashes --no-build-isolation \
+              -r .github/scripts/measure-requirements.txt
+            {
+              python -VV
+              python -m pip freeze
+            } | tee evidence/environment.txt
+          } 2>&1 | tee "${RUNNER_TEMP}/measure-repro.log"
 
       - name: Verify corpus selection and measurement guard tests
         # Runs before the corpus is touched, so a broken guard is not buried

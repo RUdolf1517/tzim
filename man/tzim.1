@@ -32,7 +32,7 @@ is given. Symbolic links are skipped unless
 is given. Duplicate paths are processed once.
 .PP
 Handlers compiled into this build: PNG, APNG, gzip, the ZIP family, ICO/CUR,
-baseline JPEG (opt-in, see
+baseline JPEG (with independent verification in the release default; see
 .BR \-\-formats ),
 classic TIFF with strips, and zlib streams. Everything else is reported as
 unsupported or skipped, with a reason.
@@ -58,9 +58,11 @@ Skip files larger than this (default: 2147483648).
 Skip images with more pixels than this (default: 100000000).
 .TP
 .B \-\-formats \fILIST\fR
-Only process these formats: png, gzip, zip, ico, jpeg, tiff, zlib, fits. Naming
-jpeg here is what enables the JPEG handler, which is off by default because it is
-the riskiest handler and typically saves only 1\-3 %. The FITS handler is compiled
+Only process these formats when compiled in: png, gzip, zip, ico, jpeg, tiff,
+zlib, fits, flac, pdf. This is an allowlist: naming a list narrows a run; for
+example, `--formats png`
+excludes JPEG. The release default includes baseline JPEG with independent V1
+verification. The FITS handler is compiled
 in only with the \fBfits\fR cargo feature, and it does nothing at all without
 \fB\-\-fits\-tile\fR.
 .SS Output
@@ -104,7 +106,10 @@ shape \fIfpack\fR writes. Off by default, because the file a reader sees is a
 different file: an \fIIMAGE\fR HDU becomes a \fIBINTABLE\fR, and a program that
 reads \fINAXIS1\fR of the first HDU reads a table width instead of an image row.
 Quantisation is disabled, so the array is bit\-identical after the round trip,
-and a rewrite that is not strictly smaller is discarded rather than written.
+and a rewrite that is not strictly smaller is discarded. For one direct file on
+a TTY, the fully verified candidate is followed by a default\-No confirmation;
+only \fBy\fR or \fByes\fR reaches atomic replacement. Non\-interactive use of
+this flag is the explicit opt\-in and does not prompt.
 .TP
 .B \-\-nested
 Also optimize supported files inside archives.
