@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline unit tests for FLAC corpus PCM and STREAMINFO-MD5 evidence."""
+"""Offline FLAC corpus measurement, expectation, PCM and STREAMINFO-MD5 tests."""
 
 from __future__ import annotations
 

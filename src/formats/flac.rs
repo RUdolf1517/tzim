@@ -285,17 +285,18 @@ impl<'a> DecoderSource<'a> {
             .map_err(|_| invalid_frame_source())?;
         let Some(decoded) = decoded else {
             self.sequence
-                .finish(
-                    self.streaminfo_total_samples,
-                    self.streaminfo_min_block_size,
-                    self.streaminfo_max_block_size,
-                )
+                .finish(self.streaminfo_total_samples)
                 .map_err(|_| invalid_frame_source())?;
             self.end_checked = true;
             return Ok(None);
         };
         self.sequence
-            .observe(&decoded, self.channels, self.streaminfo_max_block_size)
+            .observe(
+                &decoded,
+                self.channels,
+                self.streaminfo_min_block_size,
+                self.streaminfo_max_block_size,
+            )
             .map_err(|_| invalid_frame_source())?;
         Ok(Some(decoded.block))
     }
@@ -322,27 +323,12 @@ impl<'a> DecoderSource<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct FrameSequence {
     frame_count: u64,
     next_sample: u64,
     variable_blocking: Option<bool>,
-    minimum_block_size: u16,
-    maximum_block_size: u16,
     previous_block_size: Option<u16>,
-}
-
-impl Default for FrameSequence {
-    fn default() -> Self {
-        Self {
-            frame_count: 0,
-            next_sample: 0,
-            variable_blocking: None,
-            minimum_block_size: u16::MAX,
-            maximum_block_size: 0,
-            previous_block_size: None,
-        }
-    }
 }
 
 impl FrameSequence {
@@ -350,6 +336,7 @@ impl FrameSequence {
         &mut self,
         frame: &DecodedFrame,
         channels: usize,
+        streaminfo_min_block_size: u16,
         streaminfo_max_block_size: u16,
     ) -> Result<()> {
         let block_size = u16::try_from(frame.block.duration())
@@ -362,11 +349,30 @@ impl FrameSequence {
                 "decoded frame size or channel count disagrees with its header",
             ));
         }
+        if streaminfo_min_block_size != 0
+            && streaminfo_max_block_size != 0
+            && streaminfo_min_block_size > streaminfo_max_block_size
+        {
+            return Err(refusal("STREAMINFO minimum block size exceeds its maximum"));
+        }
         if self
             .variable_blocking
             .is_some_and(|previous| previous != frame.header.variable_blocking)
         {
             return Err(refusal("FLAC blocking strategy changes within the stream"));
+        }
+        // STREAMINFO block sizes are bounds for variable-block streams. The
+        // final frame may be shorter than the minimum, and fixed-block streams
+        // may similarly end with a short frame below their nominal maximum.
+        if frame.header.variable_blocking
+            && streaminfo_min_block_size != 0
+            && self
+                .previous_block_size
+                .is_some_and(|previous| previous < streaminfo_min_block_size)
+        {
+            return Err(refusal(
+                "non-final variable-block frame is below STREAMINFO minimum",
+            ));
         }
         if !frame.header.variable_blocking
             && self
@@ -377,6 +383,9 @@ impl FrameSequence {
                 "a short fixed-block frame is followed by another frame",
             ));
         }
+        if streaminfo_max_block_size != 0 && block_size > streaminfo_max_block_size {
+            return Err(refusal("frame exceeds STREAMINFO maximum block size"));
+        }
 
         if frame.header.variable_blocking {
             if frame.header.coded_number != self.next_sample
@@ -385,15 +394,17 @@ impl FrameSequence {
                 return Err(refusal("FLAC frame sample numbers have a gap or overlap"));
             }
         } else {
+            if streaminfo_max_block_size == 0 {
+                return Err(refusal(
+                    "fixed-block STREAMINFO maximum block size is unknown",
+                ));
+            }
             let expected_start = self
                 .frame_count
                 .checked_mul(u64::from(streaminfo_max_block_size))
                 .ok_or_else(|| refusal("fixed-block sample position overflows"))?;
             if frame.header.coded_number != self.frame_count || self.next_sample != expected_start {
                 return Err(refusal("fixed-block frame numbers have a gap or overlap"));
-            }
-            if block_size > streaminfo_max_block_size {
-                return Err(refusal("fixed-block frame exceeds STREAMINFO maximum"));
             }
             // Claxon 0.4.3 computes fixed-frame time using this frame's block
             // size. That is correct for full frames but undercounts the start
@@ -415,25 +426,17 @@ impl FrameSequence {
             .frame_count
             .checked_add(1)
             .ok_or_else(|| refusal("decoded frame count overflows"))?;
-        self.minimum_block_size = self.minimum_block_size.min(block_size);
-        self.maximum_block_size = self.maximum_block_size.max(block_size);
         self.previous_block_size = Some(block_size);
         Ok(())
     }
 
-    fn finish(
-        &self,
-        expected_samples: u64,
-        streaminfo_min_block_size: u16,
-        streaminfo_max_block_size: u16,
-    ) -> Result<()> {
-        if self.frame_count == 0
-            || self.next_sample != expected_samples
-            || self.minimum_block_size != streaminfo_min_block_size
-            || self.maximum_block_size != streaminfo_max_block_size
-        {
+    fn finish(&self, expected_samples: u64) -> Result<()> {
+        if self.frame_count == 0 {
+            return Err(refusal("FLAC stream contains no audio frames"));
+        }
+        if self.next_sample != expected_samples {
             return Err(refusal(
-                "decoded frame count or block statistics disagree with STREAMINFO",
+                "decoded sample count disagrees with STREAMINFO total samples",
             ));
         }
         Ok(())
@@ -865,10 +868,15 @@ fn validate_frame_sequence(
     let mut sequence = FrameSequence::default();
     let mut reuse = Vec::new();
     while let Some(frame) = read_decoded_frame(&mut cursor, reuse)? {
-        sequence.observe(&frame, info.channels as usize, info.max_block_size)?;
+        sequence.observe(
+            &frame,
+            info.channels as usize,
+            info.min_block_size,
+            info.max_block_size,
+        )?;
         reuse = frame.block.into_buffer();
     }
-    sequence.finish(expected, info.min_block_size, info.max_block_size)
+    sequence.finish(expected)
 }
 
 fn seektable_valid(data: &[u8], file: &FlacFile, total: u64, max_block_size: u16) -> Result<()> {
@@ -1391,11 +1399,17 @@ mod tests {
 
     #[test]
     fn fixed_block_short_final_frame_is_valid_for_input_and_candidate() {
-        let input = sample_flac_with_samples(5000, 2048, true, true);
+        let mut input = sample_flac_with_samples(5000, 2048, true, true);
         let file = parse(&input).unwrap();
+        let initial_info = decode_info(&input).unwrap();
+        assert_eq!(initial_info.min_block_size, 904);
+        assert_eq!(initial_info.max_block_size, 2048);
+        // Match reference libFLAC streams: STREAMINFO reports the nominal
+        // fixed block size even when the final encoded frame is shorter.
+        input[file.blocks[0].data_start..file.blocks[0].data_start + 2]
+            .copy_from_slice(&initial_info.max_block_size.to_be_bytes());
         let info = decode_info(&input).unwrap();
-        assert_eq!(info.min_block_size, 904);
-        assert_eq!(info.max_block_size, 2048);
+        assert_eq!(info.min_block_size, info.max_block_size);
         assert_eq!(frame_spans(&input).len(), 3);
         validate_frame_sequence(&input, file.frame_start, info).unwrap();
 
@@ -1411,9 +1425,14 @@ mod tests {
     #[test]
     fn variable_block_input_with_contiguous_sample_numbers_is_valid() {
         let fixed = sample_flac_with_samples(5000, 2048, false, true);
-        let input = fixed_as_variable(&fixed);
+        let mut input = fixed_as_variable(&fixed);
         let file = parse(&input).unwrap();
+        let initial_info = decode_info(&input).unwrap();
+        input[file.blocks[0].data_start..file.blocks[0].data_start + 2]
+            .copy_from_slice(&16u16.to_be_bytes());
         let info = decode_info(&input).unwrap();
+        assert_eq!(info.min_block_size, 16);
+        assert_eq!(info.max_block_size, initial_info.max_block_size);
         assert!(
             frame_header(&input[file.frame_start..], 0)
                 .unwrap()
