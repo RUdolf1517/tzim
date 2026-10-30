@@ -84,10 +84,44 @@ class FlacCorpusMeasurementTests(unittest.TestCase):
             "inputs": [{"id": "pre-registered-skip", "fetch_status": "fetched"}],
             "derived_inputs": [],
         }
-        self.assertEqual(
-            MEASURE.aggregate_rows(rows, expanded),
-            RECOMPUTE.recompute(rows, expanded),
-        )
+        aggregate = MEASURE.aggregate_rows(rows, expanded)
+        self.assertEqual(aggregate, RECOMPUTE.recompute(rows, expanded))
+
+        row = {
+            **rows[0],
+            "handler_expectation": "valid-input",
+            "before_sha256": "a" * 64,
+            "after_sha256": "a" * 64,
+            "tzim_file_row": {"status": "skipped", "note": "no smaller candidate"},
+            "reference_flac_test": {"return_code": 0},
+            "reference_metaflac": {"return_code": 0},
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            summary = Path(temporary) / "summary.md"
+            MEASURE.write_summary(
+                summary,
+                {
+                    "corpus": {"repository": "example/flac", "commit": "abc123"},
+                    "inputs": [{"size": 100}],
+                    "derived_inputs": [],
+                },
+                {
+                    "expanded_manifest_sha256": "b" * 64,
+                    "inputs": [{"id": row["id"], "fetch_status": "fetched"}],
+                    "derived_inputs": [],
+                },
+                [row],
+                MEASURE.aggregate_rows([row], expanded),
+                {
+                    "flac": {"stdout": "flac 1.4.3"},
+                    "metaflac": {"stdout": "metaflac 1.4.3"},
+                },
+            )
+            report = summary.read_text(encoding="utf-8")
+            self.assertIn("Per-row fixed input identities", report)
+            self.assertIn("pre-registered-skip", report)
+            self.assertIn("source flac pass / metaflac pass; candidate not run", report)
+            self.assertIn("not run (no optimized candidate)", report)
 
 
 if __name__ == "__main__":

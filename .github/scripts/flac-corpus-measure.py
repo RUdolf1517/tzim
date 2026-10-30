@@ -639,6 +639,9 @@ def aggregate_rows(rows: list[dict], expanded: dict) -> dict:
         "expected_rows": len(expanded.get("inputs", [])) + len(expanded.get("derived_inputs", [])),
         "rows": len(rows),
         "status_counts": dict(sorted(counts.items())),
+        "handler_expectation_counts": dict(
+            sorted(Counter(row.get("handler_expectation", "unknown") for row in rows).items())
+        ),
         "source_fetch_statuses": dict(sorted(Counter(row.get("fetch_status", "derived") for row in expanded.get("inputs", [])).items())),
         "derived_generation_statuses": dict(sorted(Counter(row.get("generation_status", "unknown") for row in expanded.get("derived_inputs", [])).items())),
         "input_bytes": before,
@@ -671,7 +674,14 @@ def aggregate_rows(rows: list[dict], expanded: dict) -> dict:
     }
 
 
-def write_summary(path: Path, manifest: dict, expanded: dict, aggregate: dict, tool_versions: dict) -> None:
+def write_summary(
+    path: Path,
+    manifest: dict,
+    expanded: dict,
+    rows: list[dict],
+    aggregate: dict,
+    tool_versions: dict,
+) -> None:
     lines = [
         "# Fixed FLAC corpus measurement",
         "",
@@ -686,6 +696,7 @@ def write_summary(path: Path, manifest: dict, expanded: dict, aggregate: dict, t
         "",
         "## Results",
         "",
+        f"- Handler expectations: `{json.dumps(aggregate['handler_expectation_counts'], sort_keys=True)}`.",
         f"- Tzim statuses: `{json.dumps(aggregate['status_counts'], sort_keys=True)}`.",
         f"- Tzim optimized: {aggregate['optimized_rows']} rows; total bytes {aggregate['input_bytes']:,} → {aggregate['after_bytes']:,}; saved {aggregate['saved_bytes']:,} bytes.",
         f"- Gain among optimized rows: median {aggregate['optimized_median_gain_pct']}%, mean {aggregate['optimized_mean_gain_pct']}% (no input selection was made by these results).",
@@ -708,6 +719,77 @@ def write_summary(path: Path, manifest: dict, expanded: dict, aggregate: dict, t
         lines.append(f"- **Generate {row['id']}** — parent `{row['parent_id']}` (`{row.get('parent_fetch_url', 'URL unavailable')}`) — {row.get('error', 'unknown generation error')}. Owner action: {row.get('owner_action', 'restore the pinned parent and toolchain')}.")
     for blocker in aggregate["blockers"]:
         lines.append(f"- **{blocker['id']} / {blocker.get('code', 'blocker')}** — {json.dumps(blocker, sort_keys=True, ensure_ascii=False)}")
+
+    lines.extend([
+        "",
+        "## Per-row fixed input identities and verification disposition",
+        "",
+        "All 43 pre-registered rows are shown, including refusals, skips and unavailable inputs. No row is selected or removed based on gain.",
+        "",
+        "| Fixed ID | Expectation | Input bytes / SHA-256 | Tzim status; output bytes / SHA-256 | Saved bytes | Tzim note | External source / candidate | PCM and STREAMINFO MD5 | Second pass |",
+        "| --- | --- | --- | --- | ---: | --- | --- | --- | --- |",
+    ])
+    expanded_by_id = {
+        row.get("id"): row
+        for row in expanded.get("inputs", []) + expanded.get("derived_inputs", [])
+    }
+
+    def compact(value: object, maximum: int = 120) -> str:
+        text = str(value or "—").replace("|", "\\|").replace("\r", " ").replace("\n", " ").strip()
+        return text if len(text) <= maximum else text[: maximum - 1] + "…"
+
+    def check_status(value: dict | None) -> str:
+        if not value:
+            return "not run"
+        code = value.get("return_code")
+        return "pass" if code == 0 else f"exit {code}" if code is not None else "unavailable"
+
+    for row in rows:
+        entry = expanded_by_id.get(row.get("id"), {})
+        file_row = row.get("tzim_file_row") or {}
+        checks = row.get("candidate_checks") or {}
+        source_flac = check_status(row.get("reference_flac_test"))
+        source_meta = check_status(row.get("reference_metaflac"))
+        candidate_flac = check_status(checks.get("flac_test"))
+        candidate_meta = check_status(checks.get("metaflac"))
+        if candidate_flac == "not run" and candidate_meta == "not run":
+            external_status = f"source flac {source_flac} / metaflac {source_meta}; candidate not run"
+        else:
+            external_status = (
+                f"source flac {source_flac} / metaflac {source_meta}; "
+                f"candidate flac {candidate_flac} / metaflac {candidate_meta}"
+            )
+        md5 = checks.get("streaminfo_md5") or {}
+        if md5:
+            md5_status = "PASS" if md5.get("ok") is True else "FAIL"
+            if md5.get("input_zero_md5_sentinel"):
+                md5_detail = f"{md5_status}; zero input sentinel; candidate/PCM {md5.get('candidate_streaminfo_md5')}"
+            else:
+                md5_detail = (
+                    f"{md5_status}; source {md5.get('source_streaminfo_md5')}; "
+                    f"candidate {md5.get('candidate_streaminfo_md5')}; PCM {md5.get('external_pcm_md5')}"
+                )
+        else:
+            md5_detail = "not run (no optimized candidate)"
+        second = row.get("second_pass") or {}
+        second_status = (
+            f"{second.get('status', 'unknown')}; {second.get('bytes', '—')} / {compact(second.get('sha256'), 16)}"
+            if second
+            else "not run"
+        )
+        source_size = row.get("before_bytes")
+        source_sha = row.get("before_sha256") or entry.get("observed_sha256") or entry.get("sha256")
+        after_size = row.get("after_bytes")
+        after_sha = row.get("after_sha256")
+        note = file_row.get("note") or file_row.get("error") or row.get("error") or "—"
+        lines.append(
+            f"| `{compact(row.get('id'), 80)}` | {compact(row.get('handler_expectation', entry.get('handler_expectation')))} "
+            f"| {source_size if source_size is not None else '—'} / `{compact(source_sha, 64)}` "
+            f"| {compact(row.get('status'))}; {after_size if after_size is not None else '—'} / `{compact(after_sha, 64)}` "
+            f"| {row.get('saved_bytes', 0)} | {compact(note)} | {compact(external_status)} | {compact(md5_detail)} "
+            f"| {compact(second_status, 80)} |"
+        )
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -808,7 +890,7 @@ def main() -> int:
     aggregate["fetch_blockers"] = fetch_blockers
     aggregate["generation_blockers"] = generation_blockers
     write_json(evidence_dir / "aggregate.json", aggregate)
-    write_summary(evidence_dir / "summary.md", manifest, expanded, aggregate, tool_versions)
+    write_summary(evidence_dir / "summary.md", manifest, expanded, rows, aggregate, tool_versions)
 
     print(f"rows={aggregate['rows']} statuses={json.dumps(aggregate['status_counts'], sort_keys=True)}")
     print(f"bytes={aggregate['input_bytes']}->{aggregate['after_bytes']} saved={aggregate['saved_bytes']}")

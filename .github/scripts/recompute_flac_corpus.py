@@ -85,6 +85,9 @@ def recompute(rows: list[dict], expanded: dict) -> dict:
         "expected_rows": len(expanded.get("inputs", [])) + len(expanded.get("derived_inputs", [])),
         "rows": len(rows),
         "status_counts": dict(sorted(counts.items())),
+        "handler_expectation_counts": dict(
+            sorted(Counter(row.get("handler_expectation", "unknown") for row in rows).items())
+        ),
         "source_fetch_statuses": dict(sorted(Counter(row.get("fetch_status", "derived") for row in expanded.get("inputs", [])).items())),
         "derived_generation_statuses": dict(sorted(Counter(row.get("generation_status", "unknown") for row in expanded.get("derived_inputs", [])).items())),
         "input_bytes": before,
