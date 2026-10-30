@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.14.0"
+  version "0.15.0"
   license "MIT"
 
   livecheck do
@@ -27,32 +27,30 @@ class Tzim < Formula
   # formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.14.0/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "57006a3aaaba98e2d71e1cf537aaaee27c3410ee5c89bf1d68b523dab1dc3920"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "694a8bc3b6b9c8101f2e897ee08e846de6c4dfaf0b676f4f325aeb8e5b3971e9"
     end
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.14.0/tzim-x86_64-apple-darwin.tar.gz"
-      sha256 "d373d3944308305de040189483f878bc37c3fc757a4a663500d73a93a68f87af"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-apple-darwin.tar.gz"
+      sha256 "6423743eebcee8530fe6a197d47cd83d08fb9342e25d35f3469b98beb0e8b79e"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.14.0/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "a89fcf23245c05ebe3a59e96427c8a09d8f23df38c11ff34f524bba15d05dc8b"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "9aad42cc0aee78dcc2362a821fc0b470fb4a1e295a14a4da20d44defd86ba91a"
     end
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.14.0/tzim-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "548944f68cbdf56fc82386cd411c2ca376dbe2239dece416b7b7a08c0f469b1a"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "51fe2bc436c5b3f97e01885b0ad792d46e61a7d45637adf4d2a8bbe993559c39"
     end
   end
 
   # Archives from v0.11.0 onwards ship the manual page and the three
   # completions next to the binary, so the formula installs the same
-  # documentation the .deb, the .rpm and the repository carry. The `File.exist?`
-  # checks are for the pinned version only: while this formula points at an
-  # older archive, those files are simply not there yet, and a formula that
-  # refuses to install is worse than one without a man page.
+  # documentation the .deb, the .rpm and the repository carry. The guards keep
+  # older pinned archives installable; the v0.15.0 archives include all of these.
   def install
     bin.install "tzim"
     man1.install "man/tzim.1" if File.exist?("man/tzim.1")
@@ -65,16 +63,28 @@ class Tzim < Formula
 
   def caveats
     <<~EOS
-      Formats: PNG, APNG, gzip, the ZIP family, ICO/CUR, baseline JPEG, TIFF and zlib.
-      JPEG is opt-in: tzim photo.jpg --formats jpeg
+      Default handlers: PNG/APNG, gzip, ZIP, ICO/CUR, eligible baseline sequential JPEG,
+      TIFF and zlib. Baseline sequential JPEG is enabled by default and independently
+      checked with V1 pixel verification. `--formats` is an allowlist for narrowing
+      handlers, not a JPEG opt-in; for example, `--formats png` excludes JPEG.
+      Progressive JPEG is not supported.
+
+      FLAC and PDF require non-default build features and are absent from this binary.
+      FITS is also non-default; it requires a build with the `fits` feature and the
+      `--fits-tile` run option, so it is absent from this Homebrew binary.
 
       No runtime dependencies. The binary is statically linked and opens no sockets.
-      Run `tzim --list-formats` to see what this build supports.
+      Run `tzim --list-formats` to see the handlers compiled into this build.
     EOS
   end
 
   test do
     assert_match version.to_s, shell_output("#{bin}/tzim --version")
-    assert_match "png", shell_output("#{bin}/tzim --list-formats")
+    formats = shell_output("#{bin}/tzim --list-formats")
+    rows = formats.lines.drop(1).take_while { |line| !line.strip.empty? }
+    expected = %w[PNG gzip ICO/CUR JPEG TIFF ZIP ZLIB]
+    actual = rows.map { |line| line.split.first }
+    assert_equal expected, actual
+    refute_match(/^\s*(?:FLAC|PDF|FITS)\s/, formats)
   end
 end
