@@ -497,20 +497,35 @@ try {
 
     $validateLog = Join-Path $artifactRoot 'winget-validate.log'
     Assert-Equal -Expected $true -Actual (Test-Path -LiteralPath $versionManifest -PathType Leaf) -Message 'canonical local winget version manifest exists'
-    $validation = & $winget.Source validate --manifest $versionManifest 2>&1
-    $validationExit = $LASTEXITCODE
-    $validation | Tee-Object -FilePath $validateLog
-    Assert-Equal -Expected 0 -Actual $validationExit -Message 'winget validate --manifest local version file'
 
     $expectedDir = Join-Path $artifactRoot 'winget-expected-binary'
     Expand-Archive -LiteralPath $archiveLatest -DestinationPath $expectedDir -Force
     $expectedExeHash = (Get-FileHash -LiteralPath (Join-Path $expectedDir 'tzim.exe') -Algorithm SHA256).Hash
     $installLog = Join-Path $artifactRoot 'winget-install.log'
-    $installOutput = & $winget.Source install --manifest $versionManifest --scope user `
-        --accept-package-agreements --silent --disable-interactivity 2>&1
-    $installExit = $LASTEXITCODE
-    $installOutput | Tee-Object -FilePath $installLog
-    Assert-Equal -Expected 0 -Actual $installExit -Message 'actual winget install --manifest'
+    Push-Location -LiteralPath $manifestDir
+    try {
+        # WinGet resolves all three files of a multi-file manifest from the
+        # current directory; a YAML-file path is treated as a single-file set.
+        $validation = & $winget.Source validate --manifest . 2>&1
+        $validationExit = $LASTEXITCODE
+        $validation | Tee-Object -FilePath $validateLog
+        Assert-Equal -Expected 0 -Actual $validationExit -Message 'winget validate local multi-file manifest directory'
+
+        $settingsLog = Join-Path $artifactRoot 'winget-settings.log'
+        $settingsOutput = & $winget.Source settings --enable LocalManifestFiles 2>&1
+        $settingsExit = $LASTEXITCODE
+        $settingsOutput | Tee-Object -FilePath $settingsLog
+        Assert-Equal -Expected 0 -Actual $settingsExit -Message 'enable local winget manifest testing'
+
+        $installOutput = & $winget.Source install --manifest . --scope user `
+            --accept-package-agreements --silent --disable-interactivity 2>&1
+        $installExit = $LASTEXITCODE
+        $installOutput | Tee-Object -FilePath $installLog
+        Assert-Equal -Expected 0 -Actual $installExit -Message 'actual winget install --manifest'
+    }
+    finally {
+        Pop-Location
+    }
 
     $userPathAfterWinget = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User)
     if (-not [string]::IsNullOrEmpty($userPathAfterWinget)) {
