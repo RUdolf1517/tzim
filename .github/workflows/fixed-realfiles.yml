@@ -150,7 +150,7 @@ jobs:
 
   quartz-pdf-generation:
     name: generate fixed Quartz PDFs
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 45
     outputs:
       source_sha: ${{ steps.identity.outputs.source_sha }}
@@ -614,7 +614,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/fixed-fits-evidence"
           python3 -m pip freeze | tee "$RUNNER_TEMP/fixed-fits-evidence/measurement-environment.txt"
 
-      - name: Test fixed FITS diagnostics and positive-control gating
+      - name: Test fixed FITS diagnostics and positive/negative-control gating
         shell: bash
         run: python3 .github/scripts/test_fixed_fits_measure.py
 
@@ -684,7 +684,7 @@ jobs:
           ldd "$bindir/funpack" || true
           "$bindir/fitsverify" 2>&1 | head -n 20 || true
 
-      - name: Run the existing two-tier FITS instrument on all downloaded fixed inputs
+      - name: Run the existing Astropy two-tier FITS instrument and retain its reference candidates
         id: audit
         continue-on-error: true
         shell: bash
@@ -697,7 +697,7 @@ jobs:
             --out "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier-rows.jsonl" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/existing-two-tier.log"
 
-      - name: Run Tzim Tier 2, Tier 1 comparator, fitsverify, funpack -C positive control and array/header oracles
+      - name: Run Tzim Tier 2, external controls, fitsverify, funpack -C and array/header oracles
         id: measure
         continue-on-error: true
         shell: bash
@@ -727,6 +727,7 @@ jobs:
             --rows "$RUNNER_TEMP/fixed-fits-evidence/run/raw-rows.jsonl" \
             --aggregate "$RUNNER_TEMP/fixed-fits-evidence/run/aggregate.json" \
             --positive-control "$RUNNER_TEMP/fixed-fits-evidence/run/positive-control.json" \
+            --negative-control "$RUNNER_TEMP/fixed-fits-evidence/run/negative-control.json" \
             --out "$RUNNER_TEMP/fixed-fits-evidence/independent-recomputation.json" \
             2>&1 | tee "$RUNNER_TEMP/fixed-fits-evidence/recompute.log"
 
