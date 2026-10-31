@@ -3,30 +3,120 @@
 Historical checklist date: 2026-10-27. Baseline: `5dd45b38412ffb762a1fc380bd291351c9e6601e`.
 This is a living management checklist, not a completed execution audit or a release approval.
 
-## PR #84 execution status — 2026-10-30
+## PR #91 current exact-SHA status — 2026-10-31
+
+The current fixed-sample result is bound to source SHA
+`c69d25e377215031dee2f2245afc967604423ae9`. Fixed workflow run
+[41215985536](https://github.com/RUdolf1517/tzim/actions/runs/41215985536) and its [exact report comment](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545587417)
+record the 14 frozen TESS/GALEX/ROSAT inputs (source-manifest SHA-256
+`500fdbe6763da40b5db856f9ea7218e18b244956f41f4505e4a838836ebb79d0`). The run used the pinned CFITSIO archive
+and terminal-blank patch; instrument SHA-256 `be27888e60b2bfab9731d3eebadbe9ac2b5b9ac1d2f96d2ebcf1bacd9de634a2`.
+The evidence artifact is `fixed-fits-evidence` (ID `13048795912`); it retains hashes and tool output, not FITS
+payload bytes.
+
+All 14 reference candidates passed `funpack -C`; 20/20 HDUs matched exact literal cards through `END` and exact
+storage payload, with zero inserted, dropped, or changed cards and zero payload mismatches. `fitsverify -l`
+reported 10 clean passes and 4 passes with inherited source warnings. The external positive and negative controls
+passed. The unchanged pre-registered #59 rule is **applied**: Tier 2 clears for opt-in `--fits-tile`; its 14-row
+gain distribution was median 30.42168674698795%, Q1 29.518072289156628%, Q3 64.63408680369086%, and 100%
+positive. Tier 1 is empty/not evaluated. Tzim skipped all 14 products unchanged and direct Tzim comparisons passed
+14/14. This is not full FITS admission; the ROSAT permission and no-payload-publication boundaries remain. The
+separate #57 rule remains applied and **refused after measurement**.
+
+### Required `measure-repro` investigation
+
+The required comparison still fails at the same exact source SHA in run
+[41215985505](https://github.com/RUdolf1517/tzim/actions/runs/41215985505), report
+[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319). All three examined
+runs used the same 2,386-file manifest digest
+`57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5`; the result at `c69d25e` is identical to
+`385e0cb`, while `e18d84d` predates the common FITS instrument change:
+
+| Exact source SHA / run | FITS candidates | Exact-verified files | `cannot_compress` | Exact failures |
+| --- | ---: | ---: | ---: | ---: |
+| `e18d84df4aa5d63a4a0ae6e6eb9891620fd2d95c` / [41190144163](https://github.com/RUdolf1517/tzim/actions/runs/41190144163) | 140 | 140 | 13 | 0 |
+| `385e0cb1a5bd113b93fbf402976bf580a6025ffb` / [41190823523](https://github.com/RUdolf1517/tzim/actions/runs/41190823523) | 148 | 147 | 5 | 1 (`zerowidth.fits/array_0`) |
+| `c69d25e377215031dee2f2245afc967604423ae9` / [41215985505](https://github.com/RUdolf1517/tzim/actions/runs/41215985505) | 148 | 147 | 5 | 1 (`zerowidth.fits/array_0`) |
+
+The `e18d84d` → `385e0cb` diff changes `.github/scripts/fits-measure.py`'s compressed-header repair: it restores
+omitted literal source cards and rebuilds/pads the candidate header, while retaining hard errors for ambiguous or
+same-key/different-value cards. Across that instrument change, the report moves by +8 candidates, +7 exact-verified
+files, −8 `cannot_compress` refusals, and exposes one exact failure (`zerowidth.fits/array_0`). The published
+failure set also includes `double_ext.fits/keyword_EXTNAMX`, which the current result no longer reports. The
+`385e0cb` → `c69d25e` change is the pinned CFITSIO terminal-blank `funpack -C` patch, not a
+`fits-measure.py` change; it has no effect on these `measure-repro` results.
+
+The current c69 report's remaining FITS cells that differ from the published table are:
+
+| Cell | Published | Measured at c69 |
+| --- | ---: | ---: |
+| `tier2_candidates` | 153 | 148 |
+| `tier2_files` | 151 | 147 |
+| `tier1_files` | 151 | 147 |
+| `tier2_q1` | 17.4 | 18.2 |
+| `tier2_mean` | 19.1 | 20.0 |
+| `tier2_share_positive` | 83 | 85 |
+| `bytes_before` | 17,827,200 | 17,648,640 |
+| `bytes_after` | 13,343,040 | 13,121,280 |
+| `bytes_pct` | 25.2 | 25.7 |
+| `exact_failure_count` | 2 | 1 |
+| `median[astropy]` | −7.1 | −21.4 |
+| `by_status[refused]` | 25 | 30 |
+| `by_status[tier2]` | 153 | 148 |
+| `refusals[cannot_compress]` | None | 5 |
+| `exact_failure_set` | `double_ext.fits/keyword_EXTNAMX`; `zerowidth.fits/array_0` | `zerowidth.fits/array_0` |
+
+The changed count/verification cells and their derived statistics are tool-version-sensitive: the e18d→385e
+instrument change accounts for the observed candidate/refusal delta, while the reports do not establish a
+per-file cause for each of the five remaining refusals. The c69 report explicitly identifies
+`zerowidth.fits/array_0` as rewritten but not verified; its public summary does not enumerate the five
+`cannot_compress` filenames or error strings. The existing `measure-repro-evidence` artifact (ID `13048345852`,
+416,909 bytes, not expired) is the raw-row evidence source; prior artifact downloads ended in `EOF`, so those five
+rows remain uninspected. No tool or baseline change is made on an incomplete per-row attribution.
+
+The following published-versus-measured differences were already present in the `e18d84d` report, before that
+instrument change, and remain identical at `385e0cb` and `c69d25e`; they are not caused by the current common
+`.github/scripts/fits-measure.py` change:
+
+- FITS selected-file byte totals (counts and repository commits reproduce): Astropy 780→675 KiB; CFITSIO
+  60→678 KiB; Drizzlepac 3.3→14.8 MiB; Reproject 2.0→1.8 MiB; total 17.8→17.9 MiB.
+- PDF: mean 0.39→0.42168367731371126; positive share 68→69.37561942517344; qpdf mean
+  1.68→1.6538774233025468; render pages 173→168. The historical 173-page sample path list/per-file rows were
+  not retained, so the old selection cannot be reconstructed.
+- Five Zopfli cells remain unavailable, not mismatched: `sample_files` (published 150), median (0.15), Q1 (0.14),
+  Q3 (2.81), and positive share (91). The historical 150-file path list/per-file rows were not retained; no new
+  sample is substituted.
+
+The reports remain red evidence, not permission to alter published baselines, corpus, thresholds, or required
+status. Exact reports: `e18d84d` [comment `6541884360`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6541884360),
+`385e0cb` [comment `6541976402`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6541976402), and `c69d25e`
+[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319).
+
+## Historical PR #84 execution status — 2026-10-30
 
 The owner-fixed #57/#59 source identities and protocol are in PR comment
 [6498702204](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204). The fixed-manifest workflows
 retain every row and do not select, drop, repair, or substitute inputs based on size or gain. Runs at `7b82c9ed`,
-`5721867`, `5967e31`, and `f05f6d2` remain historical snapshots. The 572/5967/f05 #59 header mismatch counts and
+`5721867`, `5967e31`, and `f05f6d2` are historical snapshots. The 572/5967/f05 #59 header mismatch counts and
 0/14 verdicts came from a padded, positional comparator; they are **superseded instrument results, not final
-candidate-content verdicts**. The four independent TESS `fitsverify -l` checksum warnings remain valid blockers.
+candidate-content verdicts**. The four independent TESS `fitsverify -l` warnings are retained as findings for
+those exact runs; they are not current blockers after the later c69 run documented above.
 
-The comparator correction now reruns all 14 fixed #59 products at the exact current source SHA with `funpack -C`
-for every source/candidate pair (including unchanged rows), the external integer-only positive control, and exact
-storage-payload checks. Its current-head PR report carries the exact run SHA and compact, non-truncated per-product/
-per-HDU raw diagnostics. The #57 current-head report likewise publishes the accepted-subset `faithful_pct` rows
-and recomputation inputs directly. This document is itself a Markdown-derived #57 PDF input, so the workflow
-comments are authoritative only for their recorded source SHA. No baseline, threshold, old aggregate, #78 policy,
-or #82/#83 behavior was changed.
+The comparator correction was introduced in PR #84 and reran all 14 fixed #59 products with `funpack -C` for every
+source/candidate pair (including unchanged rows), an external integer-only positive control, and exact
+storage-payload checks. Each report is authoritative only for its recorded source SHA. The PR #91 c69 report above
+is the current disposition and includes non-truncated per-product/per-HDU diagnostics. The #57 report also
+publishes its accepted-subset `faithful_pct` rows and recomputation inputs. This document is itself a
+Markdown-derived #57 PDF input, so historical workflow comments must not be attributed to a later SHA. No baseline,
+threshold, old aggregate, #78 policy, or #82/#83 behavior was changed.
 
 - **#57 — fixed sample measured; original threshold applied and refused after measurement (previous 5967e31 snapshot).** At exact source
   SHA `5967e318951f9c3945f0c256c3095b347483e234`, all 21 pre-registered outputs were retained: 18 accepted and
   3 refused as `incremental_update`. The registered accepted-subset `faithful_pct` distribution (flate2 level 9)
   was n=18, median 0.00034127460376596526%, Q1 0.0%, Q3 0.20532715969914445%, share-positive 72.22%; the
   registered refusal bar remains 1%. The original rule was **applied and returned refused after measurement**.
-  The current-head #57 comment publishes every accepted `faithful_pct` row with its raw formula inputs; that
-  comment's exact source SHA governs the document snapshot. Tzim optimized 12/21 rows and saved 3,723 bytes from
+  The exact-SHA #57 comment publishes every accepted `faithful_pct` row with its raw formula inputs; that
+  comment's recorded source SHA governs the snapshot. Tzim optimized 12/21 rows and saved 3,723 bytes from
   76,993,480 optimized-input bytes; this separate
   optimized-only metric was not substituted. Qpdf candidate-check failures and registered render differences were
   both zero. Manifest SHA-256 `a5ecf26b32bda38353f743e1cd450b7a7b44d3ccff2a35827858e4406092858c`; report
@@ -39,10 +129,11 @@ or #82/#83 behavior was changed.
   attribution was enabled, and no fpack float-array oracle was used. That run reported 20 header-only HDU
   mismatches and 2,412 positional card differences, with no storage-payload mismatches. Because the comparator
   included record padding and was position-based, its header counts and 0/14 gate outcome are superseded
-  instrument results—not final candidate-content verdicts. The independent `fitsverify -l` findings remain valid:
-  4 failed TESS candidates, 4 inherited-warning GALEX candidates, and 6 passed ROSAT candidates. The four TESS
-  checksum warnings remain blockers; the current-head exact run publishes corrected card-through-END and payload
-  diagnostics directly in the PR report.
+  instrument results—not final candidate-content verdicts. The independent `fitsverify -l` findings remain valid
+  for this 5967e31 snapshot: 4 failed TESS candidates, 4 inherited-warning GALEX candidates, and 6 passed ROSAT
+  candidates. The four TESS checksum warnings blocked that historical snapshot; the later c69 result above
+  supersedes its current disposition with 14/14 reference candidates passed and #59 applied. The PR #84 exact-SHA
+  report published its corrected card-through-END and payload diagnostics.
   Tzim independently skipped all 14 rows unchanged; no input repair or FITS-byte upload occurred and the ROSAT
   boundary was preserved. The a1 default-checksum outcome remains historical and is superseded only as an
   instrument result. Source-manifest SHA-256 `e96d7c913754a4c1931d307110509a49f78c909685b63cf8ce92875c18bf02de`;
@@ -67,10 +158,10 @@ or #82/#83 behavior was changed.
 
 **Checks and remaining limits for the prior 5967e31 snapshot.** PR CI run `41049496986` passed the platform
 matrix, all-feature Rust tests, Clippy, MSRV, package, size, and documentation-link checks. Fixed run
-`41049496855` completed generation, measurement, and independent recomputation; the padded-comparator #59
-header verdict is superseded as an instrument result, while the four independent TESS checksum warnings remain
-blockers. Fixed #57 applied the
-original rule and returned refused after measurement. Fixed FLAC run `41049496908`, fuzz `41049496757`, corpus
+`41049496855` completed generation, measurement, and independent recomputation; its padded-comparator #59
+header verdict is superseded as an instrument result. The four independent TESS checksum warnings were blockers
+for that historical SHA-specific run; the current c69 result is recorded above. Fixed #57 applied the original
+rule and returned refused after measurement. Fixed FLAC run `41049496908`, fuzz `41049496757`, corpus
 `41049496752`, third-party `41049496948`, lockfile `41049489944`, and HEASARC gate `41049496840` completed
 successfully. The `measure-repro` run `41049496753` failed on published-versus-measured differences; no baseline
 or threshold was changed. #78 remains open; no result here closes it.
@@ -90,13 +181,14 @@ acceptance.
 The historical 2,208-file PDF and 178-file FITS execution details below remain attributed to the earlier
 handover; their historical per-file artifacts were not retained. The #57/#59 reports at `7b82c9ed`, `5721867`,
 `5967e31`, `f05f6d2` and a1 remain historical snapshots. The a1 default-checksum result and the later padded,
-position-based #59 header outcomes are superseded as instrument results, not candidate-content verdicts. The
-independent `fitsverify -l` findings remain valid, including the four TESS checksum-warning blockers. The
-current-head fixed #57/#59 report comments carry the exact source SHA, raw accepted-subset PDF rows, and
-non-truncated per-product/per-HDU FITS card-through-END, storage-payload, padding and first-difference evidence;
-no corpus or candidate payload bytes are published. This document is itself an input to the #57 PDF sample, so
-later SHA-specific snapshots must not be conflated. The #78 final-evidence/review limitations and ordinary fixture
-gates remain separate; neither turns a failed required candidate gate into a pass.
+position-based #59 header outcomes are superseded as instrument results, not candidate-content verdicts. Their
+independent `fitsverify -l` findings, including the four TESS checksum warnings, remain part of those historical
+reports only. The current c69 #59 report above carries the exact source SHA, raw per-product/per-HDU
+card-through-END and storage-payload results, and current threshold disposition; no corpus or candidate payload
+bytes are published. The #57 report comments carry their own exact SHA and accepted-subset PDF rows. This document
+is itself an input to the #57 PDF sample, so later SHA-specific snapshots must not be conflated. The #78
+final-evidence/review limitations and ordinary fixture gates remain separate; neither turns a failed required
+candidate gate into a pass.
 
 The current instruments are linked in [PDF §9.1](pdf-audit.md#91-what-was-run) and
 [FITS §8.1](fits-audit.md#81-what-was-actually-run-and-with-what):
@@ -104,18 +196,17 @@ The current instruments are linked in [PDF §9.1](pdf-audit.md#91-what-was-run) 
 - [PDF measurement script](../.github/scripts/pdf-measure.py) and fixed-sample wrapper/recomputation scripts;
   the exact source SHA and manifest are recorded in the #57 report/artifact;
 - [FITS measurement script](../.github/scripts/fits-measure.py) and fixed-sample wrapper/recomputation scripts;
-  the existing two-tier instrument SHA-256 is `104d7fb528007a67c8e9fe613a7fe00084fcfbf6ab9e49b47f0bc2c02319aeff`.
+  the exact c69 two-tier instrument SHA-256 is `be27888e60b2bfab9731d3eebadbe9ac2b5b9ac1d2f96d2ebcf1bacd9de634a2`.
 
 The old blob labels `1677d63` and `2978fe4` above the historical aggregates refer to earlier script versions;
-they are not the current fixed-sample instrument identities. The current #59 report records Python 3.12.15,
-NumPy 2.4.6, Astropy 8.0.2 and pinned CFITSIO 4.7.0 source; #57 records pinned qpdf 12.4.2 and its MuPDF
-render tool. The current-head #57 and #59 report comments publish the raw values needed for review directly in
-PR text; the workflow artifacts retain exact commands, stdout/stderr, identities, recomputation and complete
-structured per-HDU diagnostics without FITS bytes. The 5967e31 #59 artifact `fixed-fits-evidence` (ID
-`12973643986`, 992,196 bytes, SHA-256
-`fc84ed264206712a35bc2b9d01327248d1ab70f2536d6f93fd2da805af177fe0`) is historical padded-comparator evidence,
-not a substitute for the corrected report. A separate older 5721867 artifact download returned Azure Blob `EOF`;
-that download is not retried.
+they are not the current fixed-sample instrument identities. The c69 #59 report above records Python 3.12.15,
+NumPy 2.4.6, Astropy 8.0.2 and pinned CFITSIO 4.7.0 source; the 5967e31 #57 snapshot records pinned qpdf
+12.4.2 and its MuPDF render tool. Exact-SHA PR comments publish their own source-specific raw values; the c69
+workflow artifact retains commands, stdout/stderr, identities, recomputation, and complete structured per-HDU
+diagnostics without FITS bytes. The 5967e31 #59 artifact `fixed-fits-evidence` (ID `12973643986`, 992,196
+bytes, SHA-256 `fc84ed264206712a35bc2b9d01327248d1ab70f2536d6f93fd2da805af177fe0`) is historical
+padded-comparator evidence, not a substitute for the c69 report. A separate older 5721867 artifact download
+returned Azure Blob `EOF`; that download is not retried.
 
 ## Independent FITS review handoff
 
@@ -190,7 +281,7 @@ separately, and the final release inventory must name the actual release SHA.
 | Issue / requirement | Available evidence in this iteration | Open gap / disposition |
 | --- | --- | --- |
 | #57: exact source set | Owner-fixed 21-output set; exact 5967e31 snapshot `41049496855` at source SHA `5967e318951f9c3945f0c256c3095b347483e234`, manifest SHA `a5ecf26b…` | Previous snapshot: 18 accepted, 3 refused; registered `faithful_pct` median 0.00034127460376596526%; original threshold applied and returned refusal. The current-head report posts every accepted `faithful_pct` value with its raw formula inputs; its recorded SHA governs the document snapshot. The rule/disposition are unchanged; never replace the registered metric with Tzim-only gain |
-| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; corrected comparison reruns all 14 pairs with `funpack -C`, the external integer-only positive control, exact storage-payload checks, and per-HDU raw evidence | The 572/5967/f05 padded, positional header counts and 0/14 conclusions are superseded instrument results, not candidate-content verdicts. The four independent TESS `fitsverify -l` checksum warnings remain valid blockers; threshold stays **not applied** unless every required gate passes. Current exact-SHA report text publishes per-product/per-HDU cards-through-END equality, payload equality, padding-only status, inserted/dropped/changed counts, and first differences, without FITS/candidate payload bytes. Preserve the ROSAT permission boundary, open #78 and final-evidence limitations |
+| #59: exact survey inputs | Owner-fixed 14-product TESS/GALEX/ROSAT set; exact c69 source SHA `c69d25e377215031dee2f2245afc967604423ae9`, fixed run [41215985536](https://github.com/RUdolf1517/tzim/actions/runs/41215985536), report [6545587417](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545587417) | All 14 reference candidates passed `funpack -C`; 20/20 HDUs matched exact cards through `END` and storage payload, with zero card/payload mismatches. `fitsverify -l`: 10 clean and 4 inherited-warning passes; positive and negative controls passed. The unchanged threshold is **applied** for opt-in `--fits-tile`; Tier 1 is empty, and Tzim skipped all 14 rows unchanged. The 572/5967/f05 padded-comparator 0/14 results and four TESS warnings remain historical SHA-specific findings, not current candidate-content verdicts. Preserve the ROSAT permission boundary, open #78 and final-evidence limitations |
 | #79: opt-in FLAC | Handler, Claxon PCM/MD5 verification, seekpoint mapping, and regression tests behind `flac`; fixed 43-row run `41049496908` at exact SHA `5967e318951f9c3945f0c256c3095b347483e234` | 23 optimized, 7 already optimal, 7 documented refusals, 6 invalid controls; all 23 optimized rows passed external tools, exact PCM and STREAMINFO-MD5. Saved 744,570 bytes; whole-corpus and optimized-only labels are both recorded. Fuzz, feature-size and timing evidence are linked; broader admission/review remains separate |
 | #80: opt-in PDF | Narrow classic-xref/xref-stream implementation, bounded `/ObjStm` validation, tests, behind `pdf` | Implementation is independent of #57 and remains owner-authorized/non-default. #57's original rule refused the fixed sample; qpdf/MuPDF evidence and all-feature tests passed. No default enablement or full PDF-admission claim |
 | #78 and #82/#83 | #78 HEASARC run `41049496840` passed; its external Astropy EXTNAMX fixture and final evidence/repro jobs remain skipped. #82/#83 code and owner decisions were unchanged | Keep #78 open pending its missing evidence/manager review; preserve #82/#83. No size threshold, baseline, prompt, or release default was changed |
@@ -229,9 +320,10 @@ no baseline/threshold changes, corpus commits, self-merge, self-close, or Releas
    corresponding full format acceptance. Baselines and thresholds are not edited to obtain green CI.
 4. The five unavailable Zopfli cells remain an explicit limitation; the earlier general-release decision did
    not request a replacement sample. This does not override PR #84's separate fixed #57/#59 measurement scope.
-5. For PR #84, the exact fixed real-toolchain PDF and survey FITS samples were required now and have been run.
-   The #57 threshold was applied; the #59 threshold remains unapplied after the reference-candidate mismatch.
-   Neither result by itself claims full format admission.
+5. For PR #84, the exact fixed real-toolchain PDF and survey FITS samples were required and run. At that
+   historical snapshot, #57 applied its rule and refused after measurement; #59 was recorded as unapplied after
+   the padded-comparator reference-candidate mismatch. The later exact c69 #59 disposition is applied as recorded
+   above; neither result by itself claims full format admission.
 6. A durable measurements/evidence Release artifact is required before publication. Selecting that retention
    policy does not authorise creating or publishing the Release; separate final confirmation is still needed.
 7. Signed-P standard/source evidence, arithmetic boundary tests and ordinary CI are sufficient for opt-in F-06
