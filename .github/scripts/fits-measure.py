@@ -523,6 +523,7 @@ def main():
             size = os.path.getsize(path)
             row = {"corpus": corpus, "path": path, "bytes": size}
             if recorded is not None:
+                row["manifest_path"] = recorded["path"]
                 row["manifest_sha256"] = recorded["sha256"]
             try:
                 with fits.open(path) as hdul:
@@ -549,7 +550,7 @@ def main():
                 images, mapping = rebuild(path, str(out))
             except Exception as e:              # noqa: BLE001
                 rows.append({**row, "status": "refused", "reason": "cannot_compress",
-                             "err": str(e)[:80]})
+                             "err": str(e)})
                 continue
             new_size = out.stat().st_size
             if candidate_dir is not None:

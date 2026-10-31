@@ -16,6 +16,7 @@ The suites need the same packages the instruments need (`numpy`, `astropy`,
 exercise.
 """
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -23,6 +24,7 @@ import os
 import tarfile
 import tempfile
 import unittest
+from unittest import mock
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,24 +102,24 @@ class PublishedTableComparison(unittest.TestCase):
         self.assertEqual(verdicts["share_positive"], "DIFFERENT")
         self.assertEqual(verdicts["maximum"], "reproduced")
 
-    def test_four_pdf_table_differences_are_reported_separately(self):
+    def test_v2_pdf_errata_cells_reproduce_at_their_original_precision(self):
         metrics = {
             "mean": 0.4216836773137112,
             "share_positive": 69.37561942517344,
             "qpdf_mean": 1.6538774233025473,
             "render_pages": 168,
         }
-        published = {"mean": 0.39, "share_positive": 68,
-                     "qpdf_mean": 1.68, "render_pages": 173}
         rows, problems = measure_repro.compare(
-            metrics, published,
-            precision={"mean": 2, "share_positive": 0, "qpdf_mean": 2},
+            metrics, {key: measure_repro.PUBLISHED["pdf"][key] for key in metrics},
+            precision={key: measure_repro.PUBLISHED_PRECISION["pdf"][key] for key in metrics
+                       if key in measure_repro.PUBLISHED_PRECISION["pdf"]},
         )
-        self.assertEqual(
-            {row["metric"] for row in rows if row["verdict"] == "DIFFERENT"},
-            {"mean", "share_positive", "qpdf_mean", "render_pages"},
-        )
-        self.assertEqual(len(problems), 4)
+        self.assertFalse(problems, problems)
+        self.assertTrue(all(row["verdict"] == "reproduced" for row in rows))
+        historical = measure_repro.BASELINE["historical_errata"]["pre_v2_published_tables"]["pdf"]
+        self.assertEqual((historical["mean"], historical["share_positive"],
+                          historical["qpdf_mean"], historical["render_pages"]),
+                         (0.39, 68, 1.68, 173))
 
     def test_pdf_input_manifest_rows_compare_all_published_counts_and_bytes(self):
         pins = {row["name"]: row for row in measure_fetch.CORPORA}
@@ -155,26 +157,133 @@ class PublishedTableComparison(unittest.TestCase):
         ]
         rows, problems = measure_repro.compare_input_corpora(corpora, "fits")
         self.assertEqual(len(rows), 18)  # repo, abbreviated commit, files, bytes, plus totals
-        self.assertEqual(
-            {row["metric"] for row in rows if row["verdict"] != "reproduced"},
-            {
-                "fits.astropy.bytes[KiB]",
-                "fits.cfitsio.bytes[KiB]",
-                "fits.drizzlepac.bytes[MiB]",
-                "fits.reproject.bytes[MiB]",
-                "fits.total.bytes[MiB]",
-            },
-        )
-        self.assertEqual(len(problems), 5)
+        self.assertFalse(problems, problems)
+        self.assertTrue(all(row["verdict"] == "reproduced" for row in rows))
+        corpora[0]["bytes"] += 100000
+        _rows, problems = measure_repro.compare_input_corpora(corpora, "fits")
+        self.assertTrue(any("fits.astropy.bytes" in problem for problem in problems))
+        corpora[0]["bytes"] -= 100000
         corpora[0]["commit"] = "0" * 40
         _rows, problems = measure_repro.compare_input_corpora(corpora, "fits")
         self.assertTrue(any("astropy.commit" in problem for problem in problems))
 
-    def test_unavailable_zopfli_sample_is_not_claimed_as_reproduced(self):
-        rows, problems = measure_repro.compare_zopfli_side_table()
-        self.assertTrue(rows)
-        self.assertTrue(all(row["verdict"] == "unavailable" for row in rows))
+
+class FitsFailureDiagnostics(unittest.TestCase):
+    """The public summary is lossless and the exact known failure stays pinned."""
+
+    def test_all_five_refusal_diagnostics_match_full_identity_and_error(self):
+        expected = measure_repro.BASELINE["fits_refusal_diagnostics"]
+        rows = [dict(
+            status="refused",
+            reason="cannot_compress",
+            corpus=item["corpus"],
+            manifest_path=item["manifest_path"],
+            manifest_sha256=item["input_sha256"],
+            err=item["error"],
+        ) for item in expected]
+        comparison, problems = measure_repro.compare_fits_refusal_diagnostics(rows)
+        self.assertFalse(problems, problems)
+        self.assertEqual(comparison["verdict"], "reproduced")
+        self.assertEqual(comparison["measured"], expected)
+
+        # Each failure mode is fail-closed: missing, substituted, changed SHA,
+        # and truncated error text cannot masquerade as the same five refusals.
+        for mutated in (rows[:-1], rows + [dict(rows[0])]):
+            _comparison, problems = measure_repro.compare_fits_refusal_diagnostics(mutated)
+            self.assertTrue(problems)
+        changed_sha = [dict(row) for row in rows]
+        changed_sha[0]["manifest_sha256"] = "0" * 64
+        _comparison, problems = measure_repro.compare_fits_refusal_diagnostics(changed_sha)
         self.assertTrue(problems)
+        changed_error = [dict(row) for row in rows]
+        changed_error[0]["err"] = changed_error[0]["err"][:30]
+        _comparison, problems = measure_repro.compare_fits_refusal_diagnostics(changed_error)
+        self.assertTrue(problems)
+
+    def test_summary_publishes_all_five_full_refusal_diagnostics(self):
+        expected = measure_repro.BASELINE["fits_refusal_diagnostics"]
+        exact_failure = measure_repro.BASELINE["fits_exact_failures"]
+        payload = dict(
+            environment={
+                "started": "2026-10-31T00:00:00Z",
+                "baseline": {
+                    "file": os.path.relpath(measure_repro.BASELINE_PATH, measure_repro.HERE),
+                    "sha256": measure_repro.sha256_of(measure_repro.BASELINE_PATH),
+                },
+            },
+            baseline={"baseline_id": measure_repro.BASELINE_ID},
+            input_corpus_comparison={},
+            manifest_path="manifest.json",
+            manifest_files=2386,
+            manifest_digest=measure_repro.BASELINE["manifest_digest"],
+            fits=dict(
+                comparison=[],
+                problems=[],
+                aggregates={"refusals": {"cannot_compress": 5}},
+                refusal_diagnostics={"measured": expected},
+                exact_failure_diagnostics={"measured": exact_failure},
+            ),
+            pdf=None,
+        )
+        with tempfile.TemporaryDirectory(prefix="measure-summary-") as temporary:
+            summary_path = os.path.join(temporary, "summary.md")
+            measure_repro.write_summary(summary_path, payload)
+            with open(summary_path, encoding="utf-8") as handle:
+                summary = handle.read()
+        self.assertIn("diagnostic table does not add candidates or alter the 148/147 counts", summary)
+        self.assertIn(measure_repro.sha256_of(measure_repro.BASELINE_PATH), summary)
+        for item in expected:
+            for value in (item["corpus"], item["manifest_path"], item["input_sha256"], item["error"]):
+                self.assertIn(value, summary)
+
+    def test_zerowidth_array_0_is_the_retained_exact_failure(self):
+        expected = measure_repro.BASELINE["fits_exact_failures"]
+        self.assertEqual(len(expected), 1)
+        self.assertEqual(expected[0]["manifest_path"].rsplit("/", 1)[-1], "zerowidth.fits")
+        self.assertEqual(expected[0]["why"], "array_0")
+        row = dict(
+            status="tier2", exact=False, why="array_0", corpus="astropy",
+            manifest_path=expected[0]["manifest_path"],
+            manifest_sha256=expected[0]["input_sha256"],
+            path="/corpus/" + expected[0]["manifest_path"],
+        )
+        details, problems = measure_repro.compare_fits_exact_failure_diagnostics([row], "/corpus")
+        self.assertFalse(problems, problems)
+        self.assertEqual(details["measured"], expected)
+        aggregate = measure_repro.fits_aggregates([row])
+        self.assertEqual(aggregate["exact_failure_count"], 1)
+        self.assertEqual(aggregate["exact_failures"][0]["path"], "zerowidth.fits")
+        self.assertEqual(aggregate["exact_failures"][0]["why"], "array_0")
+
+    def test_fits_row_writer_keeps_full_error_and_manifest_path(self):
+        with tempfile.TemporaryDirectory(prefix="fits-full-error-") as temporary:
+            relative = "astropy/edge.fits"
+            path = os.path.join(temporary, relative)
+            os.makedirs(os.path.dirname(path))
+            fits.PrimaryHDU(np.arange(4, dtype=np.int16).reshape(2, 2)).writeto(path)
+            with open(path, "rb") as handle:
+                data = handle.read()
+            sha = hashlib.sha256(data).hexdigest()
+            manifest_path = os.path.join(temporary, "manifest.json")
+            with open(manifest_path, "w") as handle:
+                json.dump({"manifest_digest": "fixture-manifest", "corpora": [{
+                    "name": "astropy", "format": "fits", "entries": [{
+                        "path": relative, "bytes": len(data), "sha256": sha,
+                    }],
+                }]}, handle)
+            output = os.path.join(temporary, "fits.jsonl")
+            full_error = "fixture error with the complete 140-character diagnostic " + ("x" * 90)
+            argv = ["fits-measure.py", "--root", temporary, "--manifest", manifest_path,
+                    "--out", output]
+            with mock.patch("sys.argv", argv), mock.patch.object(
+                fits_measure, "rebuild", side_effect=RuntimeError(full_error)
+            ):
+                fits_measure.main()
+            row = measure_repro.load_jsonl(output)[0]
+            self.assertEqual(row["manifest_path"], relative)
+            self.assertEqual(row["manifest_sha256"], sha)
+            self.assertEqual(row["err"], full_error)
+            self.assertGreater(len(row["err"]), 80)
 
 
 class FullShaCorpusSelection(unittest.TestCase):

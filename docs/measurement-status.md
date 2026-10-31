@@ -23,11 +23,11 @@ positive. Tier 1 is empty/not evaluated. Tzim skipped all 14 products unchanged 
 14/14. This is not full FITS admission; the ROSAT permission and no-payload-publication boundaries remain. The
 separate #57 rule remains applied and **refused after measurement**.
 
-### Required `measure-repro` investigation
+### Historical pre-v2 `measure-repro` investigation and errata
 
-The required comparison still fails at the same exact source SHA in run
+The runs below are historical comparisons against the pre-v2 published tables. Run
 [41215985505](https://github.com/RUdolf1517/tzim/actions/runs/41215985505), report
-[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319). All three examined
+[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319), was red against those old values. The owner later authorized a new, explicitly versioned baseline; that authorization preserves rather than erases this failure. All three examined
 runs used the same 2,386-file manifest digest
 `57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5`; the result at `c69d25e` is identical to
 `385e0cb`, while `e18d84d` predates the common FITS instrument change:
@@ -46,7 +46,7 @@ failure set also includes `double_ext.fits/keyword_EXTNAMX`, which the current r
 `385e0cb` → `c69d25e` change is the pinned CFITSIO terminal-blank `funpack -C` patch, not a
 `fits-measure.py` change; it has no effect on these `measure-repro` results.
 
-The current c69 report's remaining FITS cells that differ from the published table are:
+At the time, the c69 report's remaining FITS cells that differed from the pre-v2 published table were:
 
 | Cell | Published | Measured at c69 |
 | --- | ---: | ---: |
@@ -68,11 +68,12 @@ The current c69 report's remaining FITS cells that differ from the published tab
 
 The changed count/verification cells and their derived statistics are tool-version-sensitive: the e18d→385e
 instrument change accounts for the observed candidate/refusal delta, while the reports do not establish a
-per-file cause for each of the five remaining refusals. The c69 report explicitly identifies
-`zerowidth.fits/array_0` as rewritten but not verified; its public summary does not enumerate the five
-`cannot_compress` filenames or error strings. The existing `measure-repro-evidence` artifact (ID `13048345852`,
-416,909 bytes, not expired) is the raw-row evidence source; prior artifact downloads ended in `EOF`, so those five
-rows remain uninspected. No tool or baseline change is made on an incomplete per-row attribution.
+per-file cause for each of the five remaining refusals. The c69 report identifies
+`zerowidth.fits/array_0` as rewritten but not verified; its public summary did not enumerate the five
+`cannot_compress` filenames or error strings. The `measure-repro-evidence` artifact at that time (ID `13048345852`,
+416,909 bytes, not expired) did not expose the five diagnostic rows in its public report; prior artifact downloads
+ended in `EOF`. No tool or baseline change was made on that incomplete attribution at the time. The owner-specified
+independent evidence bundle later supplied the full identities/errors used by the v2 baseline below.
 
 The following published-versus-measured differences were already present in the `e18d84d` report, before that
 instrument change, and remain identical at `385e0cb` and `c69d25e`; they are not caused by the current common
@@ -84,13 +85,84 @@ instrument change, and remain identical at `385e0cb` and `c69d25e`; they are not
   1.68→1.6538774233025468; render pages 173→168. The historical 173-page sample path list/per-file rows were
   not retained, so the old selection cannot be reconstructed.
 - Five Zopfli cells remain unavailable, not mismatched: `sample_files` (published 150), median (0.15), Q1 (0.14),
-  Q3 (2.81), and positive share (91). The historical 150-file path list/per-file rows were not retained; no new
-  sample is substituted.
+  Q3 (2.81), and positive share (91). The historical 150-file path list/per-file rows were not retained; at that
+  stage, no replacement sample had been introduced.
 
-The reports remain red evidence, not permission to alter published baselines, corpus, thresholds, or required
-status. Exact reports: `e18d84d` [comment `6541884360`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6541884360),
+These pre-v2 reports remain red historical evidence. The owner-authorized v2 baseline below changes neither the
+primary corpus, formulas, precision policy, thresholds, requiredness, nor FITS/PDF admission decisions. Exact
+historical reports: `e18d84d` [comment `6541884360`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6541884360),
 `385e0cb` [comment `6541976402`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6541976402), and `c69d25e`
-[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319).
+[comment `6545555319`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545555319). The later docs-head source
+run [41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100) is also retained as a red
+pre-v2 result; it is provenance for, not verification of, the new baseline.
+
+### Owner-authorized `measure-repro-2026-10-31-v2` — hosted verification pending
+
+The versioned target is `.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json`, ID
+`measure-repro-2026-10-31-v2` (SHA-256
+`a0e72c0be19f5c633254038c207ec02222157300d81c3d37091549b18286c925`). Its provenance is hosted source run
+[41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100) at source SHA
+`4cfbac074d7f8f315d8c56f04da58ec16fcc4e99`, plus the owner-specified independent evidence bundle at Git blob
+`f6479aa2bc1c89123bb0ef92de1ebd8285ac31d2` (ZIP SHA-256
+`48ff4673a871feda4989244cecfd46ba66b459765a4c59d07a9e2c871940a024`, 202,953 bytes; listed member checksums
+verified). The pinned source-manifest digest is
+`57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5` for 2,386 files in seven full-SHA-pinned
+archives. The old published tables and red run remain explicit errata; neither is silently relabelled as the v2
+result.
+
+The pre-v2 printed cells retained as historical errata include FITS Tier-2 candidates/exact files 153/151,
+25 `no_image` refusals, two exact failures, and selected-byte total 17.8 MiB; PDF mean 0.39%, positive share 68%,
+qpdf mean 1.68%, and 173 rendered pages; and the unavailable historical Zopfli sample (150 files, median 0.15%,
+Q1 0.14%, Q3 2.81%, 91% positive). The old Zopfli membership and per-file rows were not retained. These values
+remain in the historical audit tables and the v2 JSON's `historical_errata`; the `pdf-zopfli-small-v1` sample is
+not their replacement.
+
+The v2 target retains the same corpus, instrument formulas, render seed, and numeric thresholds. Its recorded FITS
+result is 178 files, 148 Tier-2 candidates, 147 exact, 30 refusals (25 `no_image`, 5 `cannot_compress`), and one
+exact failure, `astropy/astropy/io/fits/tests/data/zerowidth.fits` (`array_0`; input SHA-256
+`0d5da9f724e2641bc81cce6b4c9c1c2baa0c64feb6a74344b19be10f1dc18ff4`). Selected input bytes are Astropy 675 KiB,
+CFITSIO 678 KiB, Drizzlepac 14.8 MiB, Reproject 1.8 MiB, total 17.9 MiB. The refusal diagnostics are full and
+identity-pinned:
+
+| Corpus | Manifest path | Input SHA-256 | Complete error string |
+| --- | --- | --- | --- |
+| `astropy` | `astropy/astropy/io/fits/tests/data/comp.fits` | `bc675bd775cd526ba49e971e5257c302877efcc3aa89a9a893c10f43b0ce525a` | `comp.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_float_bzero.fits` | `3c43b44b3f1a8385f70e3ef059d8a4fa70492e034dd0cd2e5733beb9a35e4275` | `compressed_float_bzero.fits: expected exactly one ZNAXIS2 for literal source NAXIS2 card; found 0` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_image.fits` | `dc08d7fd26b8ebda5db7d9fbd3dc889999face95fbe42af6a6f418735d3e04fe` | `compressed_image.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/double_ext.fits` | `7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc` | `double_ext.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/o4sp040b0_raw.fits` | `db9e48493b226276064fe1d33f1c60025ed466aa74516572f20717d28f70185b` | `o4sp040b0_raw.fits: candidate contains '' cards with values different from the source` |
+
+These are pre-candidate refusals, not new admitted candidates; diagnostic identity checks do not alter 148/147
+counts. The retained exact failure remains `zerowidth.fits/array_0`; it is not hidden or reclassified.
+
+The PDF display cells are mean 0.42% at two printed decimals, positive share 69%, qpdf mean 1.65%, and 168
+rendered pages. The v2 comparison retains unrounded run values and JSONL rows; the owner-supplied source report's
+unrounded mean/qpdf mean were 0.42168367731371126% and 1.6538774233025468%. An independent local Python 3.11.2
+replay recomputed 0.4216836773137112% and 1.6538774233025473%; each matches the unchanged published precision.
+The complete local baseline comparator passed under Python 3.11.2, but the final hosted Python 3.12 run has
+not yet been performed, so no final green status is claimed. Any hosted mismatch must be reported exactly; the
+baseline is not to be retuned.
+
+The new Zopfli protocol is `pdf-zopfli-small-v1`, not a reproduction of the unavailable historical 150-file
+sample. From the same 1,009 accepted PDFs, it selects the 878 inputs of at most 65,536 bytes after global
+`manifest_path` sorting, then uses `random.Random(57).sample(..., 150)` and retains sample order. It pins
+`zopfli==0.4.3` and calls `zopfli.zlib.compress` with `verbose=0`, `numiterations=15`, `blocksplitting=1`,
+`blocksplittinglast=0`, `blocksplittingmax=15`, and `gzip_mode=0`; each eligible stream is inflated, recompressed,
+inflated again, and required to roundtrip exactly. For each file the gain is
+`100 * (flate_bytes - zopfli_after) / whole_file_bytes`, where `zopfli_after` sums
+`min(original_encoded_length, zopfli_encoded_length)` over the same eligible Flate streams. The identity and assets
+are pinned: accepted identity SHA-256
+`4e47f97c143ac7af584875dc6c81f890a59358d89d565c11eb0cd17686a031af`; sample path digest
+`91425c7fecbd4e86504efa855695f8add2c5e77d47307373f2b83b97941be61a`; sample identity digest
+`0360aa7d5178a0aa7acc9f16c30a31a6be67024802a4af88ab69e77e31318ac2`; sample-manifest SHA-256
+`09d30c558869e0887b9e83690f78a3ed05e0618a6fa34b91770157385553ae01`; result-JSONL SHA-256
+`736e1c8e2fd293153aaad7924709c7476d69ec6c2e5077b1da6875ace966fa09`. It has 150 rows, 576 exact roundtrips,
+zero errors, 137 positive/13 zero/0 negative files; median 0.1706970680653952%, Q1 0.16264570344266738%,
+Q3 1.9785271611044837%, mean 1.3268557692507912%, positive share 91.33333333333333%, maximum
+12.518280198888563%. Stream-byte totals are 734,998 Flate, 698,990 Zopfli-encoded, and 698,978 after the
+per-stream minimum; sample input bytes total 1,345,005. All 150 paths/input hashes and per-file integer results
+are versioned in the baseline assets. The independent local Python 3.11.2 replay matched the sample-manifest and
+results JSONL byte-for-byte; the hosted Python 3.12 final run remains pending and must be a separate execution.
 
 ## Historical PR #84 execution status — 2026-10-30
 

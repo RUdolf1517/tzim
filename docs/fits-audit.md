@@ -629,3 +629,44 @@ source-to-Tzim direct comparisons passed 14/14 and Tzim `funpack -C` comparisons
 establish full FITS admission or alter the ROSAT permission boundary. No FITS source, reference-candidate,
 Tzim-candidate, or reconstructed payload bytes were uploaded. The separate #57 rule remains applied and refused
 after measurement; no FITS policy or baseline was changed.
+
+## 16. Current whole-corpus `measure-repro` baseline — hosted verification pending
+
+The owner authorized a new, explicitly versioned comparison baseline, `measure-repro-2026-10-31-v2`, after the
+pre-v2 discrepancies were documented. The target is the [versioned baseline JSON](../.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json).
+This is a baseline change with provenance, not a silent overwrite: the old published tables and red hosted run [41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100)
+remain historical errata. Provenance also includes the owner-specified independent evidence bundle at Git blob
+`f6479aa2bc1c89123bb0ef92de1ebd8285ac31d2` (ZIP SHA-256
+`48ff4673a871feda4989244cecfd46ba66b459765a4c59d07a9e2c871940a024`). The fixed source-manifest digest remains
+`57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5` across 2,386 files; full-SHA corpus pins,
+selection, formulas and thresholds are unchanged.
+
+This is the four-repository FITS test corpus measured by `fits-measure.py`, not the separate 14-product fixed #59
+survey in §15. The v2 FITS target is 178 files: 148 Tier-2 candidates, 147 exact-verified files, 30 refusals
+(25 `no_image`, 5 `cannot_compress`), and one retained exact-verification failure. The displayed Tier-2 table
+cells are median 21.9%, Q1 18.2%, Q3 27.3%, mean 20.0%, 85% positive and maximum 72.7%; Tier 1 remains zero on
+all 147 exact files. Selected input bytes are Astropy 675 KiB, CFITSIO 678 KiB, Drizzlepac 14.8 MiB, Reproject
+1.8 MiB, total 17.9 MiB. The verified manifest fixes the exact input-byte totals; full-precision measurement
+rows remain in the run evidence. These diagnostics do not change the candidate denominator.
+
+All five `cannot_compress` refusals are publicly identity-pinned with the complete error text:
+
+| Corpus | Manifest path | Input SHA-256 | Complete error string |
+| --- | --- | --- | --- |
+| `astropy` | `astropy/astropy/io/fits/tests/data/comp.fits` | `bc675bd775cd526ba49e971e5257c302877efcc3aa89a9a893c10f43b0ce525a` | `comp.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_float_bzero.fits` | `3c43b44b3f1a8385f70e3ef059d8a4fa70492e034dd0cd2e5733beb9a35e4275` | `compressed_float_bzero.fits: expected exactly one ZNAXIS2 for literal source NAXIS2 card; found 0` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_image.fits` | `dc08d7fd26b8ebda5db7d9fbd3dc889999face95fbe42af6a6f418735d3e04fe` | `compressed_image.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/double_ext.fits` | `7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc` | `double_ext.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/o4sp040b0_raw.fits` | `db9e48493b226276064fe1d33f1c60025ed466aa74516572f20717d28f70185b` | `o4sp040b0_raw.fits: candidate contains '' cards with values different from the source` |
+
+The exact-verification failure remains
+`astropy/astropy/io/fits/tests/data/zerowidth.fits/array_0`, input SHA-256
+`0d5da9f724e2641bc81cce6b4c9c1c2baa0c64feb6a74344b19be10f1dc18ff4`. It is not converted into a refusal or
+hidden from the baseline.
+
+The complete local v2 comparator passed in Python 3.11.2. The final hosted Python 3.12 run is still pending, so
+this section does not announce a final green status; any hosted discrepancy must be reported without retuning the
+baseline. A green v2 comparison will mean reproduction of these disclosed measurements, not zero failures, full
+FITS/PDF admission, or a change to #59. The separate fixed #59 result remains **applied only for opt-in
+`--fits-tile`** at c69 14/14; full FITS admission remains open, and the ROSAT permission/no-payload boundary is
+unchanged.

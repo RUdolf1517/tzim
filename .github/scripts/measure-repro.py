@@ -1,38 +1,30 @@
 #!/usr/bin/env python3
-"""#72: re-run the two published measurements and say whether they reproduce.
+"""#72: reproduce the disclosed `measure-repro-2026-10-31-v2` baseline.
 
-The audits' numbers (`docs/fits-audit.md` §8.2, `docs/pdf-audit.md` §9.2) were
-produced by `fits-measure.py` and `pdf-measure.py` on a corpus that was fetched by
-hand and recorded only as repository plus commit. A commit pins the exact bytes of a
-*checkout*; it does not pin the bytes of a `codeload` tarball, which GitHub builds
-on demand. So the run below is anchored differently:
+The two audits (`docs/fits-audit.md` §8.2 and `docs/pdf-audit.md` §9.2) began
+with manually fetched inputs. `measure-fetch.py` now downloads seven archives at
+full commit SHAs, checks the pinned archive SHA-256 values, records every selected
+file's size and SHA-256, and verifies the extracted tree before measurement. The
+expected source-manifest digest is also pinned by the versioned baseline JSON.
 
-1. `measure-fetch.py` downloads seven archives **at full commit SHAs**, checks each
-   against a recorded SHA-256, extracts them, and writes a manifest with a size and
-   a SHA-256 for every one of the 2 386 corpus files. Those hashes are a **new
-   baseline**: the first ones anybody recorded for these URLs. They are not claimed
-   to be the archives the original runs used, and no check here would detect it if
-   GitHub's tarball generation changed its mind, because the first checksum is the
-   only one that exists.
-2. `measure-fetch.py --verify` re-hashes the tree immediately before the run. The
-   measurement scripts take `--manifest` and refuse to read a file it does not name.
-3. This script runs both instruments, computes the aggregates **again from their
-   JSONL**, and compares them with the published table. A re-run is a new
-   measurement: the comparison says whether the published numbers are still what
-   the instruments produce, and every refusal, exclusion and verification failure is
-   kept in the evidence either way. Nothing is dropped to make a number match.
-4. Everything — environment, versions, script hashes, command lines, both JSONLs,
-   both logs, the aggregates, this script's own verdict — is written under `--out`
-   with a `SHA256SUMS` over it.
+This check compares the resulting measurements with one explicit, versioned
+baseline. The old published values and the red source run 41239337100 remain
+historical errata; v2 does not silently rewrite them or claim that they reproduced.
+The new `pdf-zopfli-small-v1` sample is likewise a new sample, not a reproduction of
+the old unavailable Zopfli sample. Its ordered manifest and every per-file result
+are versioned and compared exactly.
 
-Usage (inside a venv that has `numpy`, `astropy`, `pikepdf`, `pymupdf`):
+A green status means this disclosed v2 baseline reproduced—including its known
+FITS refusals and the retained `zerowidth.fits/array_0` exact failure. It does not
+mean zero measurement failures, full FITS/PDF admission, or a release approval.
+Every refusal, exclusion, identity mismatch, roundtrip error, and verification
+failure remains in the evidence; none is dropped to make a number match.
+
+Everything—manifest, environment, script hashes, commands, measurements,
+per-file diagnostics, comparisons and logs—is written under `--out` with a
+`SHA256SUMS` file.
 
     python3 .github/scripts/measure-repro.py --root /tmp/corpus --out /tmp/evidence
-
-Exit status is 0 only when the manifest verified, both instruments ran, every
-aggregate matched the publication and no new class of verification failure appeared.
-A red result is the interesting outcome; it is a question for the owner, not
-something to wave through.
 """
 
 from __future__ import annotations
@@ -51,167 +43,21 @@ from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-#: The published result-table values, transcribed without treating them as ground
-#: truth. Rows that were rounded in the audits are compared at exactly the number
-#: of places printed in that table; integer percentages are rounded to whole points.
-PUBLISHED = {
-    "fits": dict(
-        where="docs/fits-audit.md §8.2",
-        files=178,
-        tier2_candidates=153,
-        tier2_files=151,
-        tier1_files=151,
-        tier2_median=21.9,
-        tier2_q1=17.4,
-        tier2_q3=27.3,
-        tier2_mean=19.1,
-        tier2_share_positive=83,
-        tier2_maximum=72.7,
-        tier1_median=0.00,
-        tier1_q1=0.00,
-        tier1_q3=0.00,
-        tier1_mean=0.00,
-        tier1_share_positive=0,
-        tier1_maximum=0.00,
-        bytes_before=17827200,
-        bytes_after=13343040,
-        bytes_pct=25.2,
-        exact_failure_count=2,
-        by_corpus={"reproject": 41.9, "cfitsio": 42.1, "drizzlepac": 21.9, "astropy": -7.1},
-        by_status={"refused": 25, "tier2": 153},
-        refusals={"no_image": 25},
-        exact_failure_set=[
-            ("double_ext.fits", "keyword_EXTNAMX"),
-            ("zerowidth.fits", "array_0"),
-        ],
-    ),
-    "pdf": dict(
-        where="docs/pdf-audit.md §9.2",
-        files=2208,
-        accepted=1009,
-        already_optimal=723,
-        refused=476,
-        accepted_pct=45.7,
-        already_optimal_pct=32.7,
-        refused_pct=21.6,
-        median=0.08,
-        q1=0.00,
-        q3=0.09,
-        mean=0.39,
-        share_positive=68,
-        maximum=29.7,
-        qpdf_median=0.59,
-        qpdf_q1=-0.07,
-        qpdf_q3=1.94,
-        qpdf_mean=1.68,
-        qpdf_share_positive=60,
-        qpdf_maximum=96.4,
-        repack_median=20.1,
-        repack_mean=17.0,
-        qpdf_check_passed=1009,
-        render_files=140,
-        render_pages=173,
-        render_differences=0,
-        by_status={"accepted": 1009, "already_optimal": 723, "refused": 476},
-        refusals={
-            "damaged": 40,
-            "encrypted": 21,
-            "filter_chain": 15,
-            "incremental_update": 332,
-            "no_header": 15,
-            "not_deflate": 2,
-            "not_inflatable": 4,
-            "signed": 3,
-            "stream_too_short": 2,
-            "truncated": 2,
-            "unreadable": 40,
-        },
-    ),
-}
+#: Versioned expected values and provenance are data, not silently maintained
+#: transcriptions in this script. A green run means this exact baseline reproduced;
+#: known refusals and the retained exact failure remain part of the baseline.
+BASELINE_DIR = os.path.join(HERE, "measure-repro-baselines")
+BASELINE_PATH = os.path.join(BASELINE_DIR, "measure-repro-2026-10-31-v2.json")
+with open(BASELINE_PATH, encoding="utf-8") as _baseline_file:
+    BASELINE = json.load(_baseline_file)
 
-#: Decimal places visible in each published output table. These explicit scales
-#: replace the previous blanket 0.051 allowance, which admitted differences not
-#: consistent with the table's stated precision.
-PUBLISHED_PRECISION = {
-    "fits": {
-        "tier2_median": 1,
-        "tier2_q1": 1,
-        "tier2_q3": 1,
-        "tier2_mean": 1,
-        "tier2_share_positive": 0,
-        "tier2_maximum": 1,
-        "tier1_median": 2,
-        "tier1_q1": 2,
-        "tier1_q3": 2,
-        "tier1_mean": 2,
-        "tier1_share_positive": 0,
-        "tier1_maximum": 2,
-        "bytes_pct": 1,
-        "by_corpus": 1,
-    },
-    "pdf": {
-        "accepted_pct": 1,
-        "already_optimal_pct": 1,
-        "refused_pct": 1,
-        "median": 2,
-        "q1": 2,
-        "q3": 2,
-        "mean": 2,
-        "share_positive": 0,
-        "maximum": 1,
-        "qpdf_median": 2,
-        "qpdf_q1": 2,
-        "qpdf_q3": 2,
-        "qpdf_mean": 2,
-        "qpdf_share_positive": 0,
-        "qpdf_maximum": 1,
-        "repack_median": 1,
-        "repack_mean": 1,
-    },
-}
-
-#: Source-corpus rows printed in the audits. Byte values use the displayed unit
-#: and precision; they are compared to the new manifest's selected-file bytes,
-#: not to archive sizes.
-PUBLISHED_INPUT_CORPORA = {
-    "fits": dict(
-        where="docs/fits-audit.md §8.1",
-        unit="MiB",
-        places=1,
-        rows={
-            "astropy": dict(repo="astropy/astropy", commit_prefix="dbbf2acd6dbb", files=34, bytes=780, unit="KiB", places=0),
-            "cfitsio": dict(repo="heasarc/cfitsio", commit_prefix="113781d8aa44", files=5, bytes=60, unit="KiB", places=0),
-            "drizzlepac": dict(repo="spacetelescope/drizzlepac", commit_prefix="635834581ea2", files=123, bytes=3.3, unit="MiB", places=1),
-            "reproject": dict(repo="astropy/reproject", commit_prefix="9dddd419111a", files=16, bytes=2.0, unit="MiB", places=1),
-        },
-        total=dict(files=178, bytes=17.8, unit="MiB", places=1),
-    ),
-    "pdf": dict(
-        where="docs/pdf-audit.md §9.1",
-        unit="MB",
-        places=1,
-        rows={
-            "pdfjs": dict(repo="mozilla/pdf.js", commit_prefix="606bd6a4e138", files=1009, bytes=124.7, unit="MB", places=1),
-            "qpdf": dict(repo="qpdf/qpdf", commit_prefix="4eba95899886", files=630, bytes=38.2, unit="MB", places=1),
-            "verapdf": dict(repo="veraPDF/veraPDF-corpus", commit_prefix="bb75f4f0073d", files=569, bytes=8.9, unit="MB", places=1),
-        },
-        total=dict(files=2208, bytes=171.9, unit="MB", places=1),
-    ),
-}
-
-#: The audit also printed this secondary 150-file Zopfli sample. Its historical
-#: per-file sample membership was not retained, so the old summary cannot be
-#: relabeled as a rerun; the comparison reports it as unavailable rather than
-#: guessing a new sample or silently omitting the table row.
-PUBLISHED_ZOPFLI = dict(
-    sample_files=150,
-    median=0.15,
-    q1=0.14,
-    q3=2.81,
-    share_positive=91,
-    precision=dict(median=2, q1=2, q3=2, share_positive=0),
-)
-
+BASELINE_ID = BASELINE["baseline_id"]
+PUBLISHED = BASELINE["published_tables"]
+PUBLISHED_PRECISION = BASELINE["published_precision"]
+PUBLISHED_INPUT_CORPORA = BASELINE["published_input_corpora"]
+PUBLISHED_ZOPFLI = BASELINE["pdf_zopfli"]
+SAMPLE_BASELINE_PATH = os.path.join(BASELINE_DIR, PUBLISHED_ZOPFLI["sample_manifest_file"])
+RESULTS_BASELINE_PATH = os.path.join(BASELINE_DIR, PUBLISHED_ZOPFLI["results_file"])
 
 def sha256_of(path):
     digest = hashlib.sha256()
@@ -352,10 +198,100 @@ def fits_aggregates(rows):
         refusals=refusals,
         exact_failure_count=len(failed),
         exact_failures=[
-            dict(path=os.path.basename(r["path"]), why=r.get("why"), corpus=r["corpus"])
+            dict(
+                path=os.path.basename(r.get("path", r.get("manifest_path", ""))),
+                manifest_path=r.get("manifest_path"),
+                manifest_sha256=r.get("manifest_sha256"),
+                why=r.get("why"),
+                corpus=r["corpus"],
+            )
             for r in failed
         ],
     )
+
+
+def _fits_manifest_path(row, root=None):
+    """Return the stable manifest path used in the public diagnostics."""
+    path = row.get("manifest_path")
+    if path:
+        return path
+    if row.get("path") and root:
+        return os.path.relpath(row["path"], root)
+    return row.get("path")
+
+
+def fits_refusal_diagnostics(rows, root=None):
+    """All `cannot_compress` rows with corpus/path/input identity and full error."""
+    diagnostics = []
+    for row in rows:
+        if row.get("status") != "refused" or row.get("reason") != "cannot_compress":
+            continue
+        diagnostics.append(dict(
+            corpus=row.get("corpus"),
+            manifest_path=_fits_manifest_path(row, root),
+            input_sha256=row.get("manifest_sha256"),
+            error=row.get("err"),
+        ))
+    return sorted(diagnostics, key=lambda item: (item.get("corpus") or "", item.get("manifest_path") or ""))
+
+
+def compare_fits_refusal_diagnostics(rows, root=None):
+    """Require the complete five-row refusal identity/error set, without changing counts."""
+    expected = sorted(
+        BASELINE["fits_refusal_diagnostics"],
+        key=lambda item: (item.get("corpus") or "", item.get("manifest_path") or ""),
+    )
+    observed = fits_refusal_diagnostics(rows, root)
+    verdict = "reproduced" if observed == expected else "DIFFERENT"
+    problems = []
+    if verdict != "reproduced":
+        if len(observed) != len(expected):
+            problems.append("cannot_compress refusal diagnostic count differs: expected %d, measured %d"
+                            % (len(expected), len(observed)))
+        expected_by_path = {row.get("manifest_path"): row for row in expected}
+        observed_by_path = {row.get("manifest_path"): row for row in observed}
+        for path in sorted(set(expected_by_path) | set(observed_by_path)):
+            want = expected_by_path.get(path)
+            got = observed_by_path.get(path)
+            if want is None:
+                problems.append("unexpected cannot_compress refusal diagnostic: %s" % got)
+            elif got is None:
+                problems.append("missing cannot_compress refusal diagnostic: %s" % path)
+            elif got != want:
+                problems.append("cannot_compress diagnostic differs for %s: expected %s, measured %s"
+                                % (path, want, got))
+    comparison = dict(expected=expected, measured=observed, verdict=verdict)
+    return comparison, problems
+
+
+def fits_exact_failure_diagnostics(rows, root=None):
+    """Stable identity/hash for every tier2 candidate that failed exact verification."""
+    failures = []
+    for row in rows:
+        if row.get("status") != "tier2" or row.get("exact") is not False:
+            continue
+        failures.append(dict(
+            corpus=row.get("corpus"),
+            manifest_path=_fits_manifest_path(row, root),
+            input_sha256=row.get("manifest_sha256"),
+            why=row.get("why"),
+        ))
+    return sorted(failures, key=lambda item: (item.get("corpus") or "", item.get("manifest_path") or ""))
+
+
+def compare_fits_exact_failure_diagnostics(rows, root=None):
+    """Keep the explicit zerowidth/array_0 failure visible and identity-pinned."""
+    expected = sorted(
+        BASELINE["fits_exact_failures"],
+        key=lambda item: (item.get("corpus") or "", item.get("manifest_path") or ""),
+    )
+    observed = fits_exact_failure_diagnostics(rows, root)
+    verdict = "reproduced" if observed == expected else "DIFFERENT"
+    if verdict == "reproduced":
+        problems = []
+    else:
+        problems = ["FIT exact-failure identities differ: expected %s, measured %s" % (expected, observed)]
+    return dict(expected=expected, measured=observed, verdict=verdict), problems
 
 
 def pdf_aggregates(rows):
@@ -630,26 +566,6 @@ def compare_input_corpora(corpora, family):
     return rows, problems
 
 
-def compare_zopfli_side_table():
-    """Return explicit unavailable rows; historical sample membership is absent."""
-    rows = []
-    for metric in ("sample_files", "median", "q1", "q3", "share_positive"):
-        published = PUBLISHED_ZOPFLI[metric]
-        rows.append(dict(
-            metric="zopfli.%s" % metric,
-            published=published,
-            measured=None,
-            verdict="unavailable",
-            note=(
-                "the historical 150-file sample path list and per-file rows were not retained; "
-                "a new sample would be a new measurement, not a reproduction"
-            ),
-        ))
-    return rows, [
-        "zopfli side-table sample is unavailable: the original 150-file path list and per-file rows were not retained"
-    ]
-
-
 def environment():
     """Versions, hashes and identities. Everything a re-run needs to be a re-run."""
     env = dict(
@@ -663,8 +579,16 @@ def environment():
         started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         packages={},
         scripts={},
+        baseline=dict(
+            id=BASELINE_ID,
+            file=os.path.relpath(BASELINE_PATH, HERE),
+            sha256=sha256_of(BASELINE_PATH),
+            zopfli_sample_sha256=PUBLISHED_ZOPFLI["sample_manifest_sha256"],
+            zopfli_results_sha256=PUBLISHED_ZOPFLI["results_jsonl_sha256"],
+            zopfli_calibration_aggregate_sha256=PUBLISHED_ZOPFLI["calibration_aggregate_sha256"],
+        ),
     )
-    for name in ("numpy", "astropy", "pikepdf", "pymupdf", "fitz"):
+    for name in ("numpy", "astropy", "pikepdf", "pymupdf", "fitz", "zopfli"):
         try:
             module = __import__(name)
         except ImportError:
@@ -688,7 +612,7 @@ def environment():
                 env["packages"].setdefault(name, {})["mupdf"] = version
         except Exception:  # noqa: BLE001
             pass
-    for name in ("measure-fetch.py", "fits-measure.py", "pdf-measure.py", "measure-repro.py"):
+    for name in ("measure-fetch.py", "fits-measure.py", "pdf-measure.py", "pdf-zopfli-measure.py", "measure-repro.py"):
         path = os.path.join(HERE, name)
         if os.path.exists(path):
             env["scripts"][name] = sha256_of(path)
@@ -717,7 +641,27 @@ def environment():
 
 def write_summary(path, payload):
     lines = ["# Measurement re-run", ""]
-    lines.append("Run at %s, new measurement, not the published one." % payload["environment"]["started"])
+    baseline = payload.get("baseline", {})
+    provenance = BASELINE["provenance"]
+    source_run = provenance["hosted_source_run"]
+    evidence = provenance["independent_evidence_bundle"]
+    lines.append("Run at %s; this is a new measurement against a versioned baseline." %
+                 payload["environment"]["started"])
+    lines.append("")
+    lines.append("## Active comparison baseline")
+    lines.append("")
+    lines.append("- Baseline ID: `%s`." % baseline.get("baseline_id", BASELINE_ID))
+    baseline_file = payload["environment"].get("baseline", {})
+    lines.append("- Baseline JSON: `%s` (SHA-256 `%s`)." % (
+        baseline_file.get("file"), baseline_file.get("sha256")))
+    lines.append("- Provenance: hosted source run [%s](%s) at `%s`, plus owner-specified independent evidence Git blob `%s` (ZIP SHA-256 `%s`, %s bytes)." % (
+        source_run["run_id"], source_run["url"], provenance["source_head"],
+        evidence["git_blob"], evidence["sha256"], evidence["bytes"]))
+    lines.append("- Source manifest digest: `%s` (2,386 fixed, full-SHA-pinned inputs)." %
+                 BASELINE["manifest_digest"])
+    lines.append("- A green check means reproduction of this disclosed v2 baseline, including its known refusals and retained FITS exact failure. It does **not** mean zero measurement failures or full FITS/PDF admission.")
+    lines.append("- Historical pre-v2 values and red hosted run `%s` remain errata/history; this run does not relabel that run as green." %
+                 source_run["run_id"])
     lines.append("")
     lines.append("Manifest: `%s`, %d files, digest `%s`." % (
         payload.get("manifest_path", "?"),
@@ -729,11 +673,11 @@ def write_summary(path, payload):
         block = payload.get("input_corpus_comparison", {}).get(family)
         if not block:
             continue
-        lines.append("## Input corpus table — published in %s" % PUBLISHED_INPUT_CORPORA[family]["where"])
+        lines.append("## Input corpus table — current baseline in %s" % PUBLISHED_INPUT_CORPORA[family]["where"])
         lines.append("")
-        lines.append("Selected-file sizes from the new manifest are compared in the units and precision printed in the audit; archive bytes are not substituted.")
+        lines.append("Selected-file sizes from the verified manifest are compared in the audit's printed units and precision; archive bytes are not substituted.")
         lines.append("")
-        lines.append("| corpus metric | published | measured | verdict |")
+        lines.append("| corpus metric | baseline | measured | verdict |")
         lines.append("| --- | --- | --- | --- |")
         for row in block["rows"]:
             lines.append("| `%s` | %s | %s | %s |" % (
@@ -747,9 +691,9 @@ def write_summary(path, payload):
         block = payload.get(name)
         if not block:
             continue
-        lines.append("## %s — published in %s" % (name.upper(), PUBLISHED[name]["where"]))
+        lines.append("## %s — current baseline in %s" % (name.upper(), PUBLISHED[name]["where"]))
         lines.append("")
-        lines.append("| metric | published | measured | verdict |")
+        lines.append("| metric | baseline | measured | verdict |")
         lines.append("| --- | --- | --- | --- |")
         for row in block["comparison"]:
             lines.append("| `%s` | %s | %s | %s |" % (
@@ -771,13 +715,60 @@ def write_summary(path, payload):
             lines.append("Refusals, by reason: %s." % ", ".join(
                 "`%s` %d" % (k, v) for k, v in sorted(refusals.items(), key=lambda kv: -kv[1])))
             lines.append("")
-        failures = block["aggregates"].get("exact_failures")
-        if failures:
-            lines.append("Files the instrument rewrote and could not verify:")
+        if name == "fits":
+            diagnostics = block.get("refusal_diagnostics", {}).get("measured", [])
+            lines.append("### FITS `cannot_compress` refusal diagnostics")
             lines.append("")
-            for failure in failures:
-                lines.append("* `%s` (`%s`, `%s`)" % (failure["path"], failure["corpus"], failure["why"]))
+            lines.append("These are refusals before a candidate is accepted; the diagnostic table does not add candidates or alter the 148/147 counts.")
             lines.append("")
+            lines.append("| corpus | manifest path | input SHA-256 | complete error string |")
+            lines.append("| --- | --- | --- | --- |")
+            for item in diagnostics:
+                lines.append("| `%s` | `%s` | `%s` | `%s` |" % (
+                    item.get("corpus"), item.get("manifest_path"),
+                    item.get("input_sha256"), item.get("error")))
+            if not diagnostics:
+                lines.append("| — | — | — | no refusal diagnostics were emitted |")
+            lines.append("")
+            failure_details = block.get("exact_failure_diagnostics", {}).get("measured", [])
+            lines.append("Retained exact-verification failures:")
+            lines.append("")
+            if failure_details:
+                for item in failure_details:
+                    lines.append("- `%s` (`%s`, input SHA-256 `%s`): `%s`." % (
+                        item.get("manifest_path"), item.get("corpus"),
+                        item.get("input_sha256"), item.get("why")))
+            else:
+                lines.append("- No exact-failure row was emitted; this is compared against the versioned expected set.")
+            lines.append("")
+        else:
+            zopfli = block.get("zopfli") or {}
+            aggregate = zopfli.get("aggregate") or {}
+            if aggregate:
+                dist = aggregate.get("distribution") or {}
+                lines.append("### New Zopfli sample — `pdf-zopfli-small-v1` (not the historical sample)")
+                lines.append("")
+                lines.append("- Selection: %s accepted rows, %s eligible at bytes ≤ 65,536, %s sampled; selected input bytes %s." % (
+                    aggregate.get("accepted_rows"), aggregate.get("eligible_rows"),
+                    aggregate.get("sample_files"), aggregate.get("selected_bytes")))
+                lines.append("- Membership digests: path `%s`; path+input-SHA `%s`; sample-manifest SHA-256 `%s`; result-JSONL SHA-256 `%s`." % (
+                    aggregate.get("sample_path_sha256"), aggregate.get("sample_identity_sha256"),
+                    aggregate.get("sample_manifest_sha256"), aggregate.get("results_jsonl_sha256")))
+                lines.append("- Streams: %s roundtrips; errors %s; positive/zero/negative rows %s/%s/%s." % (
+                    aggregate.get("roundtrip_streams"), aggregate.get("errors"),
+                    aggregate.get("positive_rows"), aggregate.get("zero_rows"),
+                    aggregate.get("negative_rows")))
+                lines.append("- Per-file gain distribution, retaining instrument precision: median `%s`, Q1 `%s`, Q3 `%s`, mean `%s`, positive share `%s%%`, maximum `%s%%`." % (
+                    dist.get("median"), dist.get("q1"), dist.get("q3"), dist.get("mean"),
+                    dist.get("share_positive"), dist.get("maximum")))
+                lines.append("- Stream-byte totals: Flate `%s`; Zopfli encoded `%s`; per-stream-minimum `%s`." % (
+                    aggregate.get("total_flate_bytes"), aggregate.get("total_zopfli_encoded_bytes"),
+                    aggregate.get("total_zopfli_after")))
+                lines.append("- All 150 ordered paths/input hashes and exact per-file results are versioned in `%s` and `%s`; the run's measured copies are `pdf-zopfli-small-v1-sample.json` and `pdf-zopfli-small-v1-results.jsonl` in the evidence bundle." % (
+                    os.path.relpath(SAMPLE_BASELINE_PATH, os.path.dirname(path)),
+                    os.path.relpath(RESULTS_BASELINE_PATH, os.path.dirname(path))))
+                lines.append("- This is a new sample, not a reproduction of the old unavailable 150-file sample; the historical 0.15/0.14/2.81/91% cells and red run remain preserved as errata.")
+                lines.append("")
     details = os.path.join(os.path.dirname(path), "metric-definitions.md")
     if os.path.exists(details):
         lines.append("## Source-row definitions for the disputed metrics")
@@ -793,12 +784,12 @@ def write_summary(path, payload):
         "downloaded. The corpus is still the four FITS test-data sets and three PDF corpora — no "
         "archive survey FITS product and no PDF from the toolchain that produced the published PDFs "
         "— so the open gaps in §8.1 and §9.1 are unchanged, and the eight-per-cent and fifteen-per-cent "
-        "figures are the old thresholds reported, not a new pre-registration."
+        "figures are the old thresholds reported, not a new pre-registration. This comparison does not "
+        "close #57, #59, full-format admission, or any release gate."
     )
     lines.append("")
-    with open(path, "w") as handle:
+    with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
-
 
 def _relative(path, root):
     try:
@@ -943,11 +934,11 @@ def write_metric_sources(out, root, fits_rows, pdf_rows, render_rows, render_sam
     # pdf-measure.py; the file itself is `render-sample.jsonl` in this bundle.
     formulas = [
         "# Metric definitions and source rows", "",
-        "Old published values are comparison targets, not assumed ground truth. The original audit bundles did not preserve per-file JSONL or a render-sample list, so historical source rows cannot be reconstructed from those rounded table entries alone.", "",
+        "The active comparison target is versioned as `measure-repro-2026-10-31-v2`; the pre-v2 published table and its red hosted run remain explicit historical errata. The original audit bundles did not preserve per-file JSONL or the old render-sample list, so those historical source rows cannot be reconstructed from rounded table entries alone.", "",
         "## Published-table comparison", "",
         "Counts and refusal/status maps compare exactly. Displayed percentages and byte totals are rounded half-up to the number of decimal places printed in the specific published cell; there is no global 0.051 tolerance. Whole-percent shares compare after rounding to an integer percentage. Corpus rows also compare the repository and displayed commit prefix. Byte rows compare selected uncompressed file bytes from the new manifest in the audit's displayed unit, not codeload archive sizes.", "",
         "The FITS Tier 1 row is recomputed for exact-verified Tier 2 rows using each row's `tier1_pct`; its denominator is the number of those exact rows with a Tier 1 value. FITS `tier2_candidates` is the full writer-candidate count; `tier2_files` is the exact-verified subset used by the table. The two exact-failure identities and all refused counts remain explicit.", "",
-        "The PDF Zopfli side-table sample is marked unavailable: the historical 150 paths and per-file outputs were not retained. No new sample is substituted and the published row is not described as reproduced.", "",
+        "The historical Zopfli 150-file table remains unavailable and is not reproduced. The separate `pdf-zopfli-small-v1` is a new small-file sample with its own versioned 150-path/input-SHA manifest, exact per-file results, and strict row-by-row comparison; it does not replace or relabel the historical sample.", "",
         "## FITS median by corpus: astropy and reproject", "",
         "Per-file value: `pct = 100 * (bytes - new_size) / bytes`. Include only `status=tier2` rows with `exact=true`; the median denominator is the number of such rows in the corpus. For an even count, median is the arithmetic mean of the two middle sorted values. Quartiles use the instrument's nearest-rank indices `int(p*n)`.", "",
         "The earlier re-run used the upper middle element for even counts. That is a different definition, not a change in input data. The source rows in `fits-corpus-median-source.jsonl` include all Tier 2 rows from these two corpora, including failed-verification rows (marked `included_in_median=false`).", "",
@@ -1055,8 +1046,13 @@ def main():
 
     payload = dict(
         note=(
-            "A re-run is a new measurement. The comparison below says whether the published numbers are "
-            "still what the instruments produce; it does not promote this run to the publication."
+            "A run is compared with one disclosed, versioned baseline. A green result means that baseline "
+            "reproduced; it does not mean zero known failures or full FITS/PDF admission."
+        ),
+        baseline=dict(
+            baseline_id=BASELINE_ID,
+            provenance=BASELINE["provenance"],
+            historical_errata=BASELINE["historical_errata"],
         ),
         manifest_path=manifest,
         manifest_digest=recorded["manifest_digest"],
@@ -1071,6 +1067,11 @@ def main():
         commands=[],
         problems=[],
     )
+    if recorded.get("manifest_digest") != BASELINE["manifest_digest"]:
+        payload["problems"].append(
+            "source manifest digest differs from baseline %s: expected %s, measured %s"
+            % (BASELINE_ID, BASELINE["manifest_digest"], recorded.get("manifest_digest"))
+        )
 
     input_comparison = {}
     for family in ("fits", "pdf"):
@@ -1125,10 +1126,48 @@ def main():
         comparison, problems = compare(
             aggregates, PUBLISHED[name], precision=PUBLISHED_PRECISION[name]
         )
+        fits_refusal_check = None
+        fits_failure_check = None
+        if name == "fits":
+            fits_refusal_check, refusal_problems = compare_fits_refusal_diagnostics(rows, args.root)
+            fits_failure_check, failure_problems = compare_fits_exact_failure_diagnostics(rows, args.root)
+            problems.extend(refusal_problems)
+            problems.extend(failure_problems)
+            comparison.extend([
+                dict(metric="fits.cannot_compress_diagnostics", published=5,
+                     measured=len(fits_refusal_check["measured"]),
+                     verdict=fits_refusal_check["verdict"]),
+                dict(metric="fits.exact_failure_diagnostics", published=1,
+                     measured=len(fits_failure_check["measured"]),
+                     verdict=fits_failure_check["verdict"]),
+            ])
+        zopfli_result = None
         if name == "pdf":
-            zopfli_rows, zopfli_problems = compare_zopfli_side_table()
-            comparison.extend(zopfli_rows)
-            problems.extend(zopfli_problems)
+            zopfli_argv = [
+                sys.executable,
+                os.path.join(HERE, "pdf-zopfli-measure.py"),
+                "--root", args.root,
+                "--manifest", manifest,
+                "--pdf-jsonl", jsonl,
+                "--out", args.out,
+            ]
+            payload["commands"].append(" ".join(zopfli_argv))
+            zopfli_completed, zopfli_elapsed = run(
+                zopfli_argv, os.path.join(args.out, "pdf-zopfli-small-v1-stdout.txt")
+            )
+            zopfli_comparison_path = os.path.join(
+                args.out, "pdf-zopfli-small-v1-comparison.json"
+            )
+            if os.path.exists(zopfli_comparison_path):
+                with open(zopfli_comparison_path, encoding="utf-8") as handle:
+                    zopfli_result = json.load(handle)
+                comparison.extend(zopfli_result.get("comparison", []))
+                problems.extend(zopfli_result.get("problems", []))
+            else:
+                zopfli_problem = "pdf-zopfli-measure.py produced no comparison JSON"
+                problems.append(zopfli_problem)
+            if zopfli_completed.returncode != 0 and not (zopfli_result or {}).get("problems"):
+                problems.append("pdf-zopfli-measure.py exited %d" % zopfli_completed.returncode)
         payload[name] = dict(
             aggregates=aggregates,
             comparison=comparison,
@@ -1136,6 +1175,17 @@ def main():
             elapsed_seconds=round(elapsed, 1),
             rows=len(rows),
         )
+        if name == "fits":
+            payload[name]["refusal_diagnostics"] = fits_refusal_check
+            payload[name]["exact_failure_diagnostics"] = fits_failure_check
+        if name == "pdf" and zopfli_result is not None:
+            payload[name]["zopfli"] = dict(
+                aggregate=zopfli_result.get("aggregate"),
+                comparison=zopfli_result.get("comparison", []),
+                problems=zopfli_result.get("problems", []),
+                sample_manifest=zopfli_result.get("sample_manifest"),
+            )
+            payload[name]["zopfli_elapsed_seconds"] = round(zopfli_elapsed, 1)
         payload["problems"].extend("%s: %s" % (name, problem) for problem in problems)
         if name == "pdf":
             if aggregates.get("render_errors"):
@@ -1192,7 +1242,7 @@ def main():
     if payload["problems"]:
         for problem in payload["problems"]:
             print("!! %s" % problem)
-        print("::error::the run does not reproduce the publication; see summary.md")
+        print("::error::the run does not reproduce baseline %s; see summary.md" % BASELINE_ID)
         return 1
     return 0
 

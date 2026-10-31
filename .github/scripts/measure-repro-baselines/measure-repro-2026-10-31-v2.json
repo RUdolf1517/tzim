@@ -1,0 +1,560 @@
+{
+  "authorized_decision": {
+    "date": "2026-10-31",
+    "scope": "owner-authorized explicit historical errata and a new versioned reproducible baseline; no corpus, threshold, admission, or requiredness changes"
+  },
+  "baseline_id": "measure-repro-2026-10-31-v2",
+  "fits_exact_failures": [
+    {
+      "corpus": "astropy",
+      "input_sha256": "0d5da9f724e2641bc81cce6b4c9c1c2baa0c64feb6a74344b19be10f1dc18ff4",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/zerowidth.fits",
+      "why": "array_0"
+    }
+  ],
+  "fits_refusal_diagnostics": [
+    {
+      "corpus": "astropy",
+      "error": "comp.fits: candidate contains 'TFORM1' cards with values different from the source",
+      "input_sha256": "bc675bd775cd526ba49e971e5257c302877efcc3aa89a9a893c10f43b0ce525a",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/comp.fits"
+    },
+    {
+      "corpus": "astropy",
+      "error": "compressed_float_bzero.fits: expected exactly one ZNAXIS2 for literal source NAXIS2 card; found 0",
+      "input_sha256": "3c43b44b3f1a8385f70e3ef059d8a4fa70492e034dd0cd2e5733beb9a35e4275",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/compressed_float_bzero.fits"
+    },
+    {
+      "corpus": "astropy",
+      "error": "compressed_image.fits: candidate contains 'TFORM1' cards with values different from the source",
+      "input_sha256": "dc08d7fd26b8ebda5db7d9fbd3dc889999face95fbe42af6a6f418735d3e04fe",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/compressed_image.fits"
+    },
+    {
+      "corpus": "astropy",
+      "error": "double_ext.fits: candidate contains 'TFORM1' cards with values different from the source",
+      "input_sha256": "7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/double_ext.fits"
+    },
+    {
+      "corpus": "astropy",
+      "error": "o4sp040b0_raw.fits: candidate contains '' cards with values different from the source",
+      "input_sha256": "db9e48493b226276064fe1d33f1c60025ed466aa74516572f20717d28f70185b",
+      "manifest_path": "astropy/astropy/io/fits/tests/data/o4sp040b0_raw.fits"
+    }
+  ],
+  "historical_errata": {
+    "historical_red_run_id": "41239337100",
+    "note": "The pre-v2 tables and red run are preserved in history. The v2 check does not claim the old values were reproduced and does not erase their failure.",
+    "pre_v2_published_input_corpora": {
+      "fits": {
+        "places": 1,
+        "rows": {
+          "astropy": {
+            "bytes": 780,
+            "commit_prefix": "dbbf2acd6dbb",
+            "files": 34,
+            "places": 0,
+            "repo": "astropy/astropy",
+            "unit": "KiB"
+          },
+          "cfitsio": {
+            "bytes": 60,
+            "commit_prefix": "113781d8aa44",
+            "files": 5,
+            "places": 0,
+            "repo": "heasarc/cfitsio",
+            "unit": "KiB"
+          },
+          "drizzlepac": {
+            "bytes": 3.3,
+            "commit_prefix": "635834581ea2",
+            "files": 123,
+            "places": 1,
+            "repo": "spacetelescope/drizzlepac",
+            "unit": "MiB"
+          },
+          "reproject": {
+            "bytes": 2.0,
+            "commit_prefix": "9dddd419111a",
+            "files": 16,
+            "places": 1,
+            "repo": "astropy/reproject",
+            "unit": "MiB"
+          }
+        },
+        "total": {
+          "bytes": 17.8,
+          "files": 178,
+          "places": 1,
+          "unit": "MiB"
+        },
+        "unit": "MiB",
+        "where": "docs/fits-audit.md \u00a78.1"
+      },
+      "pdf": {
+        "places": 1,
+        "rows": {
+          "pdfjs": {
+            "bytes": 124.7,
+            "commit_prefix": "606bd6a4e138",
+            "files": 1009,
+            "places": 1,
+            "repo": "mozilla/pdf.js",
+            "unit": "MB"
+          },
+          "qpdf": {
+            "bytes": 38.2,
+            "commit_prefix": "4eba95899886",
+            "files": 630,
+            "places": 1,
+            "repo": "qpdf/qpdf",
+            "unit": "MB"
+          },
+          "verapdf": {
+            "bytes": 8.9,
+            "commit_prefix": "bb75f4f0073d",
+            "files": 569,
+            "places": 1,
+            "repo": "veraPDF/veraPDF-corpus",
+            "unit": "MB"
+          }
+        },
+        "total": {
+          "bytes": 171.9,
+          "files": 2208,
+          "places": 1,
+          "unit": "MB"
+        },
+        "unit": "MB",
+        "where": "docs/pdf-audit.md \u00a79.1"
+      }
+    },
+    "pre_v2_published_precision": {
+      "fits": {
+        "by_corpus": 1,
+        "bytes_pct": 1,
+        "tier1_maximum": 2,
+        "tier1_mean": 2,
+        "tier1_median": 2,
+        "tier1_q1": 2,
+        "tier1_q3": 2,
+        "tier1_share_positive": 0,
+        "tier2_maximum": 1,
+        "tier2_mean": 1,
+        "tier2_median": 1,
+        "tier2_q1": 1,
+        "tier2_q3": 1,
+        "tier2_share_positive": 0
+      },
+      "pdf": {
+        "accepted_pct": 1,
+        "already_optimal_pct": 1,
+        "maximum": 1,
+        "mean": 2,
+        "median": 2,
+        "q1": 2,
+        "q3": 2,
+        "qpdf_maximum": 1,
+        "qpdf_mean": 2,
+        "qpdf_median": 2,
+        "qpdf_q1": 2,
+        "qpdf_q3": 2,
+        "qpdf_share_positive": 0,
+        "refused_pct": 1,
+        "repack_mean": 1,
+        "repack_median": 1,
+        "share_positive": 0
+      }
+    },
+    "pre_v2_published_tables": {
+      "fits": {
+        "by_corpus": {
+          "astropy": -7.1,
+          "cfitsio": 42.1,
+          "drizzlepac": 21.9,
+          "reproject": 41.9
+        },
+        "by_status": {
+          "refused": 25,
+          "tier2": 153
+        },
+        "bytes_after": 13343040,
+        "bytes_before": 17827200,
+        "bytes_pct": 25.2,
+        "exact_failure_count": 2,
+        "exact_failure_set": [
+          [
+            "double_ext.fits",
+            "keyword_EXTNAMX"
+          ],
+          [
+            "zerowidth.fits",
+            "array_0"
+          ]
+        ],
+        "files": 178,
+        "refusals": {
+          "no_image": 25
+        },
+        "tier1_files": 151,
+        "tier1_maximum": 0.0,
+        "tier1_mean": 0.0,
+        "tier1_median": 0.0,
+        "tier1_q1": 0.0,
+        "tier1_q3": 0.0,
+        "tier1_share_positive": 0,
+        "tier2_candidates": 153,
+        "tier2_files": 151,
+        "tier2_maximum": 72.7,
+        "tier2_mean": 19.1,
+        "tier2_median": 21.9,
+        "tier2_q1": 17.4,
+        "tier2_q3": 27.3,
+        "tier2_share_positive": 83,
+        "where": "docs/fits-audit.md \u00a78.2"
+      },
+      "pdf": {
+        "accepted": 1009,
+        "accepted_pct": 45.7,
+        "already_optimal": 723,
+        "already_optimal_pct": 32.7,
+        "by_status": {
+          "accepted": 1009,
+          "already_optimal": 723,
+          "refused": 476
+        },
+        "files": 2208,
+        "maximum": 29.7,
+        "mean": 0.39,
+        "median": 0.08,
+        "q1": 0.0,
+        "q3": 0.09,
+        "qpdf_check_passed": 1009,
+        "qpdf_maximum": 96.4,
+        "qpdf_mean": 1.68,
+        "qpdf_median": 0.59,
+        "qpdf_q1": -0.07,
+        "qpdf_q3": 1.94,
+        "qpdf_share_positive": 60,
+        "refusals": {
+          "damaged": 40,
+          "encrypted": 21,
+          "filter_chain": 15,
+          "incremental_update": 332,
+          "no_header": 15,
+          "not_deflate": 2,
+          "not_inflatable": 4,
+          "signed": 3,
+          "stream_too_short": 2,
+          "truncated": 2,
+          "unreadable": 40
+        },
+        "refused": 476,
+        "refused_pct": 21.6,
+        "render_differences": 0,
+        "render_files": 140,
+        "render_pages": 173,
+        "repack_mean": 17.0,
+        "repack_median": 20.1,
+        "share_positive": 68,
+        "where": "docs/pdf-audit.md \u00a79.2"
+      }
+    },
+    "unavailable_historical_zopfli": {
+      "median": 0.15,
+      "precision": {
+        "median": 2,
+        "q1": 2,
+        "q3": 2,
+        "share_positive": 0
+      },
+      "q1": 0.14,
+      "q3": 2.81,
+      "sample_files": 150,
+      "share_positive": 91
+    }
+  },
+  "manifest_digest": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "pdf_zopfli": {
+    "accepted_identity_order": "global manifest_path ascending; each UTF-8 path, NUL, input SHA-256, LF",
+    "accepted_identity_sha256": "4e47f97c143ac7af584875dc6c81f890a59358d89d565c11eb0cd17686a031af",
+    "accepted_rows": 1009,
+    "calibration_aggregate_file": "pdf-zopfli-small-v1-aggregate.json",
+    "calibration_aggregate_sha256": "a84c791b4083296ad92cbbfef250b6fde7b5e2219b259e2609dc8763eb6ad65d",
+    "expected_aggregate": {
+      "blocksplitting": 1,
+      "blocksplittinglast": 0,
+      "blocksplittingmax": 15,
+      "distribution": {
+        "maximum": 12.518280198888563,
+        "mean": 1.3268557692507912,
+        "median": 0.1706970680653952,
+        "minimum": 0.0,
+        "n": 150,
+        "q1": 0.16264570344266738,
+        "q3": 1.9785271611044837,
+        "share_positive": 91.33333333333333
+      },
+      "eligible_rows": 878,
+      "errors": 0,
+      "gzip_mode": 0,
+      "numiterations": 15,
+      "package": "zopfli",
+      "protocol_id": "pdf-zopfli-small-v1",
+      "results_jsonl_sha256": "736e1c8e2fd293153aaad7924709c7476d69ec6c2e5077b1da6875ace966fa09",
+      "roundtrip_streams": 576,
+      "sample_files": 150,
+      "sample_identity_sha256": "0360aa7d5178a0aa7acc9f16c30a31a6be67024802a4af88ab69e77e31318ac2",
+      "sample_manifest_sha256": "09d30c558869e0887b9e83690f78a3ed05e0618a6fa34b91770157385553ae01",
+      "sample_path_sha256": "91425c7fecbd4e86504efa855695f8add2c5e77d47307373f2b83b97941be61a",
+      "selected_bytes": 1345005,
+      "total_flate_bytes": 734998,
+      "total_zopfli_after": 698978,
+      "total_zopfli_encoded_bytes": 698990,
+      "verbose": 0,
+      "version": "0.4.3",
+      "wrapper": "zopfli.zlib.compress"
+    },
+    "expected_counts": {
+      "negative_rows": 0,
+      "positive_rows": 137,
+      "zero_rows": 13
+    },
+    "historical_source_pdf_jsonl_sha256": "5a06e4713e7d533f641784a7c9bd49c69c3798b8e12d0bd93ecd4a35b8f5c8d7",
+    "note": "A new small-file comparator, not a reproduction of the historical unavailable sample.",
+    "protocol_id": "pdf-zopfli-small-v1",
+    "results_file": "pdf-zopfli-small-v1-results.jsonl",
+    "results_jsonl_sha256": "736e1c8e2fd293153aaad7924709c7476d69ec6c2e5077b1da6875ace966fa09",
+    "sample_manifest_file": "pdf-zopfli-small-v1-sample.json",
+    "sample_manifest_sha256": "09d30c558869e0887b9e83690f78a3ed05e0618a6fa34b91770157385553ae01"
+  },
+  "provenance": {
+    "hosted_source_run": {
+      "result": "failure against the pre-v2 published values; retained as historical erratum, not rewritten",
+      "run_id": "41239337100",
+      "url": "https://github.com/RUdolf1517/tzim/actions/runs/41239337100"
+    },
+    "independent_evidence_bundle": {
+      "bytes": 202953,
+      "git_blob": "f6479aa2bc1c89123bb0ef92de1ebd8285ac31d2",
+      "member_checksums": "all listed SHA256SUMS entries verified",
+      "sha256": "48ff4673a871feda4989244cecfd46ba66b459765a4c59d07a9e2c871940a024"
+    },
+    "source_head": "4cfbac074d7f8f315d8c56f04da58ec16fcc4e99",
+    "source_manifest_sha256": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5"
+  },
+  "published_input_corpora": {
+    "fits": {
+      "places": 1,
+      "rows": {
+        "astropy": {
+          "bytes": 675,
+          "commit_prefix": "dbbf2acd6dbb",
+          "files": 34,
+          "places": 0,
+          "repo": "astropy/astropy",
+          "unit": "KiB"
+        },
+        "cfitsio": {
+          "bytes": 678,
+          "commit_prefix": "113781d8aa44",
+          "files": 5,
+          "places": 0,
+          "repo": "heasarc/cfitsio",
+          "unit": "KiB"
+        },
+        "drizzlepac": {
+          "bytes": 14.8,
+          "commit_prefix": "635834581ea2",
+          "files": 123,
+          "places": 1,
+          "repo": "spacetelescope/drizzlepac",
+          "unit": "MiB"
+        },
+        "reproject": {
+          "bytes": 1.8,
+          "commit_prefix": "9dddd419111a",
+          "files": 16,
+          "places": 1,
+          "repo": "astropy/reproject",
+          "unit": "MiB"
+        }
+      },
+      "total": {
+        "bytes": 17.9,
+        "files": 178,
+        "places": 1,
+        "unit": "MiB"
+      },
+      "unit": "MiB",
+      "where": "docs/fits-audit.md \u00a716 \u2014 measure-repro-2026-10-31-v2 input corpus"
+    },
+    "pdf": {
+      "places": 1,
+      "rows": {
+        "pdfjs": {
+          "bytes": 124.7,
+          "commit_prefix": "606bd6a4e138",
+          "files": 1009,
+          "places": 1,
+          "repo": "mozilla/pdf.js",
+          "unit": "MB"
+        },
+        "qpdf": {
+          "bytes": 38.2,
+          "commit_prefix": "4eba95899886",
+          "files": 630,
+          "places": 1,
+          "repo": "qpdf/qpdf",
+          "unit": "MB"
+        },
+        "verapdf": {
+          "bytes": 8.9,
+          "commit_prefix": "bb75f4f0073d",
+          "files": 569,
+          "places": 1,
+          "repo": "veraPDF/veraPDF-corpus",
+          "unit": "MB"
+        }
+      },
+      "total": {
+        "bytes": 171.9,
+        "files": 2208,
+        "places": 1,
+        "unit": "MB"
+      },
+      "unit": "MB",
+      "where": "docs/pdf-audit.md \u00a714 \u2014 measure-repro-2026-10-31-v2 input corpus"
+    }
+  },
+  "published_precision": {
+    "fits": {
+      "by_corpus": 1,
+      "bytes_pct": 1,
+      "tier1_maximum": 2,
+      "tier1_mean": 2,
+      "tier1_median": 2,
+      "tier1_q1": 2,
+      "tier1_q3": 2,
+      "tier1_share_positive": 0,
+      "tier2_maximum": 1,
+      "tier2_mean": 1,
+      "tier2_median": 1,
+      "tier2_q1": 1,
+      "tier2_q3": 1,
+      "tier2_share_positive": 0
+    },
+    "pdf": {
+      "accepted_pct": 1,
+      "already_optimal_pct": 1,
+      "maximum": 1,
+      "mean": 2,
+      "median": 2,
+      "q1": 2,
+      "q3": 2,
+      "qpdf_maximum": 1,
+      "qpdf_mean": 2,
+      "qpdf_median": 2,
+      "qpdf_q1": 2,
+      "qpdf_q3": 2,
+      "qpdf_share_positive": 0,
+      "refused_pct": 1,
+      "repack_mean": 1,
+      "repack_median": 1,
+      "share_positive": 0
+    }
+  },
+  "published_tables": {
+    "fits": {
+      "by_corpus": {
+        "astropy": -21.4,
+        "cfitsio": 42.1,
+        "drizzlepac": 21.9,
+        "reproject": 41.9
+      },
+      "by_status": {
+        "refused": 30,
+        "tier2": 148
+      },
+      "bytes_after": 13121280,
+      "bytes_before": 17648640,
+      "bytes_pct": 25.7,
+      "exact_failure_count": 1,
+      "exact_failure_set": [
+        [
+          "zerowidth.fits",
+          "array_0"
+        ]
+      ],
+      "files": 178,
+      "refusals": {
+        "cannot_compress": 5,
+        "no_image": 25
+      },
+      "tier1_files": 147,
+      "tier1_maximum": 0.0,
+      "tier1_mean": 0.0,
+      "tier1_median": 0.0,
+      "tier1_q1": 0.0,
+      "tier1_q3": 0.0,
+      "tier1_share_positive": 0,
+      "tier2_candidates": 148,
+      "tier2_files": 147,
+      "tier2_maximum": 72.7,
+      "tier2_mean": 20.0,
+      "tier2_median": 21.9,
+      "tier2_q1": 18.2,
+      "tier2_q3": 27.3,
+      "tier2_share_positive": 85,
+      "where": "docs/fits-audit.md \u00a716 \u2014 measure-repro-2026-10-31-v2"
+    },
+    "pdf": {
+      "accepted": 1009,
+      "accepted_pct": 45.7,
+      "already_optimal": 723,
+      "already_optimal_pct": 32.7,
+      "by_status": {
+        "accepted": 1009,
+        "already_optimal": 723,
+        "refused": 476
+      },
+      "files": 2208,
+      "maximum": 29.7,
+      "mean": 0.42,
+      "median": 0.08,
+      "q1": 0.0,
+      "q3": 0.09,
+      "qpdf_check_passed": 1009,
+      "qpdf_maximum": 96.4,
+      "qpdf_mean": 1.65,
+      "qpdf_median": 0.59,
+      "qpdf_q1": -0.07,
+      "qpdf_q3": 1.94,
+      "qpdf_share_positive": 60,
+      "refusals": {
+        "damaged": 40,
+        "encrypted": 21,
+        "filter_chain": 15,
+        "incremental_update": 332,
+        "no_header": 15,
+        "not_deflate": 2,
+        "not_inflatable": 4,
+        "signed": 3,
+        "stream_too_short": 2,
+        "truncated": 2,
+        "unreadable": 40
+      },
+      "refused": 476,
+      "refused_pct": 21.6,
+      "render_differences": 0,
+      "render_files": 140,
+      "render_pages": 168,
+      "repack_mean": 17.0,
+      "repack_median": 20.1,
+      "share_positive": 69,
+      "where": "docs/pdf-audit.md \u00a714 \u2014 measure-repro-2026-10-31-v2"
+    }
+  }
+}

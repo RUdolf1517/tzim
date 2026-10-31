@@ -421,3 +421,51 @@ was **applied and returned refused after measurement**. Tzim optimized 12/21 row
 and mean 0.09019490508048468%, neither a substitute for the registered metric. Qpdf candidate-check failures and
 registered render differences were both zero. No PDF baseline, threshold, #80 authorization, default or repack
 policy changed.
+
+## 14. Current whole-corpus `measure-repro` baseline — hosted verification pending
+
+The owner authorized the explicitly versioned `measure-repro-2026-10-31-v2` comparison after the old published
+figures disagreed with the full-SHA replay. The target is the [versioned baseline JSON](../.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json).
+This is a new, provenance-bound comparison, not a silent rewrite: the original §9 table and red hosted source run
+[41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100) remain historical errata. The baseline
+uses the same 2,386-file, seven-archive manifest (`57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5`)
+and unchanged PDF selection, formulas, render seed, and numeric thresholds. Provenance also includes the
+owner-specified independent evidence bundle at Git blob `f6479aa2bc1c89123bb0ef92de1ebd8285ac31d2`, ZIP SHA-256
+`48ff4673a871feda4989244cecfd46ba66b459765a4c59d07a9e2c871940a024`.
+
+The pre-v2 printed values remain historical: faithful mean 0.39%, positive share 68%, qpdf mean 1.68%, and 173
+rendered pages. The v2 displayed cells are faithful mean 0.42% at two decimal places, positive share 69%, qpdf
+mean 1.65%, and 168 rendered pages (140 sample files; zero differences). The run retains the full-precision row
+JSONL and exact recomputed aggregates; it does not change the old audit table in §9 or claim that the historical
+render sample can be reconstructed. The old qpdf and forbidden-repack measurements also remain as originally
+reported; they do not change #57's registered `faithful_pct` rule.
+
+### New small-file sample: `pdf-zopfli-small-v1`
+
+This is a new sample, not a reproduction of the historical unavailable 150-file Zopfli sample whose printed
+median 0.15%, Q1 0.14%, Q3 2.81% and 91% positive share remain historical errata. The selection uses the same
+1,009 accepted PDF rows, filters to `bytes <= 65,536` (878 eligible), globally sorts by `manifest_path`, then
+uses `random.Random(57).sample(eligible, 150)` and preserves the returned sample order. Package `zopfli==0.4.3`
+is hash-pinned. The encoder is `zopfli.zlib.compress` with `verbose=0`, `numiterations=15`, `blocksplitting=1`,
+`blocksplittinglast=0`, `blocksplittingmax=15`, and `gzip_mode=0`.
+
+Every selected PDF must open, every in-scope stream must inflate and compress without error, and decompressing the
+candidate must exactly equal the inflated source. The per-stream output uses
+`min(original_encoded_length, zopfli_encoded_length)`; per-file gain is
+`100 * (sum_original_stream_bytes - sum_per_stream_minimum) / whole_file_bytes`. Missing, extra, reordered,
+substituted, changed or error-bearing rows fail exact positional comparison. The baseline publishes every one of
+the 150 sample paths and input hashes and all per-file integer results, and pins the accepted-identity digest,
+sample path/identity digests, sample-manifest SHA-256, and result-JSONL SHA-256.
+
+Calibration target: 150 files, 576 exact stream roundtrips, zero errors, 137 positive/13 zero/0 negative files;
+median 0.1706970680653952%, Q1 0.16264570344266738%, Q3 1.9785271611044837%, mean 1.3268557692507912%,
+positive share 91.33333333333333%, maximum 12.518280198888563%. Input bytes total 1,345,005; Flate stream
+bytes total 734,998; Zopfli encoded bytes total 698,990; per-stream-minimum bytes total 698,978. Exact path,
+identity and asset hashes, options, full rows and integer totals are recorded in the [measurement status](measurement-status.md)
+and under `.github/scripts/measure-repro-baselines/`.
+
+The complete independent local replay passed under Python 3.11.2 and reproduced the sample-manifest and results
+JSONL byte-for-byte. Final hosted Python 3.12 verification is pending; no final green claim is made here. Any
+hosted mismatch must be reported exactly rather than used to retune the baseline. This comparison does not replace
+or modify the original PDF audit decision: #57 remains refused after measurement, #80 remains non-default and
+opt-in, repacking remains forbidden, and full PDF admission remains open.
