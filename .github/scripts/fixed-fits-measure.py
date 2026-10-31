@@ -1982,6 +1982,10 @@ def main() -> int:
         "fitsverify_source": {
             "cfitsio_commit": "113781d8aa442cf8d3c27295d9084674b8b039f2",
             "cfitsio_archive_sha256": "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e",
+            "cfitsio_funpack_patch": ".github/scripts/cfitsio-preserve-trailing-blank.patch",
+            "cfitsio_funpack_patch_sha256": hashlib.sha256(
+                Path(__file__).resolve().with_name("cfitsio-preserve-trailing-blank.patch").read_bytes()
+            ).hexdigest(),
             "version_line": next((
                 line.strip()
                 for row in rows
@@ -2007,7 +2011,7 @@ def main() -> int:
         "# Fixed #59 FITS measurement",
         "",
         f"- Frozen 14-product source manifest SHA-256: `{manifest_sha}`",
-        f"- Environment: Python `{sys.version.split()[0]}`, NumPy `{aggregate['numpy_version']}`, Astropy `{aggregate['astropy_version']}`; CFITSIO commit `{aggregate['fitsverify_source']['cfitsio_commit']}` (archive SHA-256 `{aggregate['fitsverify_source']['cfitsio_archive_sha256']}`).",
+        f"- Environment: Python `{sys.version.split()[0]}`, NumPy `{aggregate['numpy_version']}`, Astropy `{aggregate['astropy_version']}`; CFITSIO commit `{aggregate['fitsverify_source']['cfitsio_commit']}` (archive SHA-256 `{aggregate['fitsverify_source']['cfitsio_archive_sha256']}`); pinned `funpack -C` terminal-blank patch SHA-256 `{aggregate['fitsverify_source']['cfitsio_funpack_patch_sha256']}`.",
         f"- Existing two-tier instrument SHA-256: `{aggregate['existing_two_tier_script_sha256']}`; exact reference-candidate generation and check commands/results are retained in the rows/logs.",
         f"- Fetch statuses: `{json.dumps(aggregate['fetch_status_counts'], sort_keys=True)}`",
         f"- Measurement statuses: `{json.dumps(aggregate['measurement_status_counts'], sort_keys=True)}`",
