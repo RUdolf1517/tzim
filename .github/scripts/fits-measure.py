@@ -180,13 +180,15 @@ def _copy_range(source_stream, destination_stream, start, end):
 
 
 def _repair_compressed_header(source_header, candidate_header, product_id):
-    """Rebuild only header metadata; retain every original card and its order literally.
+    """Rebuild header metadata while retaining every original literal card.
 
     Original structural cards are represented by their FITS tiled-image `Z*`
     counterparts. Their complete 80-byte images are moved without parsing or
     normalizing any field. Other original cards, including duplicate COMMENT,
-    HISTORY, blank, CHECKSUM and DATASUM cards, are replayed in source order.
-    Missing/ambiguous source cards are errors, never silently filtered.
+    HISTORY, blank, CHECKSUM and DATASUM cards, are replayed in source order. If
+    Astropy omitted an otherwise unambiguous source user card, restore its exact
+    raw image; a same-key card with a different value remains a hard error.
+    Missing/ambiguous structural mappings are never silently filtered.
     """
     source_cards, _source_padding = _header_cards(source_header)
     candidate_cards, candidate_padding = _header_cards(candidate_header)
@@ -225,37 +227,43 @@ def _repair_compressed_header(source_header, candidate_header, product_id):
         if _is_image_structural_card(keyword):
             raise RuntimeError(f"{product_id}: no exact tiled-image mapping for structural card {keyword}")
 
-        # All untransformed source cards must still be present. Astropy may
-        # reformat EXTNAME and scaling cards; those are matched only when their
-        # parsed values agree, then restored as exact source card images.
-        match = next(
-            (
-                index for index, candidate_card in enumerate(candidate_cards[:-1])
-                if index not in replay_indices and candidate_card == source_card
-            ),
-            None,
-        )
-        if match is None and keyword in {"EXTNAME", "BSCALE", "BZERO"}:
+        available = [
+            (index, candidate_card)
+            for index, candidate_card in enumerate(candidate_cards[:-1])
+            if index not in replay_indices and _card_keyword(candidate_card) == keyword
+        ]
+        exact = [index for index, candidate_card in available if candidate_card == source_card]
+        match = exact[0] if exact else None
+        if match is None and available:
             try:
                 source_value = fits.Card.fromstring(source_card.decode("ascii")).value
             except Exception as error:
-                raise RuntimeError(f"{product_id}: cannot parse source {keyword} card: {error}") from error
-            matches = []
-            for index, candidate_card in enumerate(candidate_cards[:-1]):
-                if index in replay_indices or _card_keyword(candidate_card) != keyword:
-                    continue
+                raise RuntimeError(f"{product_id}: cannot parse source {keyword or 'blank'} card: {error}") from error
+            equivalent = []
+            for index, candidate_card in available:
                 try:
                     candidate_value = fits.Card.fromstring(candidate_card.decode("ascii")).value
                 except Exception:
                     continue
                 if candidate_value == source_value:
-                    matches.append(index)
-            if len(matches) == 1:
-                match = matches[0]
+                    equivalent.append(index)
+            if len(equivalent) == 1:
+                match = equivalent[0]
+            elif len(equivalent) > 1:
+                raise RuntimeError(
+                    f"{product_id}: ambiguous value-equivalent candidate cards for source keyword {keyword!r}"
+                )
+            elif available:
+                raise RuntimeError(
+                    f"{product_id}: candidate contains {keyword!r} cards with values different from the source"
+                )
+
         if match is None:
-            raise RuntimeError(
-                f"{product_id}: exact untransformed source card {keyword!r} is absent from the reference candidate"
-            )
+            # The writer omitted this non-structural source card. Restore its
+            # literal bytes; the strict post-funpack comparator still checks the
+            # resulting complete header and storage payload without exceptions.
+            replay_cards.append(source_card)
+            continue
         if match in replay_indices:
             raise RuntimeError(f"{product_id}: one candidate card ambiguously represents multiple source cards")
         candidate_cards[match] = source_card
@@ -267,13 +275,19 @@ def _repair_compressed_header(source_header, candidate_header, product_id):
         if index not in replay_indices
     ]
     end_card = candidate_cards[-1]
-    repaired = b"".join(prefix + replay_cards + [end_card]) + candidate_padding
-    if len(repaired) != len(candidate_header):
-        raise RuntimeError(
-            f"{product_id}: literal-card repair changed the candidate header record length "
-            f"({len(candidate_header)} -> {len(repaired)} bytes)"
-        )
-    return repaired
+    card_bytes = b"".join(prefix + replay_cards + [end_card])
+    required_records = ((len(card_bytes) + 2879) // 2880) * 2880
+    repaired_length = max(len(candidate_header), required_records)
+    if repaired_length % 2880:
+        raise RuntimeError(f"{product_id}: repaired FITS header length is not a whole FITS record")
+    padding_length = repaired_length - len(card_bytes)
+    if padding_length < 0:
+        raise RuntimeError(f"{product_id}: repaired FITS header exceeds its computed record length")
+    if repaired_length == len(candidate_header) and padding_length == len(candidate_padding):
+        padding = candidate_padding
+    else:
+        padding = b" " * padding_length
+    return card_bytes + padding
 
 
 def _preserve_reference_hdu_bytes(source_path, candidate_path, output_entries):

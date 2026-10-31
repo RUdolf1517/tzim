@@ -576,6 +576,42 @@ class FixedFitsMeasureTests(unittest.TestCase):
             )
             self.assertTrue(empty_exact, empty_reason)
 
+    def test_reference_repair_restores_a_missing_literal_user_card(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "missing-user-source.fits"
+            candidate = root / "missing-user-candidate.fits"
+            image = fits.PrimaryHDU(data=np.arange(256, dtype=np.int16).reshape(16, 16))
+            image.header["OBJECT"] = ("restored", "must be restored exactly")
+            image.header.append(("HISTORY", "literal source history"))
+            image.writeto(source, overwrite=True, checksum=True)
+
+            # Keep Astropy's initial physical header so the test can model one
+            # user card omitted by that writer before the raw-header repair.
+            with mock.patch.object(self.fits_measure, "_preserve_reference_hdu_bytes"):
+                self.fits_measure.rebuild(str(source), str(candidate))
+            source_layout = self.fits_measure._hdu_layouts(source)[0]
+            candidate_layout = self.fits_measure._hdu_layouts(candidate)[1]
+            source_bytes = source.read_bytes()
+            candidate_bytes = candidate.read_bytes()
+            source_header = source_bytes[source_layout[0] : source_layout[1]]
+            candidate_header = candidate_bytes[candidate_layout[0] : candidate_layout[1]]
+            candidate_cards, candidate_padding = self.fits_measure._header_cards(candidate_header)
+            missing = next(i for i, card in enumerate(candidate_cards) if self.fits_measure._card_keyword(card) == "OBJECT")
+            without_object = candidate_cards[:missing] + candidate_cards[missing + 1 :]
+            simulated_writer_header = b"".join(without_object) + b" " * len(candidate_padding)
+
+            repaired = self.fits_measure._repair_compressed_header(
+                source_header, simulated_writer_header, "missing-user-source.fits"
+            )
+            repaired_cards, _ = self.fits_measure._header_cards(repaired)
+            source_object = next(
+                card for card in self.fits_measure._header_cards(source_header)[0]
+                if self.fits_measure._card_keyword(card) == "OBJECT"
+            )
+            self.assertIn(source_object, repaired_cards)
+            self.assertEqual(len(repaired), len(candidate_header))
+
     def test_empty_tier_distribution_is_explicit_and_not_zero_percent(self) -> None:
         result = self.measure.distribution_stats([])
         self.assertEqual(result["n"], 0)

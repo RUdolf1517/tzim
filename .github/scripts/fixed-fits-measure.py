@@ -1790,6 +1790,14 @@ def main() -> int:
     audit_refusal_reasons = dict(sorted(Counter(
         row.get("reason", "unspecified") for row in audit_rows if row.get("status") == "refused"
     ).items()))
+    audit_refusal_details = [
+        {
+            "path": Path(row.get("path", "")).name,
+            "reason": row.get("reason", "unspecified"),
+            "error": row.get("err"),
+        }
+        for row in audit_rows if row.get("status") == "refused"
+    ]
     audit_tier2_rows = [row for row in audit_rows if row.get("status") == "tier2"]
     audit_gains = [
         row["pct"] for row in audit_tier2_rows
@@ -2008,6 +2016,7 @@ def main() -> int:
         f"- {distribution_text('Tier 2 Astropy reference-candidate gain', aggregate['existing_fits_measure_tier2_gain_pct'])}",
         f"- {distribution_text('Tier 1 existing-tile comparator gain', aggregate['existing_tile_tier1_comparator_gain_pct'])}",
         f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
+        f"- Refusal diagnostics: `{json.dumps(audit_refusal_details, sort_keys=True)}`",
         f"- External positive control: **{positive_control_summary['status']}** via pinned CFITSIO `fpack -g -q 0` → `fitsverify -l` → `funpack -C` → this same literal-header/storage-array comparator; integer-only fixture, no fpack float-array oracle.",
         f"- External negative control: **{negative_control.get('status', 'missing')}**; the deliberately changed `OBJECT` card candidate was expected to fail the literal-header gate, with HEASARC/funpack status `{negative_control.get('negative_fitsverify_status', 'missing')}`/`{negative_control.get('negative_funpack_returncode', 'missing')}`, classes `{json.dumps(negative_control.get('negative_gate_failure_class_counts', {}), sort_keys=True)}`, and payload touched=`{(negative_control.get('mutation') or {}).get('payload_bytes_touched')}`.",
         f"- Reference candidate HEASARC/funpack -C gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
