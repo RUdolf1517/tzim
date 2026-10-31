@@ -51,14 +51,24 @@ by hand.
 <details>
 <summary>Debian, Fedora, Windows</summary>
 
+Choose the commands for your architecture:
+
 ```bash
-# Debian / Ubuntu — tzim_arm64.deb on ARM
+# Debian / Ubuntu — x86_64
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim_amd64.deb
 sudo apt install ./tzim_amd64.deb
 
-# Fedora / RHEL — tzim.aarch64.rpm on ARM
+# Debian / Ubuntu — ARM64
+curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim_arm64.deb
+sudo apt install ./tzim_arm64.deb
+
+# Fedora / RHEL — x86_64
 curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim.x86_64.rpm
 sudo dnf install ./tzim.x86_64.rpm
+
+# Fedora / RHEL — ARM64
+curl -fsSL -O https://github.com/RUdolf1517/tzim/releases/latest/download/tzim.aarch64.rpm
+sudo dnf install ./tzim.aarch64.rpm
 ```
 
 Both packages install `man tzim` and completion for bash, zsh and fish.
