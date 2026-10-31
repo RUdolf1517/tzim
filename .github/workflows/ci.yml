@@ -152,6 +152,51 @@ jobs:
         shell: bash
         run: exit 1
 
+  # The JPEG help/table wording depends on the independent verifier feature,
+  # not merely on whether the codec was compiled. Run the public command in a
+  # codec-only build as well as in the default/all-features matrix above.
+  jpeg-codec-only:
+    name: test (--list-formats, jpeg codec-only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run feature-aware informational CLI regression
+        shell: bash
+        run: cargo test --locked --no-default-features --features jpeg --test cli
+
+  capabilities-builds:
+    name: capabilities (release-like and feature matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and capture capabilities from each configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/tzim-capabilities"
+          cargo build --release --locked
+          target/release/tzim --capabilities > "$RUNNER_TEMP/tzim-capabilities/default.json"
+          target/release/tzim --list-formats > "$RUNNER_TEMP/tzim-capabilities/default-formats.txt"
+          cargo run --locked --no-default-features --features jpeg -- --capabilities \
+            > "$RUNNER_TEMP/tzim-capabilities/codec-only.json"
+          cargo run --locked --all-features -- --capabilities \
+            > "$RUNNER_TEMP/tzim-capabilities/all-features.json"
+          python3 .github/scripts/check-capabilities.py \
+            --default "$RUNNER_TEMP/tzim-capabilities/default.json" \
+            --codec-only "$RUNNER_TEMP/tzim-capabilities/codec-only.json" \
+            --all-features "$RUNNER_TEMP/tzim-capabilities/all-features.json"
+          git rev-parse HEAD > "$RUNNER_TEMP/tzim-capabilities/head-sha.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capabilities-${{ github.sha }}
+          path: ${{ runner.temp }}/tzim-capabilities
+          if-no-files-found: warn
+          retention-days: 90
+
   # A script/docs-only change must not replay already reviewed FITS candidates.
   # The exact-SHA HEASARC residual gate has its own selected rows for that case;
   # this broader Astropy oracle runs when the FITS implementation or its oracle
@@ -681,9 +726,17 @@ jobs:
             cat /tmp/tzim-features.txt 2>/dev/null || echo "(the matrix step did not run)"
             echo
             echo "sections:"
-            llvm-size -A /tmp/tzim-full 2>/dev/null | head -12 || true
+            if command -v llvm-size >/dev/null 2>&1; then
+              llvm-size -A /tmp/tzim-full 2>/dev/null | head -40 || true
+            elif command -v size >/dev/null 2>&1; then
+              size -A /tmp/tzim-full 2>/dev/null | head -40 || true
+            else
+              echo "(no size utility found)"
+            fi
           } | tee /tmp/tzim-size-report.txt
-          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size report
+          # Keep the detailed measurements separate from the size-gate log so
+          # the failure report cannot overwrite the feature/section breakdown.
+          bash .github/scripts/ci-report.sh /tmp/tzim-size-report.txt size-report report
 
       - name: Publish failure log
         if: steps.size.outcome == 'failure'

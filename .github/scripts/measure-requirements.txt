@@ -45,6 +45,8 @@ pyerfa==2.0.1.5 \
     --hash=sha256:0e43c7194e3242083f2350b46c09fd4bf8ba1bcc0ebd1460b98fc47fe2389906
 pymupdf==2.0 \
     --hash=sha256:f92e8a7ae92c7b1cbffcbe8764166ab1234e0a37b07549f5951e7739241d34f0
+zopfli==0.4.3 \
+    --hash=sha256:769875152d0625c46707bcca57d4b2233fe653482067acd55fbf6ec525cb9bdc
 pymupdf-layout==2.0 \
     --hash=sha256:03ac486c796839eae5c46e910364ad524fb1e83c7dc34553e8e704939d0236a7
 pymupdf4llm==2.0 \

@@ -358,10 +358,11 @@ separately in [measurement status](measurement-status.md).
 The two branches in the original stage-1 plan are historical. The v0.14 handler is an opt-in implementation
 behind `--fits-tile` and the non-default `fits` feature, not full FITS admission. The initial #59 comparisons at
 `7b82c9ed` and the later `a1b27144` report used `funpack` without `-C`; their literal-header outcomes are
-superseded as instrument results and must not be treated as candidate content failures. The independent
-`fitsverify -l` results remain valid, including four TESS checksum-warning blockers. The corrected fixed-sample
-path is documented in §12; no source row is repaired, replaced, or selected by gain, and no owner protocol
-decision is pending. #70/full-admission questions remain separate from this measurement correction.
+superseded as instrument results and must not be treated as candidate-content failures. Their independent
+`fitsverify -l` findings, including the four TESS checksum-warning blockers, remain valid for those exact runs
+only. They are not the current disposition: the later c69 fixed-sample run in §15 passed all 14 reference
+candidates and applied #59 under its unchanged rule. No source row is repaired, replaced, or selected by gain;
+#70/full-admission questions remain separate from this measurement correction.
 
 ## 11. PR #84 follow-up — #59 fixed survey sample
 
@@ -372,8 +373,8 @@ its `funpack` invocations omitted `-C`. Its 14/14 round-trip result is preserved
 that the reference candidates have content failures. The later `a1b27144` report, comment
 [6520583133](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6520583133), used the same invalid default
 checksum mode and is superseded on the same narrow basis. Candidate hashes, source identities and independent
-`fitsverify -l` results remain useful; the four TESS checksum warnings remain blockers. See the corrected
-measurement protocol/results in §12.
+`fitsverify -l` results remain useful; the four TESS checksum warnings were blockers for that historical run.
+The later c69 disposition is recorded in §15; §12 preserves the intermediate protocol/run record.
 
 The historical 178-file audit in §8 remains unchanged. The separate, owner-fixed full-product sample from
 [comment `6498702204`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6498702204) ran at exact SHA
@@ -442,18 +443,15 @@ unchanged-Tzim array/header comparisons passed 14/14; Tzim-candidate `funpack` i
 unchanged rows. These results do **not** validate the Astropy reference candidates above and are not Tier-2
 gain results. No FITS input or candidate bytes were uploaded, and the ROSAT permission boundary was preserved.
 
-**No owner protocol decision is pending.** The earlier request above was based on an invalid default-checksum
-`funpack` comparison and is withdrawn. Continue the existing #59 protocol with `funpack -C` for every literal
-header comparison, require the external integer-only positive control through the same comparison path, and retain
-the original fixed rows and all negative controls. The four TESS `fitsverify -l` checksum warnings remain blockers;
-keep the registered threshold `not_applied` unless every required candidate gate passes. The corrected exact-SHA
-report and raw structured diagnostics are recorded in §12; no FITS bytes are uploaded.
+The owner request above, based on an invalid default-checksum `funpack` comparison, was withdrawn. This historical
+run retained the fixed rows and negative controls, and its disposition was not applied because its candidate gate
+did not pass. The later c69 exact-SHA run and applied disposition are recorded in §15. No FITS bytes were uploaded.
 
 ## 12. Corrected #59 reader-mode protocol
 
 ### Exact-SHA measurement and gated disposition
 
-> **Historical instrument outcome; not a candidate-content verdict.** The 5721867 run used `funpack -C`, but its comparator counted record padding and aligned cards by position. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. Preserve the measured source identities, positive-control result, exact storage-payload comparisons and independent `fitsverify -l` findings as historical evidence; the four TESS checksum warnings remain valid blockers. Do not use the padded-comparator header counts as final content verdicts.
+> **Historical instrument outcome; not a candidate-content verdict.** The 5721867 run used `funpack -C`, but its comparator counted record padding and aligned cards by position. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. Preserve the measured source identities, positive-control result, exact storage-payload comparisons and independent `fitsverify -l` findings as historical evidence; the four TESS checksum warnings were blockers for that 5721867 snapshot. The later c69 status is in §15. Do not use the padded-comparator header counts as final content verdicts.
 
 The correction changes the `funpack` reader mode and diagnostics, not the pre-registered acceptance protocol,
 source identities, sample, threshold, or raw-row retention. The corrected fixed-sample run used exact source SHA
@@ -472,13 +470,14 @@ Tier 1 comparator n=0, Tier 2 reference n=14, refused n=0, and not-measured n=0.
 The external positive control **passed**: pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → the same
 literal-header/storage-array comparator, with an integer-only fixture. The record explicitly states
 `fpack_float_array_oracle_used=false`; `fpack` is not a float-array correctness oracle. Attribution was therefore
-enabled for candidate differences. The four TESS `fitsverify -l` checksum-agreement warnings remain blockers;
-all other `fitsverify -l` outcomes are four GALEX inherited-warning passes and six clean ROSAT passes. The 14
-reference-candidate reconstructions had **20 header-only HDU failures and 2,412 changed header cards**, with **0
-payload-mismatch HDUs** and **0 HDU-count mismatches**. No candidate had a payload difference in this comparison.
-The full reference-candidate gate passed 0/14, so the registered threshold is **not applied**. Tzim skipped all
-14 rows unchanged; direct source-versus-unchanged comparisons passed 14/14, and optimized-candidate `funpack`
-comparisons were not applicable. This distinct Tzim result does not validate the reference candidates.
+enabled for candidate differences. In this 5721867 snapshot, the four TESS `fitsverify -l` checksum-agreement
+warnings were blockers; all other outcomes were four GALEX inherited-warning passes and six clean ROSAT passes.
+The 14 reference-candidate reconstructions had **20 header-only HDU failures and 2,412 changed header cards**,
+with **0 payload-mismatch HDUs** and **0 HDU-count mismatches**. No candidate had a payload difference in this
+comparison. The reference-candidate gate passed 0/14, so the threshold was **not applied at that SHA**. Tzim
+skipped all 14 rows unchanged; direct source-versus-unchanged comparisons passed 14/14, and optimized-candidate
+`funpack` comparisons were not applicable. This distinct Tzim result does not validate the reference candidates;
+the later c69 disposition is recorded in §15.
 
 ### Exact reference-candidate identities and outcomes
 
@@ -521,13 +520,13 @@ returned Azure Blob `EOF`; the run's report comment
 and the 90-day artifact retains the full structured card records. No FITS bytes were uploaded; the ROSAT permission
 boundary was preserved.
 
-The earlier owner-decision request based on the default-checksum comparison is withdrawn; no owner protocol
-choice is pending. The corrected threshold remains `not_applied` because required candidate gates fail, including
-the four independent TESS checksum warnings. #70/full FITS admission remains separate.
+The earlier owner-decision request based on the default-checksum comparison is withdrawn. At the exact 5721867
+snapshot, the #59 threshold was not applied because its candidate gate failed; the later c69 disposition is in
+§15. #70/full FITS admission remains separate.
 
 ## 13. Corrected #59 exact-head rerun at `5967e31`
 
-> **Historical instrument outcome; not a candidate-content verdict.** This 5967e31 rerun used the same padded, positional card comparator. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. The four independent TESS `fitsverify -l` checksum warnings remain blockers and are not superseded.
+> **Historical instrument outcome; not a candidate-content verdict.** This 5967e31 rerun used the same padded, positional card comparator. Its 20 header-only HDU / 2,412 changed-card outcome and 0/14 full-gate conclusion are superseded instrument results. The four independent TESS `fitsverify -l` checksum warnings remain recorded for this historical run; the later c69 disposition is in §15.
 
 The same owner-fixed 14-product survey was rerun at exact source SHA
 `5967e318951f9c3945f0c256c3095b347483e234` in workflow
@@ -540,10 +539,11 @@ literal-header/storage-array comparator on an integer-only fixture; no `fpack` f
 Tier 2 Astropy candidates remained n=14, median gain 30.42168674698795%, Q1 29.518072289156628%, Q3
 64.63408680369086%, share-positive 100%; Tier 1 remained empty. The 14 reference round trips again had 20
 `header_only` HDU mismatches, 2,412 differing header cards, zero payload-mismatch HDUs and zero HDU-count
-mismatches. The `fitsverify -l` statuses were 4 failed TESS candidates with new checksum warnings, 4 GALEX
-passes with inherited warnings, and 6 clean ROSAT passes. Therefore 0/14 candidates passed and the registered
-threshold remains **not applied**. Tzim separately skipped all 14 rows unchanged; direct source-to-unchanged-Tzim
-comparisons passed 14/14. These results do not change the ROSAT permission boundary.
+mismatches. At this 5967e31 snapshot, `fitsverify -l` reported 4 failed TESS candidates with new checksum
+warnings, 4 GALEX passes with inherited warnings, and 6 clean ROSAT passes. Therefore 0/14 candidates passed and
+the registered threshold was **not applied at that SHA**. Tzim separately skipped all 14 rows unchanged; direct
+source-to-unchanged-Tzim comparisons passed 14/14. These historical results do not change the ROSAT permission
+boundary; the later c69 disposition is recorded in §15.
 
 The reference candidate bytes and SHA-256 values are this run's exact identities. The 5721867 run's table in §12
 is retained as a separate historical measurement.
@@ -578,8 +578,9 @@ occurred; the ROSAT permission boundary remains unchanged.
 The 5721867 (§12), 5967e31 (§13), and f05f6d2 report outcomes used a padded, positional reconstructed-header
 comparison. Their header-only HDU/card counts and full-gate conclusions are retained historically but are
 **superseded instrument results, not final candidate-content verdicts**. In particular, the f05 report is
-[comment `6522056780`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6522056780). Keep the independent
-TESS `fitsverify -l` checksum warnings as blockers; those verifier findings are not superseded.
+[comment `6522056780`](https://github.com/RUdolf1517/tzim/pull/84#issuecomment-6522056780). The independent TESS
+`fitsverify -l` checksum-warning findings remain part of those exact historical reports; the c69 current result
+is recorded in §15.
 
 The corrected comparator treats each header as the exact sequence of literal 80-byte cards through the actual
 END card. It excludes only record padding after END from the header equality decision. It does not trim or
@@ -592,9 +593,80 @@ comparisons and non-image data-area/padding comparisons remain strict.
 This comparator change does **not** relax preservation of Tzim candidates: the untransformed-candidate layer
 still requires the complete original HDU bytes to match byte-for-byte, including header and data padding. The
 fixed #59 rerun applies `funpack -C` to all 14 source/candidate pairs, including unchanged rows, and retains the
-external integer-only CFITSIO positive control on the same comparator path. The current exact-SHA PR report
-contains the non-truncated per-product/per-HDU card-through-END equality, storage-payload equality, padding-only
-status, inserted/dropped/changed keyword counts, and first actual differences; only SHA-256 identities and
-header diagnostics are published, not survey/candidate/reconstruction payload bytes. The four TESS warnings keep
-the registered threshold `not_applied` unless every required candidate gate passes. #78 stays open with its
-existing final-evidence and review limitations; no baseline, threshold, protocol, or release status changes here.
+external integer-only CFITSIO positive control on the same comparator path. The exact c69 run and its
+non-truncated per-product/per-HDU card-through-END, storage-payload, padding, and first-difference evidence are
+recorded in §15; only hashes and diagnostics are published, not FITS/candidate/reconstruction payload bytes. The
+5967e31 historical run in §13 remained `not_applied`; the later c69 run in §15 passed every required candidate
+gate and applied the unchanged threshold for opt-in `--fits-tile`. #78 stays open with its existing final-evidence
+and review limitations; no baseline, threshold, protocol, or full-admission claim is changed here.
+
+## 15. Current exact-SHA rerun at c69d25e
+
+The current fixed #59 result is bound to source SHA
+`c69d25e377215031dee2f2245afc967604423ae9`. Fixed workflow run
+[41215985536](https://github.com/RUdolf1517/tzim/actions/runs/41215985536) published the exact report in [PR comment
+`6545587417`](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545587417). The 14-product frozen source
+manifest SHA-256 is `500fdbe6763da40b5db856f9ea7218e18b244956f41f4505e4a838836ebb79d0`. The pinned CFITSIO source
+is commit `113781d8aa442cf8d3c27295d9084674b8b039f2`, archive SHA-256
+`d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e`; the `funpack -C` terminal-blank patch is
+SHA-256 `093ddcffd9f68a6e9c3082af28867cc1f9add4b85dd563a12458dea920840ecd`. The unchanged two-tier instrument
+SHA-256 is `be27888e60b2bfab9731d3eebadbe9ac2b5b9ac1d2f96d2ebcf1bacd9de634a2`. Artifact
+`fixed-fits-evidence` (ID `13048795912`, 171,559 bytes) retains tool outputs, hashes, raw rows, and independent
+recomputation but contains no FITS or candidate payload bytes.
+
+All 14 sources were downloaded and measured. The 14 Astropy reference candidates passed the complete
+`fitsverify -l`/`funpack -C` gate: status `passed` for 10 and `passed_inherited_warnings` for 4. Across 20 HDUs,
+all literal 80-byte cards through the actual `END` card and all storage payloads matched; there were zero unequal
+cards-through-END, zero inserted/dropped/changed cards, zero padding-only differences, and zero payload
+mismatches. The external positive control passed through pinned CFITSIO `fpack -g -q 0` → `fitsverify -l` →
+`funpack -C` → the same comparator on an integer-only fixture. The negative control's deliberately changed
+`OBJECT` card was rejected by the literal-header gate without touching payload.
+
+Tier 2 reference-candidate results were n=14, median gain 30.42168674698795%, Q1 29.518072289156628%, Q3
+64.63408680369086%, and 100% positive share. Tier 1 is empty, not 0%. The pre-registered #59 disposition is
+**applied**: Tier 2 clears for opt-in `--fits-tile` only. Tzim separately skipped all 14 products unchanged;
+source-to-Tzim direct comparisons passed 14/14 and Tzim `funpack -C` comparisons passed 14/14. This does not
+establish full FITS admission or alter the ROSAT permission boundary. No FITS source, reference-candidate,
+Tzim-candidate, or reconstructed payload bytes were uploaded. The separate #57 rule remains applied and refused
+after measurement; no FITS policy or baseline was changed.
+
+## 16. Current whole-corpus `measure-repro` baseline — hosted verification pending
+
+The owner authorized a new, explicitly versioned comparison baseline, `measure-repro-2026-10-31-v2`, after the
+pre-v2 discrepancies were documented. The target is the [versioned baseline JSON](../.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json).
+This is a baseline change with provenance, not a silent overwrite: the old published tables and red hosted run [41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100)
+remain historical errata. Provenance also includes the owner-specified independent evidence bundle at Git blob
+`f6479aa2bc1c89123bb0ef92de1ebd8285ac31d2` (ZIP SHA-256
+`48ff4673a871feda4989244cecfd46ba66b459765a4c59d07a9e2c871940a024`). The fixed source-manifest digest remains
+`57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5` across 2,386 files; full-SHA corpus pins,
+selection, formulas and thresholds are unchanged.
+
+This is the four-repository FITS test corpus measured by `fits-measure.py`, not the separate 14-product fixed #59
+survey in §15. The v2 FITS target is 178 files: 148 Tier-2 candidates, 147 exact-verified files, 30 refusals
+(25 `no_image`, 5 `cannot_compress`), and one retained exact-verification failure. The displayed Tier-2 table
+cells are median 21.9%, Q1 18.2%, Q3 27.3%, mean 20.0%, 85% positive and maximum 72.7%; Tier 1 remains zero on
+all 147 exact files. Selected input bytes are Astropy 675 KiB, CFITSIO 678 KiB, Drizzlepac 14.8 MiB, Reproject
+1.8 MiB, total 17.9 MiB. The verified manifest fixes the exact input-byte totals; full-precision measurement
+rows remain in the run evidence. These diagnostics do not change the candidate denominator.
+
+All five `cannot_compress` refusals are publicly identity-pinned with the complete error text:
+
+| Corpus | Manifest path | Input SHA-256 | Complete error string |
+| --- | --- | --- | --- |
+| `astropy` | `astropy/astropy/io/fits/tests/data/comp.fits` | `bc675bd775cd526ba49e971e5257c302877efcc3aa89a9a893c10f43b0ce525a` | `comp.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_float_bzero.fits` | `3c43b44b3f1a8385f70e3ef059d8a4fa70492e034dd0cd2e5733beb9a35e4275` | `compressed_float_bzero.fits: expected exactly one ZNAXIS2 for literal source NAXIS2 card; found 0` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/compressed_image.fits` | `dc08d7fd26b8ebda5db7d9fbd3dc889999face95fbe42af6a6f418735d3e04fe` | `compressed_image.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/double_ext.fits` | `7ab105b7695dbebd7da0bf430f58527b0da8223ea990460d22593c543f757bfc` | `double_ext.fits: candidate contains 'TFORM1' cards with values different from the source` |
+| `astropy` | `astropy/astropy/io/fits/tests/data/o4sp040b0_raw.fits` | `db9e48493b226276064fe1d33f1c60025ed466aa74516572f20717d28f70185b` | `o4sp040b0_raw.fits: candidate contains '' cards with values different from the source` |
+
+The exact-verification failure remains
+`astropy/astropy/io/fits/tests/data/zerowidth.fits/array_0`, input SHA-256
+`0d5da9f724e2641bc81cce6b4c9c1c2baa0c64feb6a74344b19be10f1dc18ff4`. It is not converted into a refusal or
+hidden from the baseline.
+
+The complete local v2 comparator passed in Python 3.11.2. The final hosted Python 3.12 run is still pending, so
+this section does not announce a final green status; any hosted discrepancy must be reported without retuning the
+baseline. A green v2 comparison will mean reproduction of these disclosed measurements, not zero failures, full
+FITS/PDF admission, or a change to #59. The separate fixed #59 result remains **applied only for opt-in
+`--fits-tile`** at c69 14/14; full FITS admission remains open, and the ROSAT permission/no-payload boundary is
+unchanged.

@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,6 +15,87 @@ pub enum Status {
     Unsupported,
     Skipped,
     Failed,
+}
+
+/// Stable machine-readable explanation for an outcome that did not optimize a
+/// file. The human-facing `note` and `error` remain the detailed diagnostics;
+/// this identifier is deliberately independent of their wording.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReasonCode {
+    AbortedByFailFast,
+    AboveMaximumSize,
+    BelowMinimumSize,
+    ConfirmationDeclined,
+    ConfiguredLimitExceeded,
+    DirectoryDepthExceeded,
+    FailedUnclassified,
+    FilesystemError,
+    FormatNotCompiled,
+    FormatNotSelected,
+    HandlerRefused,
+    HandlerRejectedSignature,
+    InputParseError,
+    InvalidSymbolicLinkTarget,
+    MemoryBudgetExceeded,
+    MultipleHardLinks,
+    NoSmallerCandidate,
+    NotARegularFile,
+    OwnershipChangeDenied,
+    PathFilteredByIncludeExclude,
+    ReadOnlyFile,
+    SkippedUnclassified,
+    SymbolicLinkNotFollowed,
+    UnsupportedFormat,
+    VerificationFailed,
+    InternalError,
+}
+
+impl ReasonCode {
+    #[inline(never)]
+    pub fn id(self) -> &'static str {
+        match self {
+            ReasonCode::AbortedByFailFast => "aborted_by_fail_fast",
+            ReasonCode::AboveMaximumSize => "above_maximum_size",
+            ReasonCode::BelowMinimumSize => "below_minimum_size",
+            ReasonCode::ConfirmationDeclined => "confirmation_declined",
+            ReasonCode::ConfiguredLimitExceeded => "configured_limit_exceeded",
+            ReasonCode::DirectoryDepthExceeded => "directory_depth_exceeded",
+            ReasonCode::FailedUnclassified => "failed_unclassified",
+            ReasonCode::FilesystemError => "filesystem_error",
+            ReasonCode::FormatNotCompiled => "format_not_compiled",
+            ReasonCode::FormatNotSelected => "format_not_selected",
+            ReasonCode::HandlerRefused => "handler_refused",
+            ReasonCode::HandlerRejectedSignature => "handler_rejected_signature",
+            ReasonCode::InputParseError => "input_parse_error",
+            ReasonCode::InvalidSymbolicLinkTarget => "invalid_symbolic_link_target",
+            ReasonCode::MemoryBudgetExceeded => "memory_budget_exceeded",
+            ReasonCode::MultipleHardLinks => "multiple_hard_links",
+            ReasonCode::NoSmallerCandidate => "no_smaller_candidate",
+            ReasonCode::NotARegularFile => "not_a_regular_file",
+            ReasonCode::OwnershipChangeDenied => "ownership_change_denied",
+            ReasonCode::PathFilteredByIncludeExclude => "path_filtered_by_include_exclude",
+            ReasonCode::ReadOnlyFile => "read_only_file",
+            ReasonCode::SkippedUnclassified => "skipped_unclassified",
+            ReasonCode::SymbolicLinkNotFollowed => "symbolic_link_not_followed",
+            ReasonCode::UnsupportedFormat => "unsupported_format",
+            ReasonCode::VerificationFailed => "verification_failed",
+            ReasonCode::InternalError => "internal_error",
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub fn for_error(error: &Error) -> ReasonCode {
+        match error {
+            Error::Io(_) => ReasonCode::FilesystemError,
+            Error::Parse(_) => ReasonCode::InputParseError,
+            Error::Limit(_) => ReasonCode::ConfiguredLimitExceeded,
+            Error::Refused(_) => ReasonCode::HandlerRefused,
+            Error::Unsupported(_) => ReasonCode::HandlerRejectedSignature,
+            Error::Verify(_) => ReasonCode::VerificationFailed,
+            Error::Usage(_) | Error::Internal(_) => ReasonCode::InternalError,
+        }
+    }
 }
 
 impl Status {
@@ -60,6 +142,7 @@ pub struct Outcome {
     pub path: PathBuf,
     pub format: Option<Format>,
     pub status: Status,
+    pub reason_code: Option<ReasonCode>,
     pub before: u64,
     pub after: u64,
     pub duration: Duration,
@@ -73,6 +156,7 @@ impl Outcome {
             path,
             format: None,
             status,
+            reason_code: None,
             before,
             after: before,
             duration: Duration::from_secs(0),
@@ -90,6 +174,15 @@ impl Outcome {
 
     pub fn saved(&self) -> u64 {
         self.before.saturating_sub(self.after)
+    }
+
+    fn reason_code(&self) -> Option<ReasonCode> {
+        self.reason_code.or(match self.status {
+            Status::Unsupported => Some(ReasonCode::UnsupportedFormat),
+            Status::Skipped => Some(ReasonCode::SkippedUnclassified),
+            Status::Failed => Some(ReasonCode::FailedUnclassified),
+            Status::Optimized | Status::WouldOptimize | Status::AlreadyOptimal => None,
+        })
     }
 
     fn failed_by_verify(&self) -> bool {
@@ -311,19 +404,30 @@ pub fn print_json<W: Write + ?Sized>(
         push_raw_path(&mut line, &o.path);
         line.push_str(",\"format\":");
         match o.format {
-            Some(f) => push_json_string(&mut line, f.id()),
+            Some(f) => push_json_identifier(&mut line, f.id()),
             None => line.push_str("null"),
         }
         line.push_str(",\"status\":");
-        push_json_string(&mut line, o.status.id());
-        line.push_str(&format!(",\"before\":{},\"after\":{}", o.before, o.after));
-        line.push_str(&format!(",\"saved\":{}", o.saved()));
-        line.push_str(",\"guarantee\":");
-        push_json_string(&mut line, o.guarantee().id());
+        push_json_identifier(&mut line, o.status.id());
+        line.push_str(",\"reason_code\":");
+        match o.reason_code() {
+            Some(reason) => push_json_identifier(&mut line, reason.id()),
+            None => line.push_str("null"),
+        }
+        write!(
+            &mut line,
+            ",\"before\":{},\"after\":{},\"saved\":{},\"guarantee\":\"{}\"",
+            o.before,
+            o.after,
+            o.saved(),
+            o.guarantee().id()
+        )
+        .expect("write JSON fields to a String");
         if strip_metadata && matches!(o.status, Status::Optimized | Status::WouldOptimize) {
             line.push_str(",\"metadata_stripped\":true");
         }
-        line.push_str(&format!(",\"duration_ms\":{}", o.duration.as_millis()));
+        write!(&mut line, ",\"duration_ms\":{}", o.duration.as_millis())
+            .expect("write duration to a String");
         line.push_str(",\"note\":");
         match &o.note {
             Some(note) => push_json_string(&mut line, note),
@@ -333,7 +437,7 @@ pub fn print_json<W: Write + ?Sized>(
         match (&o.status, &o.error) {
             (Status::Failed, Some(e)) => {
                 line.push_str("{\"kind\":");
-                push_json_string(&mut line, e.kind());
+                push_json_identifier(&mut line, e.kind());
                 line.push_str(",\"message\":");
                 push_json_string(&mut line, &e.to_string());
                 line.push('}');
@@ -346,7 +450,7 @@ pub fn print_json<W: Write + ?Sized>(
 
     writeln!(
         out,
-        "{{\"type\":\"summary\",\"schema\":1,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
+        "{{\"type\":\"summary\",\"schema\":2,\"files\":{},\"optimized\":{},\"would_optimize\":{},\"already_optimal\":{},\"unsupported\":{},\"skipped\":{},\"failed\":{},\"before\":{},\"after\":{},\"saved\":{},\"duration_ms\":{},\"dry_run\":{},\"strip_metadata\":{}}}",
         summary.files,
         summary.optimized,
         summary.would_optimize,
@@ -361,6 +465,14 @@ pub fn print_json<W: Write + ?Sized>(
         dry_run,
         strip_metadata
     )
+}
+
+/// Writes a side-effect-free, versioned description of this binary's compiled
+/// formats and admission/confirmation policy. The record is generated at build
+/// time from Cargo's feature set and requires no runtime filesystem access.
+pub fn print_capabilities<W: Write + ?Sized>(out: &mut W) -> io::Result<()> {
+    const CAPABILITIES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/capabilities.json"));
+    out.write_all(CAPABILITIES)
 }
 
 /// Width of `s` in terminal cells. Shared with the progress line, which has to
@@ -465,6 +577,14 @@ fn round_half_even(value: u128, divisor: u128) -> u128 {
     } else {
         quotient
     }
+}
+
+#[inline(never)]
+fn push_json_identifier(out: &mut String, value: &str) {
+    // These IDs are internal ASCII enum values, not user-provided strings.
+    out.push('"');
+    out.push_str(value);
+    out.push('"');
 }
 
 pub fn push_json_string(out: &mut String, value: &str) {
@@ -579,6 +699,87 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(&[0xff, 0xfe]), "//4=");
+    }
+
+    #[test]
+    fn reason_codes_are_stable_and_independent_of_diagnostic_prose() {
+        let stable_codes = [
+            (ReasonCode::AbortedByFailFast, "aborted_by_fail_fast"),
+            (ReasonCode::AboveMaximumSize, "above_maximum_size"),
+            (ReasonCode::BelowMinimumSize, "below_minimum_size"),
+            (ReasonCode::ConfirmationDeclined, "confirmation_declined"),
+            (
+                ReasonCode::ConfiguredLimitExceeded,
+                "configured_limit_exceeded",
+            ),
+            (
+                ReasonCode::DirectoryDepthExceeded,
+                "directory_depth_exceeded",
+            ),
+            (ReasonCode::FailedUnclassified, "failed_unclassified"),
+            (ReasonCode::FilesystemError, "filesystem_error"),
+            (ReasonCode::FormatNotCompiled, "format_not_compiled"),
+            (ReasonCode::FormatNotSelected, "format_not_selected"),
+            (ReasonCode::HandlerRefused, "handler_refused"),
+            (
+                ReasonCode::HandlerRejectedSignature,
+                "handler_rejected_signature",
+            ),
+            (ReasonCode::InputParseError, "input_parse_error"),
+            (
+                ReasonCode::InvalidSymbolicLinkTarget,
+                "invalid_symbolic_link_target",
+            ),
+            (ReasonCode::MemoryBudgetExceeded, "memory_budget_exceeded"),
+            (ReasonCode::MultipleHardLinks, "multiple_hard_links"),
+            (ReasonCode::NoSmallerCandidate, "no_smaller_candidate"),
+            (ReasonCode::NotARegularFile, "not_a_regular_file"),
+            (ReasonCode::OwnershipChangeDenied, "ownership_change_denied"),
+            (
+                ReasonCode::PathFilteredByIncludeExclude,
+                "path_filtered_by_include_exclude",
+            ),
+            (ReasonCode::ReadOnlyFile, "read_only_file"),
+            (ReasonCode::SkippedUnclassified, "skipped_unclassified"),
+            (
+                ReasonCode::SymbolicLinkNotFollowed,
+                "symbolic_link_not_followed",
+            ),
+            (ReasonCode::UnsupportedFormat, "unsupported_format"),
+            (ReasonCode::VerificationFailed, "verification_failed"),
+            (ReasonCode::InternalError, "internal_error"),
+        ];
+        for (code, stable_id) in stable_codes {
+            assert_eq!(code.id(), stable_id);
+        }
+
+        let mut first_skip = Outcome::new(PathBuf::from("a"), Status::Skipped, 10);
+        first_skip.reason_code = Some(ReasonCode::ConfirmationDeclined);
+        first_skip.note = Some("the existing human explanation".to_string());
+        let mut second_skip = Outcome::new(PathBuf::from("b"), Status::Skipped, 10);
+        second_skip.reason_code = Some(ReasonCode::ConfirmationDeclined);
+        second_skip.note = Some("reworded diagnostic, same machine reason".to_string());
+        let mut failed = Outcome::new(PathBuf::from("c"), Status::Failed, 20);
+        failed.reason_code = Some(ReasonCode::FilesystemError);
+        failed.error = Some(Error::Io(io::Error::other("permission denied")));
+        let outcomes = [first_skip, second_skip, failed];
+        let summary = summarize(&outcomes, Duration::from_millis(1));
+        let mut bytes = Vec::new();
+        print_json(&mut bytes, &outcomes, &summary, false, false).unwrap();
+        let json = String::from_utf8(bytes).unwrap();
+
+        assert_eq!(
+            json.matches("\"reason_code\":\"confirmation_declined\"")
+                .count(),
+            2
+        );
+        assert!(json.contains("\"status\":\"skipped\",\"reason_code\":\"confirmation_declined\""));
+        assert!(json.contains("\"note\":\"the existing human explanation\""));
+        assert!(json.contains("\"note\":\"reworded diagnostic, same machine reason\""));
+        assert!(json.contains("\"error\":null"));
+        assert!(json.contains("\"status\":\"failed\",\"reason_code\":\"filesystem_error\""));
+        assert!(json.contains("\"kind\":\"io\",\"message\":\"permission denied\""));
+        assert!(json.contains("\"schema\":2"));
     }
 
     #[test]

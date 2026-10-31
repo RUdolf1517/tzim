@@ -1,0 +1,5 @@
+PackageIdentifier: RUdolf1517.tzim
+PackageVersion: {{PACKAGE_VERSION}}
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

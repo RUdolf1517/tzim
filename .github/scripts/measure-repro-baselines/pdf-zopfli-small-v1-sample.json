@@ -1,0 +1,1387 @@
+{
+  "accepted_rows": 1009,
+  "disposition": "new reproducible small-file comparator; not a reproduction of the unavailable historical 150-file sample",
+  "metric": {
+    "errors": "any open/inflate/compress/roundtrip error or missing row fails; no row substitution",
+    "flate_bytes": "sum original encoded byte lengths for the same rewritable streams as faithful_pct",
+    "formula": "100 * (flate_bytes - zopfli_after) / whole_file_bytes",
+    "roundtrip": "zlib.decompress(candidate) must equal inflated payload for every stream",
+    "zopfli_after": "sum min(original_encoded_length, len(pyzopfli_zlib_compress(inflated_payload))) over those streams"
+  },
+  "protocol_id": "pdf-zopfli-small-v1",
+  "sample_identity_sha256": "0360aa7d5178a0aa7acc9f16c30a31a6be67024802a4af88ab69e77e31318ac2",
+  "sample_path_sha256": "91425c7fecbd4e86504efa855695f8add2c5e77d47307373f2b83b97941be61a",
+  "selected_bytes": 1345005,
+  "selected_rows": [
+    {
+      "bytes": 44438,
+      "corpus": "pdfjs",
+      "flate_bytes": 39828,
+      "manifest_path": "pdfjs/test/pdfs/bug921409.pdf",
+      "manifest_sha256": "16dc0443ef3dd55a5ae5b01a6cc7f177965db8fa54356c25f863ccda57314225",
+      "sample_order": 1,
+      "streams": 2
+    },
+    {
+      "bytes": 9573,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t03-pass-a.pdf",
+      "manifest_sha256": "279b932fe0d6d5ed16b32c66facb49bf0d88149aa301a6ada46618a822f38fc7",
+      "sample_order": 2,
+      "streams": 2
+    },
+    {
+      "bytes": 3626,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-i.pdf",
+      "manifest_sha256": "447485b2c993487b53e0d9263058df266f3858c1cab4ea001f84207117fb7e51",
+      "sample_order": 3,
+      "streams": 1
+    },
+    {
+      "bytes": 3492,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-k.pdf",
+      "manifest_sha256": "4260e80d4c955427cd516197a99498a7610ada7d228887a66ed4e00f02dc56bd",
+      "sample_order": 4,
+      "streams": 1
+    },
+    {
+      "bytes": 20894,
+      "corpus": "pdfjs",
+      "flate_bytes": 17803,
+      "manifest_path": "pdfjs/test/pdfs/bug1175962.pdf",
+      "manifest_sha256": "9f1822292931c1360760ea005e6e444626b330b577e953ab6d1cba411bb26dde",
+      "sample_order": 5,
+      "streams": 3
+    },
+    {
+      "bytes": 3381,
+      "corpus": "pdfjs",
+      "flate_bytes": 60,
+      "manifest_path": "pdfjs/test/pdfs/tensor-allflags-withfunction.pdf",
+      "manifest_sha256": "d0167f51046dc315aeb6be6c48ae874c776f532cbc1b8f4d64efd6ad1215f480",
+      "sample_order": 6,
+      "streams": 1
+    },
+    {
+      "bytes": 3565,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-f.pdf",
+      "manifest_sha256": "4101a5cb979c38055949d51e1ff9c0daf47eb7761e8549d36e210cbab273ad67",
+      "sample_order": 7,
+      "streams": 1
+    },
+    {
+      "bytes": 16504,
+      "corpus": "qpdf",
+      "flate_bytes": 15335,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/qpdfjob-ctest3.pdf",
+      "manifest_sha256": "03bdf2bb8c70da9cb47147425548cb7dd0ed060ec7bcfdab4fde5343bf6e2b82",
+      "sample_order": 8,
+      "streams": 2
+    },
+    {
+      "bytes": 3417,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t04-fail-c.pdf",
+      "manifest_sha256": "9c6fd9c75e603b75753cb92ba57fc2d90f56f3ee87a701503af3eda9967d82cf",
+      "sample_order": 9,
+      "streams": 1
+    },
+    {
+      "bytes": 2527,
+      "corpus": "qpdf",
+      "flate_bytes": 116,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/job-json-copy-attachments.pdf",
+      "manifest_sha256": "af058e7a9f2137a82c32fad1a58dba651bf82a1e38d881e55778c9d93b4ac940",
+      "sample_order": 10,
+      "streams": 5
+    },
+    {
+      "bytes": 17019,
+      "corpus": "verapdf",
+      "flate_bytes": 11629,
+      "manifest_path": "verapdf/PDF_A-1b/6.3 Fonts/6.3.5 Font subsets/veraPDF test suite 6-3-5-t03-fail-c.pdf",
+      "manifest_sha256": "344aa1aa4ad3ece393ed0ea49bfcaa09edb4f0537e235223d13e1d249237a782",
+      "sample_order": 11,
+      "streams": 4
+    },
+    {
+      "bytes": 3496,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-d.pdf",
+      "manifest_sha256": "570131395e76eac1d0bed6f78ff7864caca072f9c6365477f2bd0c040b5e8acf",
+      "sample_order": 12,
+      "streams": 1
+    },
+    {
+      "bytes": 4181,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t02-pass-a.pdf",
+      "manifest_sha256": "a596c4dd7116c2397caead623a18e78192c2ef7e67d6944e0865d9d9ce124d3d",
+      "sample_order": 13,
+      "streams": 1
+    },
+    {
+      "bytes": 10122,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-j.pdf",
+      "manifest_sha256": "18a4d6804d8cbe6e4a3692dfece0a9f5649fbbc4175b38e0e744e9d9741b0ab5",
+      "sample_order": 14,
+      "streams": 2
+    },
+    {
+      "bytes": 45013,
+      "corpus": "pdfjs",
+      "flate_bytes": 42720,
+      "manifest_path": "pdfjs/test/pdfs/bug1186827.pdf",
+      "manifest_sha256": "979ab4de6732354a540f0d110039e3c4c73e55fa8db7097592167a8e7e5ebd2d",
+      "sample_order": 15,
+      "streams": 3
+    },
+    {
+      "bytes": 3828,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-f.pdf",
+      "manifest_sha256": "8723c6ac7f1ac925bccc92f4768b564aa7b474e4885dc37c275ee6991333b5c4",
+      "sample_order": 16,
+      "streams": 1
+    },
+    {
+      "bytes": 1859,
+      "corpus": "pdfjs",
+      "flate_bytes": 442,
+      "manifest_path": "pdfjs/test/pdfs/issue5564_reduced.pdf",
+      "manifest_sha256": "26ba0dcc4a2159d0769f795778a42e8955c14e2301fb553fa99c1d0982ac809c",
+      "sample_order": 17,
+      "streams": 2
+    },
+    {
+      "bytes": 31796,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-i.pdf",
+      "manifest_sha256": "40cbb56a62fc54125e1bafb737e912fc9c0a37992ce2aeb183e4319330a71e6b",
+      "sample_order": 18,
+      "streams": 1
+    },
+    {
+      "bytes": 3496,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-j.pdf",
+      "manifest_sha256": "eb070a1d458c5c6d3cefa0d0bee69a27f6056d1649294166de27cdb511a08a5b",
+      "sample_order": 19,
+      "streams": 1
+    },
+    {
+      "bytes": 10099,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-d.pdf",
+      "manifest_sha256": "d653d180a2e202a850adaadf9ffabd21c7a637c834d603d26696cfba39c1514c",
+      "sample_order": 20,
+      "streams": 2
+    },
+    {
+      "bytes": 4302,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-k.pdf",
+      "manifest_sha256": "4141ab87f7c99428ed62b33a79fb5e94c2d774ce5a21be5ae020140b8c2b61f4",
+      "sample_order": 21,
+      "streams": 1
+    },
+    {
+      "bytes": 3690,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-j.pdf",
+      "manifest_sha256": "5802fb056e7ee9812b74514a82ab41d3e16f13f21563c80e4dd86b0327af9162",
+      "sample_order": 22,
+      "streams": 1
+    },
+    {
+      "bytes": 19929,
+      "corpus": "pdfjs",
+      "flate_bytes": 15891,
+      "manifest_path": "pdfjs/test/pdfs/issue18117.pdf",
+      "manifest_sha256": "36df977bee762441a06312aa9ba514cfe9d600a6d9f4d3d00c16039645d84bb7",
+      "sample_order": 23,
+      "streams": 1
+    },
+    {
+      "bytes": 3498,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-x.pdf",
+      "manifest_sha256": "a4bd256536e78fb0b21428350ae91c3aa1b7af2da6c34ff6cedeab47434b1ed2",
+      "sample_order": 24,
+      "streams": 1
+    },
+    {
+      "bytes": 3625,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-t.pdf",
+      "manifest_sha256": "75834531aa987913072435a0c311e68d6498186083386e7585ceaa331df989ab",
+      "sample_order": 25,
+      "streams": 1
+    },
+    {
+      "bytes": 3609,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-e.pdf",
+      "manifest_sha256": "8cf4621dc87903fba6f93252062a832c6f1e2ec7a6a0ef47dbc4ae8efe5d9009",
+      "sample_order": 26,
+      "streams": 1
+    },
+    {
+      "bytes": 3520,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-b.pdf",
+      "manifest_sha256": "8a548df92c086919012d5b092639e44a89d9f93766896fe0aa46005fc68b7f49",
+      "sample_order": 27,
+      "streams": 1
+    },
+    {
+      "bytes": 3543,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-i.pdf",
+      "manifest_sha256": "40f39a95698d9714010240e54604b9edb490af47523d7155f847da30255ca555",
+      "sample_order": 28,
+      "streams": 1
+    },
+    {
+      "bytes": 3742,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-i.pdf",
+      "manifest_sha256": "c43fac1baca1e513fbc762f19f8b7dcd11f980e46d222fb9663a5ba648eaa370",
+      "sample_order": 29,
+      "streams": 1
+    },
+    {
+      "bytes": 14383,
+      "corpus": "qpdf",
+      "flate_bytes": 1519,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/decrypted-crypt-filter.pdf",
+      "manifest_sha256": "2526dd1e46392e1f0a03a278650eeb3d4172220180d63fdf93f1e44faf8420eb",
+      "sample_order": 30,
+      "streams": 30
+    },
+    {
+      "bytes": 9743,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t01-pass-a.pdf",
+      "manifest_sha256": "d9346f20c60324f74b8f4a73aa3146903641411d8100bc2364c81a6433df49d6",
+      "sample_order": 31,
+      "streams": 2
+    },
+    {
+      "bytes": 3738,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-p.pdf",
+      "manifest_sha256": "2cc652b8c1e931c37dfa99f510970961dc5c7872791225048278ccf6c7b4f030",
+      "sample_order": 32,
+      "streams": 1
+    },
+    {
+      "bytes": 3571,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-i.pdf",
+      "manifest_sha256": "432455c3245ff04312ac56243b8eb052df5a13f991a6c05029fa3b5c77a80759",
+      "sample_order": 33,
+      "streams": 1
+    },
+    {
+      "bytes": 7068,
+      "corpus": "pdfjs",
+      "flate_bytes": 5743,
+      "manifest_path": "pdfjs/test/pdfs/issue4246.pdf",
+      "manifest_sha256": "eb4b7f8cc7ae323aae080311c8afd639ae1cbefdd5cde3444f87a90ec2b3e11d",
+      "sample_order": 34,
+      "streams": 3
+    },
+    {
+      "bytes": 5006,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-m.pdf",
+      "manifest_sha256": "12d8fb5bd9f753fab7a5c6fd0495c7f40fc2131b3da8ec21764f53a466f28851",
+      "sample_order": 35,
+      "streams": 1
+    },
+    {
+      "bytes": 17003,
+      "corpus": "pdfjs",
+      "flate_bytes": 12906,
+      "manifest_path": "pdfjs/test/pdfs/issue4550.pdf",
+      "manifest_sha256": "66208858de102cd00e82ab76069fcf005fd2ceaa7d68a45c62057f8aa153a733",
+      "sample_order": 36,
+      "streams": 3
+    },
+    {
+      "bytes": 9942,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t07-fail-a.pdf",
+      "manifest_sha256": "fd38c6019c179a2f6b15e2ac28027c2f9ba96c17d3195473dfec884a2bb03e9d",
+      "sample_order": 37,
+      "streams": 2
+    },
+    {
+      "bytes": 10150,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t02-pass-b.pdf",
+      "manifest_sha256": "206f50200e08ff9c7333da8b593603e332f0b983c69556112d213b7639e86805",
+      "sample_order": 38,
+      "streams": 2
+    },
+    {
+      "bytes": 4352,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-c.pdf",
+      "manifest_sha256": "a7854199f7da2b7ce03f6b184421b9bf8ef09ab04629d06c0ce972d45dcdc800",
+      "sample_order": 39,
+      "streams": 1
+    },
+    {
+      "bytes": 34369,
+      "corpus": "pdfjs",
+      "flate_bytes": 31015,
+      "manifest_path": "pdfjs/test/pdfs/issue5070.pdf",
+      "manifest_sha256": "bc4180ee2d25174fab1bb7a4bf15605a0c28fe87a51c20245d2181efda3a6a64",
+      "sample_order": 40,
+      "streams": 1
+    },
+    {
+      "bytes": 9726,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t08-pass-a.pdf",
+      "manifest_sha256": "251a983d0776aa981d343101b964b04fd650fb5a53dfebc9f5402c8a81dfa449",
+      "sample_order": 41,
+      "streams": 2
+    },
+    {
+      "bytes": 3602,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-f.pdf",
+      "manifest_sha256": "aece6442eb61ddca3a4bf878c71f19d05de3f320ccac7286445878386f107286",
+      "sample_order": 42,
+      "streams": 1
+    },
+    {
+      "bytes": 9740,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.9 Rendering intents/veraPDF test suite 6-2-9-t01-pass-a.pdf",
+      "manifest_sha256": "0f05afa9b65e85281ef3263ef8d329568e0e7deec244a90cd49825d92d4c50db",
+      "sample_order": 43,
+      "streams": 2
+    },
+    {
+      "bytes": 3399,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-c.pdf",
+      "manifest_sha256": "fe33c0bcd86f84b9bed58aac0c8228c96e302002d3be4938ed981ad253530320",
+      "sample_order": 44,
+      "streams": 1
+    },
+    {
+      "bytes": 3613,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-h.pdf",
+      "manifest_sha256": "7fcb199423d714918e7c8889850350be3bb4579ab3788d60014cf8bf3f09df49",
+      "sample_order": 45,
+      "streams": 1
+    },
+    {
+      "bytes": 14521,
+      "corpus": "pdfjs",
+      "flate_bytes": 703,
+      "manifest_path": "pdfjs/test/pdfs/issue6621.pdf",
+      "manifest_sha256": "84f56091db5ea9021a65a4de5dfd6eda345d117daeeaf4fc75ba6ce2d8a20310",
+      "sample_order": 46,
+      "streams": 2
+    },
+    {
+      "bytes": 7614,
+      "corpus": "verapdf",
+      "flate_bytes": 2584,
+      "manifest_path": "verapdf/PDF_A-1b/6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-b.pdf",
+      "manifest_sha256": "177965d3a42ef2d3d40f7cfbf1f850c232de32029da8111271320cd3bde1abdf",
+      "sample_order": 47,
+      "streams": 2
+    },
+    {
+      "bytes": 10324,
+      "corpus": "verapdf",
+      "flate_bytes": 5382,
+      "manifest_path": "verapdf/PDF_A-1b/6.3 Fonts/6.3.5 Font subsets/veraPDF test suite 6-3-5-t02-fail-a.pdf",
+      "manifest_sha256": "346e83b54c5877ef24e1d97d187071dca618bf65e578ae662b3c7dc1a947caeb",
+      "sample_order": 48,
+      "streams": 3
+    },
+    {
+      "bytes": 9469,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t02-pass-a.pdf",
+      "manifest_sha256": "457da9e891c69ae97c536ffdef80e111da48ed19f8ddea7fae7c3fb71933d1f0",
+      "sample_order": 49,
+      "streams": 2
+    },
+    {
+      "bytes": 3585,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-fail-a.pdf",
+      "manifest_sha256": "9a13c068e45f714de8e4461914b16ee0259ece218ebeef246ffdf9feca5a173f",
+      "sample_order": 50,
+      "streams": 1
+    },
+    {
+      "bytes": 3836,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-j.pdf",
+      "manifest_sha256": "2d78b004e9ae75d7f0d9cc4e4a5b4ee733cc6c798a8edbfcb1c6a0cd841fa75c",
+      "sample_order": 51,
+      "streams": 1
+    },
+    {
+      "bytes": 3400,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-g.pdf",
+      "manifest_sha256": "4e574e2a832f00468deec17ca1497584efb6b4ff3e1750f3224749f9fa6dd985",
+      "sample_order": 52,
+      "streams": 1
+    },
+    {
+      "bytes": 12963,
+      "corpus": "pdfjs",
+      "flate_bytes": 10962,
+      "manifest_path": "pdfjs/test/pdfs/rotated.pdf",
+      "manifest_sha256": "08c31db1ebd2345d1dcdcd3ee2baffe47845db76e9911a823ad9ed8638b5a294",
+      "sample_order": 53,
+      "streams": 3
+    },
+    {
+      "bytes": 9731,
+      "corpus": "qpdf",
+      "flate_bytes": 1519,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/c-decrypt-R5-with-user.pdf",
+      "manifest_sha256": "b338cd6995a9994b1ca07f7bcc4a5e3c4538a6d174daabbd3db30c01eb2c11e6",
+      "sample_order": 54,
+      "streams": 30
+    },
+    {
+      "bytes": 1067,
+      "corpus": "qpdf",
+      "flate_bytes": 81,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/indirect-decode-parms-out.pdf",
+      "manifest_sha256": "8966ddef6b374a2a43215d008dfc1e246c60bd3e84d0d353ca953f2d698fb4e2",
+      "sample_order": 55,
+      "streams": 2
+    },
+    {
+      "bytes": 22851,
+      "corpus": "verapdf",
+      "flate_bytes": 19021,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-f.pdf",
+      "manifest_sha256": "4b85e3782a6e465bb0388c03428419d6a72a6956e00414f09bba96f38bb3bbde",
+      "sample_order": 56,
+      "streams": 3
+    },
+    {
+      "bytes": 3562,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-m.pdf",
+      "manifest_sha256": "182a0f778711aa607cd6de72a1042af878e76058e28ee070ee9720c70f6a817c",
+      "sample_order": 57,
+      "streams": 1
+    },
+    {
+      "bytes": 8286,
+      "corpus": "pdfjs",
+      "flate_bytes": 6753,
+      "manifest_path": "pdfjs/test/pdfs/pdfkit_compressed.pdf",
+      "manifest_sha256": "920b8491769e72567e5c40ef9249f1e9fccacad244a82264c28b97fc97d5ef73",
+      "sample_order": 58,
+      "streams": 3
+    },
+    {
+      "bytes": 3691,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-a.pdf",
+      "manifest_sha256": "10b0dbe76e200e48ba3d6eba7f3e6f24e3b8ee50a47c13779c853e2479c5ba10",
+      "sample_order": 59,
+      "streams": 1
+    },
+    {
+      "bytes": 6065,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.5 Annotations/6.5.3 Annotation dictionaries/veraPDF test suite 6-5-3-t01-pass-a.pdf",
+      "manifest_sha256": "7e2a86317a415809a31dcc6794d4abb6c78fe078452630dc0cf65d7c363503b4",
+      "sample_order": 60,
+      "streams": 1
+    },
+    {
+      "bytes": 39249,
+      "corpus": "pdfjs",
+      "flate_bytes": 37144,
+      "manifest_path": "pdfjs/test/pdfs/bug1046314.pdf",
+      "manifest_sha256": "a0bea37e3a032d4378c809dffc33a0766f7d364ba7b0bbe514a219ce4034e4d2",
+      "sample_order": 61,
+      "streams": 2
+    },
+    {
+      "bytes": 3496,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-f.pdf",
+      "manifest_sha256": "bda75884328d2c086f4141432e5b080342104514e4b5f8a1e12927944f809f0a",
+      "sample_order": 62,
+      "streams": 1
+    },
+    {
+      "bytes": 3783,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-e.pdf",
+      "manifest_sha256": "f38dac1af72765bfa27ac50be8e59cf1f93129abb8b6d6e76d098ff0bf90e4e3",
+      "sample_order": 63,
+      "streams": 1
+    },
+    {
+      "bytes": 3529,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-t.pdf",
+      "manifest_sha256": "cb4da3652e4a284b3ae5828c02ba7b8dfab258d6aa1c276d1a9428fb6eec6cf3",
+      "sample_order": 64,
+      "streams": 1
+    },
+    {
+      "bytes": 4249,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-j.pdf",
+      "manifest_sha256": "5098f549db8a5feeafd470586bc2588a541b396d96ab40006853d939bca69365",
+      "sample_order": 65,
+      "streams": 1
+    },
+    {
+      "bytes": 3024,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.2 Output intent/veraPDF test suite 6-2-2-t01-pass-a.pdf",
+      "manifest_sha256": "97e30bd4477b02f139dfed1613346a09491babd3d9297d989df5829c2ecd1a48",
+      "sample_order": 66,
+      "streams": 1
+    },
+    {
+      "bytes": 10500,
+      "corpus": "pdfjs",
+      "flate_bytes": 6645,
+      "manifest_path": "pdfjs/test/pdfs/french_diacritics.pdf",
+      "manifest_sha256": "eb6af7155988924ca0ba75cd95d21a93ea730b77b111dacb5d6599fa00867194",
+      "sample_order": 67,
+      "streams": 30
+    },
+    {
+      "bytes": 3571,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-j.pdf",
+      "manifest_sha256": "f85b07283237e208357386cff252e07f45ea35e1236c0f31a8e20e4ac1a543e5",
+      "sample_order": 68,
+      "streams": 1
+    },
+    {
+      "bytes": 16504,
+      "corpus": "qpdf",
+      "flate_bytes": 15335,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/warn-replace.pdf",
+      "manifest_sha256": "a889268348a8fb2c07ede57ec27e74253f2bc9dd0e0bf0a7ec659710a19d85c1",
+      "sample_order": 69,
+      "streams": 2
+    },
+    {
+      "bytes": 29813,
+      "corpus": "verapdf",
+      "flate_bytes": 25828,
+      "manifest_path": "verapdf/PDF_A-1b/6.3 Fonts/6.3.6 Font metrics/veraPDF test suite 6-3-6-t01-pass-a.pdf",
+      "manifest_sha256": "410a63018a27141d889be77f33de1d29c89f49cac21c54d43a6ae3f4994ef0eb",
+      "sample_order": 70,
+      "streams": 4
+    },
+    {
+      "bytes": 4305,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-g.pdf",
+      "manifest_sha256": "cedb1e9720076c0b947d8f643c748e41a224bb5b8c7847435f3f0b48f2432d5c",
+      "sample_order": 71,
+      "streams": 1
+    },
+    {
+      "bytes": 3569,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-g.pdf",
+      "manifest_sha256": "816cec2ea383a826f16fa9a0cabceae226e5a37c648497fd39a26c950051680c",
+      "sample_order": 72,
+      "streams": 1
+    },
+    {
+      "bytes": 3285,
+      "corpus": "pdfjs",
+      "flate_bytes": 60,
+      "manifest_path": "pdfjs/test/pdfs/coons-allflags-withfunction.pdf",
+      "manifest_sha256": "8651b10026886ec8e4dd8cad4b13b966aed6fe27bbcc34f8fe4931f0b0efe1ff",
+      "sample_order": 73,
+      "streams": 1
+    },
+    {
+      "bytes": 3658,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-d.pdf",
+      "manifest_sha256": "ba26f0a9c504cc1ca3ae2f000e0b604718f220126ccf34e08e1aca21455e2694",
+      "sample_order": 74,
+      "streams": 1
+    },
+    {
+      "bytes": 3475,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-n.pdf",
+      "manifest_sha256": "b2c8de3008dcdd8bf175f4eced3a49cfbab52d38368b5b47b82f46c743d6214f",
+      "sample_order": 75,
+      "streams": 1
+    },
+    {
+      "bytes": 3780,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-k.pdf",
+      "manifest_sha256": "aaa69d8b43041144630b2917e4180baf38b337896665abbca0136c9f14556e3f",
+      "sample_order": 76,
+      "streams": 1
+    },
+    {
+      "bytes": 3611,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-fail-b.pdf",
+      "manifest_sha256": "45db2acd98a052798bb1e6e589a0402c89a8c19c64576385a6ac7e0f9694939b",
+      "sample_order": 77,
+      "streams": 1
+    },
+    {
+      "bytes": 13676,
+      "corpus": "pdfjs",
+      "flate_bytes": 11430,
+      "manifest_path": "pdfjs/test/pdfs/bug1799927.pdf",
+      "manifest_sha256": "d64d9d210675175a27fd3bf0b5e956699db5beb3a95658c359e65ff100d855d7",
+      "sample_order": 78,
+      "streams": 1
+    },
+    {
+      "bytes": 743,
+      "corpus": "qpdf",
+      "flate_bytes": 48,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/minimal-9.pdf",
+      "manifest_sha256": "f89696d104751c536d43e994af8574f5adfb7e7299e15c1f31f0fefdb4660d65",
+      "sample_order": 79,
+      "streams": 1
+    },
+    {
+      "bytes": 39370,
+      "corpus": "pdfjs",
+      "flate_bytes": 31591,
+      "manifest_path": "pdfjs/test/pdfs/ArabicCIDTrueType.pdf",
+      "manifest_sha256": "1cad1de912ba29f89a6d8b08bc5b0f84382874ffedab2c8f9e05ef608c265bb1",
+      "sample_order": 80,
+      "streams": 12
+    },
+    {
+      "bytes": 17418,
+      "corpus": "qpdf",
+      "flate_bytes": 2636,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/merge-implicit-ranges.pdf",
+      "manifest_sha256": "a0a47d34fe90cdae65c522574c1890d65b199304a50968dc36cf443679a556d5",
+      "sample_order": 81,
+      "streams": 51
+    },
+    {
+      "bytes": 3651,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-c.pdf",
+      "manifest_sha256": "e954a753f15525c15cf8537a7cdfcd06edd9451b78abfa8ce715815f31c3718f",
+      "sample_order": 82,
+      "streams": 1
+    },
+    {
+      "bytes": 5481,
+      "corpus": "verapdf",
+      "flate_bytes": 2574,
+      "manifest_path": "verapdf/PDF_A-1b/6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t02-fail-a.pdf",
+      "manifest_sha256": "3da1e80219c3171df5c67de8668ee4b16b21c2608e4b35ef60ad7573e4fffbec",
+      "sample_order": 83,
+      "streams": 1
+    },
+    {
+      "bytes": 7564,
+      "corpus": "verapdf",
+      "flate_bytes": 2584,
+      "manifest_path": "verapdf/PDF_A-1b/6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-c.pdf",
+      "manifest_sha256": "cee48ee9279de33a9c18c87d8ae047a9d5a16775f93ddfc298f857c7baefb85d",
+      "sample_order": 84,
+      "streams": 2
+    },
+    {
+      "bytes": 3505,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-m.pdf",
+      "manifest_sha256": "35d165aecf35985d6c7832a4ce20493f10b28d533a7f92e07739899a910bd2fe",
+      "sample_order": 85,
+      "streams": 1
+    },
+    {
+      "bytes": 3532,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-a.pdf",
+      "manifest_sha256": "ab6dda71b441bd59b0d69d4a59ed5b86db503286177468a901c79fb1159eb068",
+      "sample_order": 86,
+      "streams": 1
+    },
+    {
+      "bytes": 3558,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-a.pdf",
+      "manifest_sha256": "8f150eacae5591eb9a2389181f59f83e138d177a286ffeab28d8688a35c08266",
+      "sample_order": 87,
+      "streams": 1
+    },
+    {
+      "bytes": 923,
+      "corpus": "qpdf",
+      "flate_bytes": 48,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/extensions-other-force-1.8.5.pdf",
+      "manifest_sha256": "6a0c0b8a15638b5a8e32f3ac20ccd5b34e876c9676268e8616cb5d2f37fe84bd",
+      "sample_order": 88,
+      "streams": 1
+    },
+    {
+      "bytes": 17254,
+      "corpus": "pdfjs",
+      "flate_bytes": 15260,
+      "manifest_path": "pdfjs/test/pdfs/bug1151216.pdf",
+      "manifest_sha256": "441cbcfd89d499a78c1881eb6800c3e95957a5f5a5c7c81c9e92d74ada952a56",
+      "sample_order": 89,
+      "streams": 1
+    },
+    {
+      "bytes": 3470,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-s.pdf",
+      "manifest_sha256": "c69f6d6a142fd9c885135bb288814818c3752a4624611e9a4f376cf1231a8b38",
+      "sample_order": 90,
+      "streams": 1
+    },
+    {
+      "bytes": 3644,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-r.pdf",
+      "manifest_sha256": "6534e74595534f0a4ae2d28e8c91f89faf84f613071660b04b5d449bb4bf64c6",
+      "sample_order": 91,
+      "streams": 1
+    },
+    {
+      "bytes": 4794,
+      "corpus": "pdfjs",
+      "flate_bytes": 2029,
+      "manifest_path": "pdfjs/test/pdfs/issue5138.pdf",
+      "manifest_sha256": "7b3f664d77682c5d4a39f8d33ffbac60edd47f4226a2f195867332d5f4e2238f",
+      "sample_order": 92,
+      "streams": 2
+    },
+    {
+      "bytes": 31272,
+      "corpus": "pdfjs",
+      "flate_bytes": 28150,
+      "manifest_path": "pdfjs/test/pdfs/issue3928.pdf",
+      "manifest_sha256": "32f66c48d16d5b44a1be2922b2db2d68c0931197b38f35825e22dd94343267a1",
+      "sample_order": 93,
+      "streams": 2
+    },
+    {
+      "bytes": 19172,
+      "corpus": "pdfjs",
+      "flate_bytes": 15266,
+      "manifest_path": "pdfjs/test/pdfs/issue1002.pdf",
+      "manifest_sha256": "f56a73d0ce26f32e5b944f079ea2a34abcb3032e0e5be661c3ceaf337c17abed",
+      "sample_order": 94,
+      "streams": 4
+    },
+    {
+      "bytes": 3599,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-k.pdf",
+      "manifest_sha256": "ed50bebc35aea73ba4b3fb05aaa7e3d73e90e7266ba3ac08fa5a156d38f64308",
+      "sample_order": 95,
+      "streams": 1
+    },
+    {
+      "bytes": 3662,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-d.pdf",
+      "manifest_sha256": "cd341511ad1f2075709d3fe8257bf08b326e4771fe63f19f4a75317ed9d4fd3d",
+      "sample_order": 96,
+      "streams": 1
+    },
+    {
+      "bytes": 6004,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-n.pdf",
+      "manifest_sha256": "866668b6c60491fa9de5c2efe4786fd09c0ab33ced2401dd8ad2bb620b459e5a",
+      "sample_order": 97,
+      "streams": 1
+    },
+    {
+      "bytes": 3526,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-y.pdf",
+      "manifest_sha256": "99063241869470571d60c311d1e9246dacc3b8369b5f972a806c1539e192d5be",
+      "sample_order": 98,
+      "streams": 1
+    },
+    {
+      "bytes": 3525,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-w.pdf",
+      "manifest_sha256": "9fbfde8e1378b64c09d2868c07e0e65a2f3ef22ff9eefc836869c579ea73592b",
+      "sample_order": 99,
+      "streams": 1
+    },
+    {
+      "bytes": 6136,
+      "corpus": "pdfjs",
+      "flate_bytes": 4244,
+      "manifest_path": "pdfjs/test/pdfs/issue5256.pdf",
+      "manifest_sha256": "3d25886488b4834746ef352d1e0270675540051c022b3ac921df76cdc74b59ba",
+      "sample_order": 100,
+      "streams": 1
+    },
+    {
+      "bytes": 4671,
+      "corpus": "pdfjs",
+      "flate_bytes": 891,
+      "manifest_path": "pdfjs/test/pdfs/ShowText-ShadingPattern.pdf",
+      "manifest_sha256": "13ac785e8445fbf01d5a8200e0e899daa204cdbe723b02f38f8af61ac48707bb",
+      "sample_order": 101,
+      "streams": 2
+    },
+    {
+      "bytes": 2770,
+      "corpus": "qpdf",
+      "flate_bytes": 41,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/empty-decode-parms-out.pdf",
+      "manifest_sha256": "e44c45ff762a9525c1e68d19a00dd11fc00109ddba3d4302d6277946474e4fa6",
+      "sample_order": 102,
+      "streams": 1
+    },
+    {
+      "bytes": 3546,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-b.pdf",
+      "manifest_sha256": "1b404b6f4e9b5e5ca2dfa8ff5efcae53ec2f24986c7e5c21f162182b502692cb",
+      "sample_order": 103,
+      "streams": 1
+    },
+    {
+      "bytes": 3359,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-k.pdf",
+      "manifest_sha256": "fc0ccdc30264a8a83bf0c2246c04a9d60d5042ef8776b7ed53e118b42f269c46",
+      "sample_order": 104,
+      "streams": 1
+    },
+    {
+      "bytes": 7763,
+      "corpus": "qpdf",
+      "flate_bytes": 760,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/collate-even.pdf",
+      "manifest_sha256": "125a206c03dbe16442715a6d2f4dcf5c81e20dfce37a188a3891e316130abbc5",
+      "sample_order": 105,
+      "streams": 15
+    },
+    {
+      "bytes": 3714,
+      "corpus": "pdfjs",
+      "flate_bytes": 1756,
+      "manifest_path": "pdfjs/test/pdfs/issue4684.pdf",
+      "manifest_sha256": "cc0b8d9b634dbcb48d55ad5336259be8bd5c3ec62c22fa3c8d0c06f94c9f79e5",
+      "sample_order": 106,
+      "streams": 2
+    },
+    {
+      "bytes": 3637,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-l.pdf",
+      "manifest_sha256": "5e6329c5e4498f0479c12e39f6a937c17d2ee2fa796dd7ff70f2bdbeb46221c9",
+      "sample_order": 107,
+      "streams": 1
+    },
+    {
+      "bytes": 3511,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-n.pdf",
+      "manifest_sha256": "a257c84438787e2ff4d18dd98ce13548c03d4bfbd2e4b6e3cab4ebdf016bdbfe",
+      "sample_order": 108,
+      "streams": 1
+    },
+    {
+      "bytes": 23766,
+      "corpus": "pdfjs",
+      "flate_bytes": 22348,
+      "manifest_path": "pdfjs/test/pdfs/bug868745.pdf",
+      "manifest_sha256": "ec1dabb86c4075c8a2a3ae3edeaa58093200acd2bf34d88a8d0d96671ded7df0",
+      "sample_order": 109,
+      "streams": 2
+    },
+    {
+      "bytes": 3573,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-q.pdf",
+      "manifest_sha256": "6cbc3a2f19c6adbd4ef23291723e1ff399021035f792c5087e2b04f2f78835f8",
+      "sample_order": 110,
+      "streams": 1
+    },
+    {
+      "bytes": 2361,
+      "corpus": "pdfjs",
+      "flate_bytes": 122,
+      "manifest_path": "pdfjs/test/pdfs/issue19474.pdf",
+      "manifest_sha256": "45e569fb50ea4eac01cb1c71d217ece8ee37afbb59dfbe084951523df20f09b2",
+      "sample_order": 111,
+      "streams": 1
+    },
+    {
+      "bytes": 7719,
+      "corpus": "verapdf",
+      "flate_bytes": 2584,
+      "manifest_path": "verapdf/PDF_A-1b/6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-d.pdf",
+      "manifest_sha256": "baa9f0edc10e7856e05ca726450a7e11300598694c3becb4be338fc1d02e1a58",
+      "sample_order": 112,
+      "streams": 2
+    },
+    {
+      "bytes": 732,
+      "corpus": "qpdf",
+      "flate_bytes": 25,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/filter-on-write-out.pdf",
+      "manifest_sha256": "a1645a9b198d9bdf79f9d67ef116e8d7cf1521c069c5f89f15488ca631752b8b",
+      "sample_order": 113,
+      "streams": 2
+    },
+    {
+      "bytes": 16827,
+      "corpus": "qpdf",
+      "flate_bytes": 9341,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/png-filters.pdf",
+      "manifest_sha256": "96f0e165db3cb2ff3a4911e3a0c8e31dd2757f01049f2dd24aba13bfd23fa37a",
+      "sample_order": 114,
+      "streams": 12
+    },
+    {
+      "bytes": 52483,
+      "corpus": "pdfjs",
+      "flate_bytes": 30760,
+      "manifest_path": "pdfjs/test/pdfs/issue918.pdf",
+      "manifest_sha256": "e1d8246bd5ea9f8f1eab8a58ef7cba661d455d9048a1082ad6ab328d921125b7",
+      "sample_order": 115,
+      "streams": 147
+    },
+    {
+      "bytes": 3641,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-q.pdf",
+      "manifest_sha256": "4d4242249464972d205376c4650ef6b856c27f238bfce34050b2c9484906843f",
+      "sample_order": 116,
+      "streams": 1
+    },
+    {
+      "bytes": 15526,
+      "corpus": "pdfjs",
+      "flate_bytes": 13207,
+      "manifest_path": "pdfjs/test/pdfs/issue5084.pdf",
+      "manifest_sha256": "0b03cfc542438510e9601532d75038523f1c94f389c63016f0806e692329d550",
+      "sample_order": 117,
+      "streams": 2
+    },
+    {
+      "bytes": 3539,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-pass-a.pdf",
+      "manifest_sha256": "91188975f9822ae66cea47a5bf2df90f5ea3ededd8dd7dd8c2ca288aae787ff0",
+      "sample_order": 118,
+      "streams": 1
+    },
+    {
+      "bytes": 7764,
+      "corpus": "qpdf",
+      "flate_bytes": 759,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/collate-odd.pdf",
+      "manifest_sha256": "4d3f6176531e9dfac6c4f02aa65e2ffb19e5cb28a46ec814fa9c8a46f1023139",
+      "sample_order": 119,
+      "streams": 15
+    },
+    {
+      "bytes": 3620,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-n.pdf",
+      "manifest_sha256": "db7f04fd317c9a361008f28dd23dd369089b5f184a8008702819a05516459640",
+      "sample_order": 120,
+      "streams": 1
+    },
+    {
+      "bytes": 3508,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-s.pdf",
+      "manifest_sha256": "ebb47e4d0de54608df8eadd0af16ece91102db8dc75b0634ea89efd3f47743b2",
+      "sample_order": 121,
+      "streams": 1
+    },
+    {
+      "bytes": 3539,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-pass-b.pdf",
+      "manifest_sha256": "65f624605e409edd9d0dba0537bfbda50ff7b1aaa3b50d2bcbe40631f79b601b",
+      "sample_order": 122,
+      "streams": 1
+    },
+    {
+      "bytes": 3517,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-d.pdf",
+      "manifest_sha256": "c4b1ce92007292011f93c60425bc064bfbd4912913a587d332ea4e945cce0945",
+      "sample_order": 123,
+      "streams": 1
+    },
+    {
+      "bytes": 25100,
+      "corpus": "pdfjs",
+      "flate_bytes": 23044,
+      "manifest_path": "pdfjs/test/pdfs/issue6901.pdf",
+      "manifest_sha256": "0dce224c830f563dca993ee5757d73f97cf880bd09bfbca9346162aa68885baa",
+      "sample_order": 124,
+      "streams": 1
+    },
+    {
+      "bytes": 23841,
+      "corpus": "pdfjs",
+      "flate_bytes": 9367,
+      "manifest_path": "pdfjs/test/pdfs/bug1811510.pdf",
+      "manifest_sha256": "f1b8a71a7e3257d9327800bc9a60acfe1460c6a11f745d537d5d5191ca4a92dd",
+      "sample_order": 125,
+      "streams": 14
+    },
+    {
+      "bytes": 15002,
+      "corpus": "pdfjs",
+      "flate_bytes": 13631,
+      "manifest_path": "pdfjs/test/pdfs/issue18059.pdf",
+      "manifest_sha256": "5c0f886bd4281eb532d2c716d666e28547b7275ced637e28dc630d347907e477",
+      "sample_order": 126,
+      "streams": 3
+    },
+    {
+      "bytes": 1152,
+      "corpus": "pdfjs",
+      "flate_bytes": 268,
+      "manifest_path": "pdfjs/test/pdfs/issue5238.pdf",
+      "manifest_sha256": "d8d538d18acb38b6516c9e23c7e3bc4f24428f3bc40cba06b517ea9c6018145a",
+      "sample_order": 127,
+      "streams": 1
+    },
+    {
+      "bytes": 3558,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-j.pdf",
+      "manifest_sha256": "784d34ee2a4d565b12ddc8b422fdde23b22388c2a567f4bec6c3d5b8f17440f1",
+      "sample_order": 128,
+      "streams": 1
+    },
+    {
+      "bytes": 6213,
+      "corpus": "verapdf",
+      "flate_bytes": 2574,
+      "manifest_path": "verapdf/PDF_A-1b/6.6 Actions/6.6.1 General/veraPDF test suite 6-6-1-t01-fail-a.pdf",
+      "manifest_sha256": "ee0792dbe6a3802a31e9e73abe7bb372e01d21d738c7abc785d46d8521bb5643",
+      "sample_order": 129,
+      "streams": 1
+    },
+    {
+      "bytes": 3544,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-e.pdf",
+      "manifest_sha256": "14b325fac05905f38eaf3b530c62f11067e6dedc267add235f5abdf3706d0113",
+      "sample_order": 130,
+      "streams": 1
+    },
+    {
+      "bytes": 3537,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-g.pdf",
+      "manifest_sha256": "8011a9700e13969ad79b2fc6d3e4639cf30222b99851017461527b7b5cee3ba9",
+      "sample_order": 131,
+      "streams": 1
+    },
+    {
+      "bytes": 25365,
+      "corpus": "pdfjs",
+      "flate_bytes": 5523,
+      "manifest_path": "pdfjs/test/pdfs/issue12418_reduced.pdf",
+      "manifest_sha256": "f12d1054fbd242a85e10fb2a30c2bc2346e60cd3f4dda4d8ad8fd89b0505b328",
+      "sample_order": 132,
+      "streams": 1
+    },
+    {
+      "bytes": 3689,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-b.pdf",
+      "manifest_sha256": "a91eb803c404883c18fb61729ec0c34ce0bd48b40d905bd8a7255a46db6c6bed",
+      "sample_order": 133,
+      "streams": 1
+    },
+    {
+      "bytes": 13934,
+      "corpus": "pdfjs",
+      "flate_bytes": 10124,
+      "manifest_path": "pdfjs/test/pdfs/issue6099.pdf",
+      "manifest_sha256": "b9dd958825d1067edcf6a31414b3326e68909a05a172f3e53678383f17347862",
+      "sample_order": 134,
+      "streams": 3
+    },
+    {
+      "bytes": 3650,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-e.pdf",
+      "manifest_sha256": "505fbaa3ce8609e0e670da08a184dc487bf2961bb3a664966690104dd433765a",
+      "sample_order": 135,
+      "streams": 1
+    },
+    {
+      "bytes": 4215,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-d.pdf",
+      "manifest_sha256": "47a40f24ce1787e4671b7a24f76ff042458d50591a6f629447b319556667d7c1",
+      "sample_order": 136,
+      "streams": 1
+    },
+    {
+      "bytes": 3440,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-d.pdf",
+      "manifest_sha256": "553db619f84d2fb871055e6d5f01ee9e58cf33a22ff206de2ba4bfb775b41d51",
+      "sample_order": 137,
+      "streams": 1
+    },
+    {
+      "bytes": 23718,
+      "corpus": "pdfjs",
+      "flate_bytes": 20492,
+      "manifest_path": "pdfjs/test/pdfs/issue5686.pdf",
+      "manifest_sha256": "64e74208d9bc9e0b576313f0c0c465ac6883682ee12ca92be0322bbda6b2da85",
+      "sample_order": 138,
+      "streams": 1
+    },
+    {
+      "bytes": 3520,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-i.pdf",
+      "manifest_sha256": "80fae6bd547cf0030214d6de9991779913e97059ed463dd067272ffa7cd07d7f",
+      "sample_order": 139,
+      "streams": 1
+    },
+    {
+      "bytes": 9572,
+      "corpus": "verapdf",
+      "flate_bytes": 5834,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t02-fail-a.pdf",
+      "manifest_sha256": "43bd28a5d68265fa5f5c6b0bcf313e445497f41d03f286e9cbb5b45c80e2a57e",
+      "sample_order": 140,
+      "streams": 2
+    },
+    {
+      "bytes": 3553,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-h.pdf",
+      "manifest_sha256": "89d5876b1a374cadcec0d26526df7c9277f83a87f405614159d69c179d95c3ed",
+      "sample_order": 141,
+      "streams": 1
+    },
+    {
+      "bytes": 8764,
+      "corpus": "verapdf",
+      "flate_bytes": 4432,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-fail-c.pdf",
+      "manifest_sha256": "0181018578a422b048d85aff47514a34ab9aae98de3e8e80f65c30adbba25123",
+      "sample_order": 142,
+      "streams": 4
+    },
+    {
+      "bytes": 4681,
+      "corpus": "qpdf",
+      "flate_bytes": 99,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/bad-jpeg.pdf",
+      "manifest_sha256": "f00365bfcc1248322705dcd024e09c71d8eeaba4f0bc718bb810c692a29fbf9d",
+      "sample_order": 143,
+      "streams": 1
+    },
+    {
+      "bytes": 3726,
+      "corpus": "verapdf",
+      "flate_bytes": 284,
+      "manifest_path": "verapdf/PDF_A-1b/6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-m.pdf",
+      "manifest_sha256": "70c8f6f59f959462d12b3da038e42150a86fdd947d4515e1fdbaa5b9aade6084",
+      "sample_order": 144,
+      "streams": 1
+    },
+    {
+      "bytes": 40553,
+      "corpus": "pdfjs",
+      "flate_bytes": 38024,
+      "manifest_path": "pdfjs/test/pdfs/issue3323.pdf",
+      "manifest_sha256": "e27b6af9ecbce8cc68588b8ae7f4af4f5214bc80dcbb479bdb928010b4dec26b",
+      "sample_order": 145,
+      "streams": 3
+    },
+    {
+      "bytes": 3513,
+      "corpus": "verapdf",
+      "flate_bytes": 282,
+      "manifest_path": "verapdf/PDF_A-1b/6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-c.pdf",
+      "manifest_sha256": "b605a1be9c6c60df79e06d97573453a36b4d2aaef5b5fa17a5dbadafa1245c34",
+      "sample_order": 146,
+      "streams": 1
+    },
+    {
+      "bytes": 1483,
+      "corpus": "pdfjs",
+      "flate_bytes": 585,
+      "manifest_path": "pdfjs/test/pdfs/issue18099_reduced.pdf",
+      "manifest_sha256": "50356972b31a8c15ab0b52593f625f1819eeb263ca43017de365631a01776b26",
+      "sample_order": 147,
+      "streams": 2
+    },
+    {
+      "bytes": 4573,
+      "corpus": "pdfjs",
+      "flate_bytes": 1255,
+      "manifest_path": "pdfjs/test/pdfs/images_1bit_grayscale.pdf",
+      "manifest_sha256": "afbed07b9fe25563b2604b81cd7186c91d4356e5428a05322b8b7eae88301e24",
+      "sample_order": 148,
+      "streams": 5
+    },
+    {
+      "bytes": 4128,
+      "corpus": "qpdf",
+      "flate_bytes": 585,
+      "manifest_path": "qpdf/qpdf/qtest/qpdf/11-pages.pdf",
+      "manifest_sha256": "d07b6afc97c1e8699f0640a951a5dc3c2426d7bea7cddf39b4ebb0f1bab1a2a0",
+      "sample_order": 149,
+      "streams": 11
+    },
+    {
+      "bytes": 861,
+      "corpus": "pdfjs",
+      "flate_bytes": 9,
+      "manifest_path": "pdfjs/test/pdfs/issue4575.pdf",
+      "manifest_sha256": "c6a9b71b4558344e708d5e04e156215fd5033e9088b4a87c72c5266f8b13196d",
+      "sample_order": 150,
+      "streams": 1
+    }
+  ],
+  "selection": {
+    "eligible_rows": 878,
+    "input_bytes_max_inclusive": 65536,
+    "ordering": "global manifest_path ascending before sampling",
+    "rng": "Python random.Random(57).sample(eligible, 150)",
+    "sample_files": 150,
+    "selection_order": "random.sample return order"
+  },
+  "source_full_manifest_sha256": "57e18a9d97d70e4c9e8fd919546c537fea79f9d30e42437c8b4d409fd027ecc5",
+  "zopfli": {
+    "blocksplitting": 1,
+    "blocksplittinglast": 0,
+    "blocksplittingmax": 15,
+    "gzip_mode": 0,
+    "numiterations": 15,
+    "package": "zopfli",
+    "verbose": 0,
+    "version": "0.4.3",
+    "wrapper": "zopfli.zlib.compress"
+  }
+}

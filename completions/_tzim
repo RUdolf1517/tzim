@@ -35,6 +35,7 @@ _tzim() {
         '--no-fsync[skip fsync before the rename]' \
         '(-i --info)'{-i,--info}'[what this program is]' \
         '--list-formats[the handlers in this build]' \
+        '--capabilities[versioned JSON build and runtime-policy description]' \
         '--check-deps[external programs needed at run time]' \
         '(-h --help)'{-h,--help}'[the full option list]' \
         '(-V --version)'{-V,--version}'[the version, one line]' \

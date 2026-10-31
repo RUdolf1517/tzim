@@ -172,6 +172,19 @@ jobs:
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: bash packaging/linux-packages.sh "${TAG#v}" artifacts
 
+      - name: Prepare the per-user Windows installer and local winget manifests
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          cp packaging/windows/install.ps1 artifacts/install.ps1
+          python3 packaging/winget/generate.py \
+            --tag "$TAG" \
+            --windows-archive artifacts/tzim-x86_64-pc-windows-msvc.zip \
+            --output-dir "$RUNNER_TEMP/tzim-winget"
+          cp "$RUNNER_TEMP/tzim-winget/tzim-winget-local-manifests-${TAG}.zip" artifacts/
+
       - name: Checksums
         run: |
           set -euo pipefail

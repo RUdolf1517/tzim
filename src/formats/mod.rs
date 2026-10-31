@@ -393,8 +393,12 @@ pub fn supported() -> Vec<(&'static str, &'static str, &'static str)> {
     #[cfg(feature = "jpeg")]
     rows.push((
         "JPEG",
-        "re-encode the entropy data with optimal Huffman tables",
-        "every marker and every DCT coefficient preserved; opt-in via --formats",
+        "re-encode baseline sequential entropy data with optimal Huffman tables",
+        if cfg!(feature = "jpeg-v1") {
+            "every marker and DCT coefficient preserved; independent V1 verification; default-enabled"
+        } else {
+            "every marker and DCT coefficient preserved; codec-only, opt-in via --formats jpeg"
+        },
     ));
     #[cfg(feature = "tiff")]
     rows.push((

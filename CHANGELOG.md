@@ -11,6 +11,21 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Added
+
+- **Versioned CLI capabilities and structured result reasons** (#85). `tzim --capabilities` reports the exact
+  build features, compiled/default-enabled handlers, selection semantics, handler opt-ins, transformations and
+  confirmation policy without scanning or modifying target files. JSON result schema 2 adds stable
+  `reason_code` identifiers while retaining existing statuses and diagnostic fields.
+- **Native Windows per-user installation and local-only winget manifests** (#87). `packaging/windows/install.ps1`
+  verifies fixed-tag release assets and supports rollback-safe install, upgrade and uninstall. Release-generated
+  local manifests pin the actual Windows ZIP hash; no community-source publication or discovery is provided.
+
+### Changed
+
+- **JPEG admission wording is build-aware** (#90). `--list-formats` distinguishes the default-enabled baseline
+  subset with independent V1 verification from codec-only builds that require `--formats jpeg`.
+
 ## [0.15.0] - 2026-10-30
 
 ### Added
@@ -336,12 +351,12 @@ The binary is the same size.
 
 ### Removed
 
-- **The winget channel.** `packaging/winget/` — nine versions of three manifests and a verifier, 152 KiB —
-  described a submission to `microsoft/winget-pkgs` that never happened, plus a `windows-latest` CI job, two
-  tests and twenty lines of submission instructions to keep the fiction consistent (issue #56). Windows
-  installs from the release zip: download `tzim-x86_64-pc-windows-msvc.zip`, extract it, put `tzim.exe` on
-  `PATH`. The Homebrew formula and the Linux packages are untouched, and a future package manager on Windows
-  belongs in the release workflow, submitted from CI, not in nine hand-kept directories here.
+- **The former winget channel.** `packaging/winget/` — nine versions of three manifests and a verifier, 152 KiB —
+  described a community submission that never happened, plus a `windows-latest` CI job, two tests and submission
+  instructions (issue #56). Windows then installed from the release ZIP: download
+  `tzim-x86_64-pc-windows-msvc.zip`, extract it, put `tzim.exe` on `PATH`. The Homebrew formula and Linux
+  packages were untouched. Issue #87 later reintroduced manifests only for local `--manifest` use; no community
+  source publication, submission or lookup is provided.
 - **`T-NEST-04`**, with the reason written where the row was: there is no per-child "remaining budget" —
   `zip::check_limits` refuses the archive on the sum of its declared uncompressed sizes before decompressing
   anything, so a child is never larger than `--max-uncompressed` and the per-entry guard cannot fire. The
@@ -504,11 +519,11 @@ exist at all.
 
 ### Changed
 
-- **The winget manifest is checked against the release, not just against a schema.** `winget validate` reads
-  the manifest as a document; `packaging/winget/verify.sh` downloads the archive it names and compares the
-  hash, which is the half that decides whether an install works. A new `winget` CI job on Windows runs both,
-  and `docs/releases.md` §5 has the exact steps for submitting to `microsoft/winget-pkgs`, since that pull
-  request is against a repository this project does not own.
+- **Historical winget manifests were checked against the release, not just against a schema.** `winget validate`
+  read the manifest as a document; `packaging/winget/verify.sh` downloaded the named archive and compared its
+  hash. The old Windows CI job ran both checks. That community-submission route is retired; issue #87 provides
+  generated manifests for local `winget install --manifest` use only, with no community-source publication or
+  lookup.
 - **`install.sh` verifies what it downloads.** The archive is checked against `SHA256SUMS` before it is
   unpacked; a mismatch prints both hashes and exits instead of falling back to a source build that would hide
   it. The installed binary is run once before success is reported, and with `TZIM_VERSION` set the reported
