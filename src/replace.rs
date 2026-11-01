@@ -483,7 +483,10 @@ mod tests {
         drop(temp);
         let _ = fs::remove_dir_all(&dir);
 
-        assert!(release_thread_result.is_ok(), "lock releaser thread panicked");
+        assert!(
+            release_thread_result.is_ok(),
+            "lock releaser thread panicked"
+        );
         assert!(
             released.load(Ordering::Acquire),
             "the real destination handle was not released"
