@@ -606,14 +606,46 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Package, then build from the package
+      - name: Package, then build and verify its version
         id: package
         continue-on-error: true
         shell: bash
         run: |
-          set -o pipefail
-          cargo package --locked 2>&1 | tee /tmp/tzim-package.log
-          ls -l target/package/
+          set -euo pipefail
+          exec > >(tee /tmp/tzim-package.log) 2>&1
+
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/tzim-metadata.json"
+          python3 - "$RUNNER_TEMP/tzim-metadata.json" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              metadata = json.load(stream)
+          members = set(metadata["workspace_members"])
+          root = [
+              package for package in metadata["packages"]
+              if package["id"] in members and package["name"] == "tzim"
+          ]
+          if len(root) != 1 or root[0]["version"] != "0.16.1":
+              raise SystemExit(f"expected root package tzim 0.16.1, got {root!r}")
+          print(f"cargo metadata --locked root package: {root[0]['name']} {root[0]['version']}")
+          PY
+
+          cargo package --locked
+          archive=target/package/tzim-0.16.1.crate
+          test -f "$archive"
+          ls -l "$archive"
+          package_root="$RUNNER_TEMP/tzim-package"
+          target_dir="$RUNNER_TEMP/tzim-package-target"
+          rm -rf "$package_root" "$target_dir"
+          mkdir -p "$package_root"
+          tar -xzf "$archive" -C "$package_root"
+          package_manifest="$package_root/tzim-0.16.1/Cargo.toml"
+          CARGO_TARGET_DIR="$target_dir" cargo build --locked \
+            --manifest-path "$package_manifest" --bin tzim
+          version="$("$target_dir/debug/tzim" --version)"
+          printf 'packaged binary version: %s\n' "$version"
+          test "$version" = 'tzim 0.16.1'
 
       - name: Publish failure log
         if: steps.package.outcome == 'failure'

@@ -27,7 +27,28 @@ printf '%s\n' "$BASELINE_SHA" > "$OUT/baseline-head.txt"
 git status --short > "$OUT/candidate-status.txt"
 printf '%s\n' 'tzim --dry-run --no-progress --json --jobs 1 --formats zip INPUT' > "$OUT/command.txt"
 git worktree add --detach "$WORKTREE" "$BASELINE_SHA" > "$OUT/worktree.log" 2>&1
-cmp "$WORKTREE/Cargo.lock" "$ROOT/Cargo.lock"
+python3 - "$WORKTREE/Cargo.lock" "$ROOT/Cargo.lock" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+
+def normalized_lock(path):
+    lock = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    root = [package for package in lock["package"] if package["name"] == "tzim"]
+    if len(root) != 1:
+        raise SystemExit(f"expected one root tzim package in {path}, found {len(root)}")
+    version = root[0]["version"]
+    root[0]["version"] = "<root-tzim-version>"
+    return lock, version
+
+
+baseline_lock, baseline_version = normalized_lock(sys.argv[1])
+candidate_lock, candidate_version = normalized_lock(sys.argv[2])
+if baseline_lock != candidate_lock:
+    raise SystemExit("Cargo.lock dependency records differ beyond the root tzim version")
+print(f"Cargo.lock dependency graph matches (tzim {baseline_version} -> {candidate_version})")
+PY
 
 (
   cd "$WORKTREE"

@@ -61,6 +61,9 @@ release workflow is the only place a shipped binary is produced.
 
 ### 2.1 Install channels
 
+The explicit v0.16.1 examples below are intended for use after the release tag and assets exist; this
+release-candidate preparation does not create either.
+
 | Channel | Platforms | Command |
 | --- | --- | --- |
 | shell script | Linux x86_64 and aarch64, macOS arm64 and Intel | `curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh \| sh` |
@@ -70,17 +73,19 @@ release workflow is the only place a shipped binary is produced.
 | cargo | anything with Rust 1.88+ | `cargo install tzim --locked` from [crates.io](https://crates.io/crates/tzim) |
 | archive | everything else | unpack the tarball or zip, put `tzim` on `PATH` |
 | PowerShell installer | Windows x64 | download `packaging/windows/install.ps1` as a file, inspect it, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tzim-install.ps1 -Version latest` |
-| winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.16.0` |
+| winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.16.1` |
 
 `install.sh` prefers the prebuilt binary and falls back to a source build only when the selected GitHub
 release has no asset for the current platform, or when the platform has no prebuilt target. A download,
 checksum, unpacking, executable or version error is fatal and never gets reported as an absent asset. A 404 for
 a mirrored asset is also fatal: a broken or incomplete mirror must not silently switch installation sources.
 
-**A version pin is honored on every path.** With `TZIM_VERSION=0.16.0`, a missing GitHub release asset may
-fall back to `cargo install --git ... --tag v0.16.0`; it never uses `TZIM_BRANCH` or `main`. Without a version
-pin, source fallback uses `TZIM_BRANCH` (default `main`). Both the downloaded executable and cargo-built
-executable are run with `--version` before and after installation; a pinned version must match exactly. The
+**A version pin is honored on every path.** For v0.16.1, once its release tag is published, a pinned
+`TZIM_VERSION=0.16.1` with a missing GitHub release asset may fall back to
+`cargo install --git ... --tag v0.16.1`; it never uses `TZIM_BRANCH` or `main`. This RC preparation does
+not create that tag or its assets. Without a version pin, source fallback uses `TZIM_BRANCH` (default `main`).
+Both the downloaded executable and cargo-built executable are run with `--version` before and after
+installation; a pinned version must match exactly. The
 PowerShell installer resolves `latest` once through the GitHub Releases API, then uses fixed-tag URLs for the
 Windows ZIP and `SHA256SUMS`; explicit versions skip the latest lookup. It verifies the exact archive hash, ZIP
 entries and executable version before an atomic per-user replacement, and records only its own files and PATH
@@ -105,12 +110,13 @@ binaries but not hashes — an explicit, documented risk rather than a silent on
 
 ### Windows manual ZIP fallback
 
-The Windows ZIP remains available for users who prefer to install it themselves. These fixed-tag v0.16.0
-commands download the archive and its matching checksum file, verify the exact asset before extraction, and
-leave user `PATH` unchanged. For a later release, change `$tag` so both requests still use the same tag.
+The Windows ZIP remains available for users who prefer to install it themselves. The following commands
+target v0.16.1 once its tag and release assets are published; this RC preparation does not create them.
+They download the archive and matching checksum file, verify the exact asset before extraction, and leave
+user `PATH` unchanged. For another release, change `$tag` and the output directory to match.
 
 ```powershell
-$tag = 'v0.16.0'
+$tag = 'v0.16.1'
 $asset = 'tzim-x86_64-pc-windows-msvc.zip'
 $base = "https://github.com/RUdolf1517/tzim/releases/download/$tag"
 Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile ".\$asset"
@@ -120,7 +126,7 @@ if ($checksumMatches.Count -ne 1) { throw 'SHA256SUMS has no unique exact entry 
 $expected = $checksumMatches[0].Matches[0].Groups[1].Value
 $actual = (Get-FileHash -LiteralPath ".\$asset" -Algorithm SHA256).Hash
 if ($actual -ine $expected) { throw "SHA-256 mismatch: expected $expected, received $actual." }
-$destination = Join-Path $env:LOCALAPPDATA 'Programs\tzim-manual-v0.16.0'
+$destination = Join-Path $env:LOCALAPPDATA 'Programs\tzim-manual-v0.16.1'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Expand-Archive -LiteralPath ".\$asset" -DestinationPath $destination -Force
 & (Join-Path $destination 'tzim.exe') --version
@@ -154,7 +160,7 @@ files before anything is touched.
 
 - **No MSI or MSIX package.** Windows gets a per-user PowerShell installer and local winget manifests.
   Winget manifests are consumed only from a locally generated/extracted version directory, for example
-  `winget install --manifest .\winget-local\0.16.0`; they are
+  `winget install --manifest .\winget-local\0.16.1`; they are
   not published to or searched through a community source. The release workflow generates the manifest
   bundle from the exact Windows asset SHA-256 and includes it in the release checksums.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
