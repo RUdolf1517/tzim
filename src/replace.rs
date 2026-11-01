@@ -1,5 +1,5 @@
 use std::fs::{self, File, FileTimes, OpenOptions};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -155,12 +155,74 @@ pub fn changed_since(path: &Path, snap: &Snapshot) -> bool {
     false
 }
 
+/// Windows reports a transient destination handle conflict as
+/// ERROR_SHARING_VIOLATION. Retry only that documented condition; in
+/// particular, ERROR_ACCESS_DENIED can also mean ordinary permissions and is
+/// never retried without stronger evidence.
+#[cfg(any(windows, test))]
+const WINDOWS_ERROR_SHARING_VIOLATION: i32 = 32;
+
+#[cfg(any(windows, test))]
+fn is_windows_sharing_violation(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(WINDOWS_ERROR_SHARING_VIOLATION)
+}
+
+/// Retry a rename only for the specific Windows sharing-violation code, with
+/// two bounded retries and a short increasing delay. Compiled for tests on all
+/// platforms so its policy can be exercised without Windows-specific fixtures.
+#[cfg(any(windows, test))]
+fn retry_sharing_violation<F>(mut rename: F) -> io::Result<()>
+where
+    F: FnMut() -> io::Result<()>,
+{
+    let mut retries = 0u32;
+    loop {
+        match rename() {
+            Err(error) if retries < 2 && is_windows_sharing_violation(&error) => {
+                retries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(retries)));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        retry_sharing_violation(|| fs::rename(from, to))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to)
+    }
+}
+
 /// Applies the original attributes to the candidate, flushes it, and replaces
 /// the destination in a single rename.
 ///
 /// The rename is the only step that changes the visible filesystem state, and it
 /// happens last: every earlier failure leaves the original untouched.
 pub fn commit(temp: &mut TempFile, dest: &Path, snap: &Snapshot, fsync: bool) -> io::Result<()> {
+    commit_with_directory_sync(temp, dest, snap, fsync, sync_dir, |error| {
+        let stderr = io::stderr();
+        let mut diagnostics = stderr.lock();
+        write_directory_sync_warning(error, &mut diagnostics);
+    })
+}
+
+fn commit_with_directory_sync<S, W>(
+    temp: &mut TempFile,
+    dest: &Path,
+    snap: &Snapshot,
+    fsync: bool,
+    sync_directory: S,
+    mut warn: W,
+) -> io::Result<()>
+where
+    S: FnOnce(&Path) -> io::Result<()>,
+    W: FnMut(&io::Error),
+{
     if let Some(file) = temp.file.as_mut() {
         apply_attributes(file, snap)?;
         if fsync {
@@ -170,13 +232,22 @@ pub fn commit(temp: &mut TempFile, dest: &Path, snap: &Snapshot, fsync: bool) ->
     // Close the handle before renaming: required on Windows, harmless elsewhere.
     temp.file.take();
 
-    fs::rename(temp.path(), dest)?;
+    rename_with_retry(temp.path(), dest)?;
     temp.disarm();
 
     if fsync {
-        sync_dir(dest);
+        if let Err(error) = sync_directory(dest) {
+            warn(&error);
+        }
     }
     Ok(())
+}
+
+fn write_directory_sync_warning(error: &io::Error, diagnostics: &mut dyn Write) {
+    let _ = writeln!(
+        diagnostics,
+        "tzim: warning: replacement completed, but directory sync failed: {error}"
+    );
 }
 
 fn apply_attributes(file: &File, snap: &Snapshot) -> io::Result<()> {
@@ -209,19 +280,21 @@ fn apply_attributes(file: &File, snap: &Snapshot) -> io::Result<()> {
     Ok(())
 }
 
-/// Flushes the directory entry so the rename survives a crash. Best effort: a
-/// failure here is reported as a warning by the caller, not as a failed file.
+/// Flushes the directory entry so the rename survives a crash. A failure here
+/// is reported as a warning after the successful replacement, not as a failed file.
 #[cfg(unix)]
-fn sync_dir(dest: &Path) {
-    if let Some(dir) = dest.parent() {
-        if let Ok(handle) = File::open(dir) {
-            let _ = handle.sync_all();
-        }
-    }
+fn sync_dir(dest: &Path) -> io::Result<()> {
+    let dir = dest
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    File::open(dir)?.sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_dir(_dest: &Path) {}
+fn sync_dir(_dest: &Path) -> io::Result<()> {
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {
@@ -254,4 +327,194 @@ mod tests {
         assert!(changed_since(&path, &snap));
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn windows_sharing_violation_is_the_only_retryable_code() {
+        let sharing = io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION);
+        let access_denied = io::Error::from_raw_os_error(5);
+        let generic_permission = io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "permission denied",
+        );
+        assert!(is_windows_sharing_violation(&sharing));
+        assert!(!is_windows_sharing_violation(&access_denied));
+        assert!(!is_windows_sharing_violation(&generic_permission));
+    }
+
+    #[test]
+    fn sharing_violation_gets_at_most_two_retries() {
+        let mut attempts = 0;
+        let result = retry_sharing_violation(|| {
+            attempts += 1;
+            if attempts < 3 {
+                Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3, "initial attempt plus two retries");
+
+        attempts = 0;
+        let result = retry_sharing_violation(|| {
+            attempts += 1;
+            Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+        });
+        assert_eq!(
+            result.unwrap_err().raw_os_error(),
+            Some(WINDOWS_ERROR_SHARING_VIOLATION),
+        );
+        assert_eq!(attempts, 3, "the retry budget must be bounded");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_real_sharing_violation_retries_after_the_handle_is_released() {
+        use std::process::{Command, Stdio};
+
+        let dir = std::env::temp_dir().join(format!(
+            "tzim-sharing-lock-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let destination = dir.join("destination.bin");
+        fs::write(&destination, b"original").unwrap();
+        let mut temp = TempFile::create(&dir).unwrap();
+        temp.file().write_all(b"replacement").unwrap();
+        drop(temp.file.take());
+
+        let script = dir.join("hold-without-delete-share.ps1");
+        let ready = dir.join("handle-ready");
+        let release = dir.join("release-handle");
+        fs::write(
+            &script,
+            r#"param([string]$Path, [string]$Ready, [string]$Release)
+$stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+[System.IO.File]::WriteAllText($Ready, "locked")
+while (-not [System.IO.File]::Exists($Release)) { Start-Sleep -Milliseconds 2 }
+$stream.Dispose()
+"#,
+        )
+        .unwrap();
+        let mut child = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(&script)
+            .arg(&destination)
+            .arg(&ready)
+            .arg(&release)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Windows CI provides powershell.exe");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !ready.exists() && std::time::Instant::now() < deadline {
+            if child.try_wait().unwrap().is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        if !ready.exists() {
+            let _ = fs::write(&release, b"release");
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = fs::remove_dir_all(&dir);
+            panic!("PowerShell did not acquire the destination handle");
+        }
+
+        let mut attempts = 0;
+        let mut first_error_code = None;
+        let result = retry_sharing_violation(|| {
+            attempts += 1;
+            let result = fs::rename(temp.path(), &destination);
+            if attempts == 1 {
+                if let Err(error) = &result {
+                    first_error_code = error.raw_os_error();
+                    let _ = fs::write(&release, b"release");
+                }
+            }
+            result
+        });
+        let release_result = fs::write(&release, b"release");
+        if release_result.is_err() {
+            let _ = child.kill();
+        }
+        let child_status = child.wait().unwrap();
+        let destination_bytes = fs::read(&destination).unwrap_or_default();
+        let temp_exists = temp.path().exists();
+        if result.is_ok() {
+            temp.disarm();
+        }
+        drop(temp);
+        let _ = fs::remove_dir_all(&dir);
+
+        assert!(release_result.is_ok(), "could not signal the lock holder");
+        assert!(child_status.success(), "PowerShell lock holder failed");
+        assert_eq!(first_error_code, Some(WINDOWS_ERROR_SHARING_VIOLATION));
+        assert!(result.is_ok(), "rename retry failed: {result:?}");
+        assert_eq!(attempts, 2, "release during the first backoff should allow retry 1");
+        assert_eq!(destination_bytes, b"replacement");
+        assert!(!temp_exists);
+    }
+
+    #[test]
+    fn access_denied_is_not_retried() {
+        let mut attempts = 0;
+        let result = retry_sharing_violation(|| {
+            attempts += 1;
+            Err(io::Error::from_raw_os_error(5))
+        });
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+        assert_eq!(attempts, 1);
+    }
+
+
+    #[test]
+    fn post_rename_directory_sync_failures_warn_once_and_keep_success() {
+        for (index, message) in ["directory open failed", "directory fsync failed"]
+            .into_iter()
+            .enumerate()
+        {
+            let dir = std::env::temp_dir().join(format!(
+                "tzim-dir-sync-{}-{index}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            let dest = dir.join("file.bin");
+            fs::write(&dest, b"original").unwrap();
+            let snapshot = Snapshot::of(&fs::symlink_metadata(&dest).unwrap());
+            let mut temp = TempFile::create(&dir).unwrap();
+            temp.file().write_all(b"replacement").unwrap();
+
+            let mut diagnostics = Vec::new();
+            let result = commit_with_directory_sync(
+                &mut temp,
+                &dest,
+                &snapshot,
+                true,
+                |_| Err(io::Error::other(message)),
+                |error| write_directory_sync_warning(error, &mut diagnostics),
+            );
+
+            assert!(result.is_ok(), "directory sync must not undo a rename");
+            assert_eq!(fs::read(&dest).unwrap(), b"replacement");
+            let diagnostics = String::from_utf8(diagnostics).unwrap();
+            assert_eq!(diagnostics.lines().count(), 1, "{diagnostics:?}");
+            assert!(diagnostics.contains("replacement completed, but directory sync failed"));
+            assert!(diagnostics.contains(message));
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
 }

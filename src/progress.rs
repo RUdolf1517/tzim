@@ -145,6 +145,49 @@ fn rate(recent: &VecDeque<Instant>) -> Option<f64> {
     Some((recent.len() - 1) as f64 / seconds)
 }
 
+// Binary-size experiment for #107. Kept test-only until a same-SHA release A/B
+// proves both byte-identical formatting and a smaller final binary.
+#[cfg(test)]
+fn format_rate_fixed_candidate(rate: f64) -> String {
+    debug_assert!(rate.is_finite() && rate >= 0.0);
+    let bits = rate.to_bits();
+    let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let (significand, power) = if exponent_bits == 0 {
+        (u128::from(fraction), -1074)
+    } else {
+        (u128::from((1u64 << 52) | fraction), exponent_bits - 1023 - 52)
+    };
+
+    // Exact rate × 10 is significand × 5 × 2^(power + 1). The progress
+    // rate's real domain (at most WINDOW - 1 completions per nanosecond) fits
+    // in u64 tenths; no floating-point multiply or decimal formatter is used.
+    let numerator = significand * 5;
+    let scaled_power = power + 1;
+    let tenths = if scaled_power >= 0 {
+        let shift = scaled_power as u32;
+        debug_assert!(shift < 128 && numerator <= (u128::MAX >> shift));
+        numerator << shift
+    } else {
+        let shift = (-scaled_power) as u32;
+        if shift >= 128 {
+            0
+        } else {
+            let quotient = numerator >> shift;
+            let remainder = numerator & ((1u128 << shift) - 1);
+            let halfway = 1u128 << (shift - 1);
+            if remainder > halfway || (remainder == halfway && quotient & 1 == 1) {
+                quotient + 1
+            } else {
+                quotient
+            }
+        }
+    };
+    debug_assert!(tenths <= u64::MAX as u128);
+    let tenths = tenths as u64;
+    format!("  {}.{}/s", tenths / 10, tenths % 10)
+}
+
 /// Everything one frame of the line is built from. Split out from the running
 /// state so the composition can be tested without sleeping.
 #[derive(Clone)]
@@ -574,6 +617,89 @@ mod tests {
         assert!(rate(&recent).is_none());
         recent.push_back(started + Duration::from_millis(500));
         assert!((rate(&recent).unwrap() - 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn fixed_rate_candidate_matches_float_formatting_at_rounding_boundaries() {
+        let mut rates = vec![
+            0.0,
+            f64::from_bits(1),
+            f64::MIN_POSITIVE,
+            1e-20,
+            0.049_999_999_999_999_996,
+            0.05,
+            0.15,
+            0.25,
+            1.05,
+            1.15,
+            999_999.95,
+            1_000_000.05,
+            1_000_000_000.05,
+            7_000_000_000.05,
+        ];
+        for tenths in 0..=10_000u64 {
+            let boundary = (tenths as f64 + 0.5) / 10.0;
+            if boundary > 0.0 {
+                rates.push(f64::from_bits(boundary.to_bits() - 1));
+            }
+            rates.push(boundary);
+            rates.push(f64::from_bits(boundary.to_bits() + 1));
+        }
+        for nanos in [1, 2, 3, 10, 1_000, 1_000_000, 1_000_000_000, 60_000_000_000] {
+            let seconds = Duration::from_nanos(nanos).as_secs_f64();
+            for completions in 1..WINDOW {
+                rates.push(completions as f64 / seconds);
+            }
+        }
+        for rate in rates {
+            let expected = format!("  {rate:.1}/s");
+            let actual = format_rate_fixed_candidate(rate);
+            assert_eq!(actual, expected, "rate={rate:?}, bits={:#018x}", rate.to_bits());
+        }
+    }
+
+    #[test]
+    fn fixed_rate_candidate_keeps_full_frame_bytes_across_layouts() {
+        let started = Instant::now();
+        for interval in [
+            Duration::from_nanos(1),
+            Duration::from_nanos(3),
+            Duration::from_millis(100),
+            Duration::from_secs(1),
+            Duration::from_secs(10),
+            Duration::from_secs(86_400),
+        ] {
+            let recent = VecDeque::from([started, started + interval]);
+            let current_rate = rate(&recent).unwrap();
+            let baseline_tail = format!("  {current_rate:.1}/s");
+            let candidate_tail = format_rate_fixed_candidate(current_rate);
+            assert_eq!(candidate_tail, baseline_tail);
+            for style in [Style::plain(), Style::new(true)] {
+                for width in [20usize, 30, 80, 200] {
+                    let frame = Frame {
+                        started,
+                        now: started + Duration::from_secs(5),
+                        finished: 2,
+                        total: 100,
+                        recent: recent.clone(),
+                        style,
+                        tick: 3,
+                    };
+                    let line = frame.render(width);
+                    let candidate_line = line.replace(&baseline_tail, &candidate_tail);
+                    assert_eq!(candidate_line, line);
+                    assert!(cells(&candidate_line) <= width);
+                    assert!(!candidate_line.contains('\n'));
+                    if width == 200 {
+                        assert!(candidate_line.contains("eta "));
+                    }
+                }
+            }
+        }
+
+        let no_rate = frame(2, 100, Duration::from_secs(5));
+        assert!(rate(&no_rate.recent).is_none());
+        assert!(!no_rate.render(200).contains("/s"));
     }
 
     #[test]

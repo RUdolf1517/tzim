@@ -45,10 +45,13 @@ For every file, in this order (`src/pipeline.rs::run`, then `src/replace.rs::com
 14. **Apply metadata** to the candidate: permission bits, modification time, access time.
 15. **Flush** the candidate with `fsync` (unless `--no-fsync`), then close the handle — required before a
     rename on Windows.
-16. **Replace.** A single `rename(candidate, original)` in the same directory, then disarm the guard. On
-    POSIX this is atomic.
-17. **Flush the directory** on Unix (`fsync` on the directory handle, best effort) so the rename itself is
-    durable. A failure here is a warning, not a failed file.
+16. **Replace.** A `rename(candidate, original)` in the same directory, then disarm the guard. On POSIX
+    this is atomic. Windows retries only raw OS error 32 (`ERROR_SHARING_VIOLATION`), at most twice, with
+    25 ms and 50 ms backoffs; error 5 (`ERROR_ACCESS_DENIED`) and every other error are not retried.
+17. **Flush the directory** on Unix, unless `--no-fsync` (`open` the parent directory and `fsync` its
+    handle, best effort) so the rename itself is durable. An open or sync failure after rename produces
+    exactly one warning on stderr; the replacement remains `optimized`, exit `0`, and the report on stdout
+    (including JSON) remains separate and valid.
 
 No step truncates, edits or rewrites the original in place. There is no point in the procedure where the
 original is partially written.
@@ -140,11 +143,12 @@ one is the intended behaviour and is not yet exercised.
 | Candidate cannot be created (permissions, read-only directory) | error | `failed` (`io`) | `1` | — |
 | Disk full while writing the candidate | temporary file removed | `failed` (`io`) | `1` | — |
 | Verification fails | run aborts immediately | `failed` (`verify`) | `4` | — |
+| Replacement fails after successful verification but before rename | temporary file removed; original intact; `after == before`, `saved == 0`, guarantee `byte_identical` | `failed` (`io`) | `1` | `commit_failure_keeps_original_size_and_byte_identical_outcome` |
 | Candidate is not smaller | temporary file removed | `already_optimal` | `0` | `already_optimal_zip_is_left_alone` |
 | Original changed during processing | operation aborted | `failed` (`internal`/`io`) | `1` | — (`snapshot_roundtrip_detects_changes` covers the predicate, not the race) |
 | `fsync` of the candidate fails | temporary file removed, nothing replaced | `failed` (`io`) | `1` | — |
-| `rename` fails | temporary file removed | `failed` (`io`) | `1` | — |
-| Directory `fsync` fails after a successful rename | warning on stderr | `optimized` | `0` | — |
+| `rename` fails | temporary file removed; Windows retries only error 32 twice | `failed` (`io`) | `1` | `sharing_violation_gets_at_most_two_retries`, `access_denied_is_not_retried` |
+| Parent-directory open or `fsync` fails after a successful rename | exactly one warning on stderr; JSON stdout is unchanged | `optimized` | `0` | `post_rename_directory_sync_failures_warn_once_and_keep_success` |
 | `SIGINT` / `SIGTERM` | process ends, temporary file may remain | — | `130` / `143` | — |
 | Panic (`panic = "abort"`) | process aborts, temporary file may remain | — | `134` on Unix | — |
 | `SIGKILL` | temporary file may remain | — | `137` | — |
@@ -167,9 +171,9 @@ bug in Tzim.
   `(device, inode, length, mtime)` can detect.
 - **External writer:** the same mechanism applies. A file that changes mid-run is not replaced, and the
   user is told so.
-- **Windows:** an open handle held by another process can cause the `rename` to fail. That surfaces as a
-  normal error with the original intact; it is retried only if the failure is explicitly a sharing
-  violation, at most twice, with a short backoff.
+- **Windows:** an open handle held by another process can cause the `rename` to fail. Only raw OS error
+  32 (`ERROR_SHARING_VIOLATION`) is retried, at most twice (25 ms then 50 ms); error 5
+  (`ERROR_ACCESS_DENIED`) and all other failures surface immediately with the original intact.
 
 ---
 

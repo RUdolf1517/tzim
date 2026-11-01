@@ -36,9 +36,15 @@ struct Inspected {
     adler: u32,
 }
 
-/// Parses the header, validates the trailer and confirms the body is exactly one
-/// complete DEFLATE stream. Anything else is refused.
-fn inspect(data: &[u8]) -> Result<Inspected> {
+#[derive(Clone, Copy)]
+struct ZlibStream<'a> {
+    header: [u8; 2],
+    body: &'a [u8],
+    stored_adler: u32,
+}
+
+/// Parses the header and trailer fields without reading the DEFLATE body.
+fn parse_stream(data: &[u8]) -> Result<ZlibStream<'_>> {
     if data.len() < MIN_STREAM {
         return Err(Error::parse("zlib: shorter than a header and a checksum"));
     }
@@ -77,23 +83,34 @@ fn inspect(data: &[u8]) -> Result<Inspected> {
         )));
     }
 
-    let body = &data[2..data.len() - TRAILER];
-    let (payload_len, adler) = inflate(body)?;
-
-    let stored = u32::from_be_bytes([
+    let stored_adler = u32::from_be_bytes([
         data[data.len() - 4],
         data[data.len() - 3],
         data[data.len() - 2],
         data[data.len() - 1],
     ]);
-    if stored != adler {
+    Ok(ZlibStream {
+        header,
+        body: &data[2..data.len() - TRAILER],
+        stored_adler,
+    })
+}
+
+/// Parses the complete stream, validates its trailer and checks that DEFLATE
+/// consumed exactly the body. Anything else is refused.
+fn inspect(data: &[u8]) -> Result<Inspected> {
+    inspect_stream(&parse_stream(data)?)
+}
+
+fn inspect_stream(stream: &ZlibStream<'_>) -> Result<Inspected> {
+    let (payload_len, adler) = inflate(stream.body)?;
+    if stream.stored_adler != adler {
         return Err(Error::parse(
             "zlib: Adler-32 does not match the compressed data; the file is corrupt",
         ));
     }
-
     Ok(Inspected {
-        header,
+        header: stream.header,
         payload_len,
         adler,
     })
@@ -125,13 +142,7 @@ fn inflate(body: &[u8]) -> Result<(u64, u32)> {
                 adler.update(&buffer[..n]);
                 total += n as u64;
             }
-            Err(_) if total == 0 => {
-                return Err(Error::unsupported(
-                    "zlib: nothing decodes behind the header; either the header was a \
-                     coincidence or the stream is too short to tell (the file is untouched)",
-                ));
-            }
-            Err(e) => return Err(Error::Io(e)),
+            Err(e) => return Err(classify_deflate_error(total, e)),
         }
     }
     if decoder.total_in() != body.len() as u64 {
@@ -140,6 +151,17 @@ fn inflate(body: &[u8]) -> Result<(u64, u32)> {
         ));
     }
     Ok((total, adler.finish()))
+}
+
+fn classify_deflate_error(total: u64, error: io::Error) -> Error {
+    if total == 0 {
+        Error::unsupported(
+            "zlib: nothing decodes behind the header; either the header was a \
+             coincidence or the stream is too short to tell (the file is untouched)",
+        )
+    } else {
+        Error::Io(error)
+    }
 }
 
 /// Adler-32 (RFC 1950 §9). Twenty lines of arithmetic, and a checksum is not an
@@ -175,6 +197,114 @@ impl Adler32 {
     fn finish(&self) -> u32 {
         (self.b << 16) | self.a
     }
+}
+
+struct StreamScan<'a> {
+    stream: ZlibStream<'a>,
+    decoder: flate2::read::DeflateDecoder<&'a [u8]>,
+    adler: Adler32,
+    payload_len: u64,
+    result: Option<Result<Inspected>>,
+}
+
+impl<'a> StreamScan<'a> {
+    fn new(stream: ZlibStream<'a>) -> Self {
+        StreamScan {
+            decoder: flate2::read::DeflateDecoder::new(stream.body),
+            stream,
+            adler: Adler32::new(),
+            payload_len: 0,
+            result: None,
+        }
+    }
+
+    /// Fills one comparison block, accounting for short reads just like the
+    /// verifier's previous bytewise comparison loop. `None` means the decoder
+    /// failed; the precise error is kept in `result`.
+    fn read_fully(&mut self, buffer: &mut [u8]) -> Option<usize> {
+        if self.result.is_some() {
+            return None;
+        }
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match self.decoder.read(&mut buffer[filled..]) {
+                Ok(0) => {
+                    self.result = Some(self.finish());
+                    return Some(filled);
+                }
+                Ok(n) => {
+                    self.adler.update(&buffer[filled..filled + n]);
+                    self.payload_len += n as u64;
+                    filled += n;
+                }
+                Err(error) => {
+                    self.result = Some(Err(classify_deflate_error(self.payload_len, error)));
+                    return None;
+                }
+            }
+        }
+        Some(filled)
+    }
+
+    fn finish(&self) -> Result<Inspected> {
+        if self.decoder.total_in() != self.stream.body.len() as u64 {
+            return Err(Error::refused(
+                "zlib: trailing data after the stream (concatenated zlib files are not supported)",
+            ));
+        }
+        let adler = self.adler.finish();
+        if self.stream.stored_adler != adler {
+            return Err(Error::parse(
+                "zlib: Adler-32 does not match the compressed data; the file is corrupt",
+            ));
+        }
+        Ok(Inspected {
+            header: self.stream.header,
+            payload_len: self.payload_len,
+            adler,
+        })
+    }
+}
+
+fn inflate_pair(
+    stream_a: ZlibStream<'_>,
+    stream_b: ZlibStream<'_>,
+) -> Result<(Inspected, Inspected, bool)> {
+    let mut a = StreamScan::new(stream_a);
+    let mut b = StreamScan::new(stream_b);
+    let mut equal = true;
+    let mut buffer_a = [0u8; 64 * 1024];
+    let mut buffer_b = [0u8; 64 * 1024];
+
+    while a.result.is_none() || b.result.is_none() {
+        let na = if a.result.is_none() {
+            let count = a.read_fully(&mut buffer_a);
+            if let Some(Err(error)) = &a.result {
+                return Err(Error::verify(format!("original: {error}")));
+            }
+            count.unwrap_or(0)
+        } else {
+            0
+        };
+        let nb = if b.result.is_none() {
+            b.read_fully(&mut buffer_b).unwrap_or(0)
+        } else {
+            0
+        };
+        if na != nb || buffer_a[..na] != buffer_b[..nb] {
+            equal = false;
+        }
+    }
+
+    let info_a = a
+        .result
+        .expect("the original stream scan must finish")
+        .map_err(|error| Error::verify(format!("original: {error}")))?;
+    let info_b = b
+        .result
+        .expect("the candidate stream scan must finish")
+        .map_err(|error| Error::verify(format!("candidate: {error}")))?;
+    Ok((info_a, info_b, equal))
 }
 
 fn recompress(body: &[u8], zopfli: bool) -> Result<Vec<u8>> {
@@ -232,47 +362,32 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
 
 pub fn verify(a: &[u8], b: &[u8], opts: &Options) -> Result<()> {
     let _ = opts;
-    let info_a = inspect(a).map_err(|e| Error::verify(format!("original: {e}")))?;
-    let info_b = inspect(b).map_err(|e| Error::verify(format!("candidate: {e}")))?;
+    let stream_a = parse_stream(a).map_err(|error| Error::verify(format!("original: {error}")))?;
+    let stream_b = match parse_stream(b) {
+        Ok(stream) => stream,
+        Err(candidate_error) => {
+            // Preserve the old diagnostic priority: the original is fully
+            // validated before a candidate-side parse error is reported.
+            inspect_stream(&stream_a)
+                .map_err(|error| Error::verify(format!("original: {error}")))?;
+            return Err(Error::verify(format!("candidate: {candidate_error}")));
+        }
+    };
+    let (info_a, info_b, payloads_equal) = inflate_pair(stream_a, stream_b)?;
 
     if info_a.header != info_b.header {
         return Err(Error::verify("zlib header was not preserved"));
     }
-    if a[a.len() - TRAILER..] != b[b.len() - TRAILER..] {
+    if stream_a.stored_adler != stream_b.stored_adler {
         return Err(Error::verify("zlib Adler-32 trailer was not preserved"));
     }
     if info_a.payload_len != info_b.payload_len || info_a.adler != info_b.adler {
         return Err(Error::verify("zlib payload length or Adler-32 changed"));
     }
-
-    let body_a = &a[2..a.len() - TRAILER];
-    let body_b = &b[2..b.len() - TRAILER];
-    let mut da = flate2::read::DeflateDecoder::new(body_a);
-    let mut db = flate2::read::DeflateDecoder::new(body_b);
-    let mut ba = [0u8; 64 * 1024];
-    let mut bb = [0u8; 64 * 1024];
-    loop {
-        let na = read_fully(&mut da, &mut ba)?;
-        let nb = read_fully(&mut db, &mut bb)?;
-        if na != nb || ba[..na] != bb[..nb] {
-            return Err(Error::verify("decompressed payload differs"));
-        }
-        if na == 0 {
-            break;
-        }
+    if !payloads_equal {
+        return Err(Error::verify("decompressed payload differs"));
     }
     Ok(())
-}
-
-fn read_fully(reader: &mut impl Read, buf: &mut [u8]) -> Result<usize> {
-    let mut filled = 0;
-    while filled < buf.len() {
-        match reader.read(&mut buf[filled..])? {
-            0 => break,
-            n => filled += n,
-        }
-    }
-    Ok(filled)
 }
 
 #[cfg(test)]
@@ -307,6 +422,55 @@ mod tests {
         }
     }
 
+    /// The pre-streaming verifier kept as a test oracle: it validates each
+    /// stream in `inspect`, then decodes both bodies again for byte comparison.
+    fn legacy_verify(a: &[u8], b: &[u8]) -> Result<()> {
+        let info_a = inspect(a).map_err(|error| Error::verify(format!("original: {error}")))?;
+        let info_b = inspect(b).map_err(|error| Error::verify(format!("candidate: {error}")))?;
+        if info_a.header != info_b.header {
+            return Err(Error::verify("zlib header was not preserved"));
+        }
+        if a[a.len() - TRAILER..] != b[b.len() - TRAILER..] {
+            return Err(Error::verify("zlib Adler-32 trailer was not preserved"));
+        }
+        if info_a.payload_len != info_b.payload_len || info_a.adler != info_b.adler {
+            return Err(Error::verify("zlib payload length or Adler-32 changed"));
+        }
+
+        let mut decoder_a = flate2::read::DeflateDecoder::new(&a[2..a.len() - TRAILER]);
+        let mut decoder_b = flate2::read::DeflateDecoder::new(&b[2..b.len() - TRAILER]);
+        let mut buffer_a = [0u8; 64 * 1024];
+        let mut buffer_b = [0u8; 64 * 1024];
+        loop {
+            let na = legacy_read_fully(&mut decoder_a, &mut buffer_a)?;
+            let nb = legacy_read_fully(&mut decoder_b, &mut buffer_b)?;
+            if na != nb || buffer_a[..na] != buffer_b[..nb] {
+                return Err(Error::verify("decompressed payload differs"));
+            }
+            if na == 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn legacy_read_fully(reader: &mut impl Read, buffer: &mut [u8]) -> Result<usize> {
+        let mut filled = 0;
+        while filled < buffer.len() {
+            match reader.read(&mut buffer[filled..])? {
+                0 => break,
+                n => filled += n,
+            }
+        }
+        Ok(filled)
+    }
+
+    fn assert_verifier_matches_legacy(a: &[u8], b: &[u8]) {
+        let expected = legacy_verify(a, b).map_err(|error| error.to_string());
+        let actual = verify(a, b, &opts()).map_err(|error| error.to_string());
+        assert_eq!(actual, expected, "streaming verifier changed the legacy result");
+    }
+
     #[test]
     fn a_weakly_compressed_stream_gets_smaller_and_stays_identical() {
         let payload = compressible(200_000);
@@ -319,6 +483,7 @@ mod tests {
         }
         assert!(out.len() < original.len());
         verify(&original, &out, &opts()).unwrap();
+        assert_verifier_matches_legacy(&original, &out);
 
         let mut decoded = Vec::new();
         flate2::read::ZlibDecoder::new(&out[..])
@@ -478,6 +643,7 @@ mod tests {
         let mut tampered = out.clone();
         tampered[0] = 0x68; // CINFO 6, and no longer a valid check value
         assert!(verify(&original, &tampered, &opts()).is_err());
+        assert_verifier_matches_legacy(&original, &tampered);
     }
 
     #[test]
@@ -491,6 +657,71 @@ mod tests {
         other_payload[100] ^= 0xff;
         let other = build(&other_payload, 9);
         assert!(verify(&original, &other, &opts()).is_err());
+        assert_verifier_matches_legacy(&original, &other);
+    }
+
+    #[test]
+    fn streaming_verifier_preserves_diagnostic_priority_and_bytewise_checks() {
+        let payload = compressible(4096);
+        let original = build(&payload, 1);
+
+        // A different but valid FLEVEL is still a preserved-header violation.
+        let mut changed_header = original.clone();
+        let cmf = u16::from(changed_header[0]);
+        let base = 0x40u16; // FLEVEL=1, FDICT=0
+        let check = (0..32u16)
+            .find(|check| ((cmf << 8) | (base | check)).is_multiple_of(31))
+            .unwrap();
+        changed_header[1] = (base | check) as u8;
+        assert!(verify(&original, &changed_header, &opts())
+            .unwrap_err()
+            .to_string()
+            .contains("zlib header was not preserved"));
+        assert_verifier_matches_legacy(&original, &changed_header);
+
+        // A valid, changed payload reaches the historical trailer diagnostic
+        // before the length/Adler and bytewise comparisons.
+        let mut changed_payload = payload.clone();
+        changed_payload[100] ^= 0x80;
+        let changed_payload = build(&changed_payload, 1);
+        assert!(verify(&original, &changed_payload, &opts())
+            .unwrap_err()
+            .to_string()
+            .contains("zlib Adler-32 trailer was not preserved"));
+        assert_verifier_matches_legacy(&original, &changed_payload);
+
+        // These distinct three-byte payloads collide in Adler-32 and have the
+        // same length/header/trailer. Verification must still compare every byte.
+        let collision_a = build(&[10, 10, 10], 9);
+        let collision_b = build(&[11, 8, 11], 9);
+        assert_eq!(inspect(&collision_a).unwrap().adler, inspect(&collision_b).unwrap().adler);
+        assert!(verify(&collision_a, &collision_b, &opts())
+            .unwrap_err()
+            .to_string()
+            .contains("decompressed payload differs"));
+        assert_verifier_matches_legacy(&collision_a, &collision_b);
+
+        // Original-side failure still dominates a candidate header failure.
+        let mut invalid_original = vec![0x78, 0x9c];
+        invalid_original.extend_from_slice(&[0xff; 16]);
+        invalid_original.extend_from_slice(&[0, 0, 0, 1]);
+        let mut invalid_candidate = original.clone();
+        invalid_candidate[0] = 0x68;
+        let error = verify(&invalid_original, &invalid_candidate, &opts())
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("original: zlib: nothing decodes"), "{error}");
+        assert_verifier_matches_legacy(&invalid_original, &invalid_candidate);
+
+        // Trailing compressed bytes and an invalid candidate checksum remain
+        // classified as candidate verification failures, not payload diffs.
+        let mut trailing = original.clone();
+        trailing.insert(trailing.len() - TRAILER, 0);
+        assert_verifier_matches_legacy(&original, &trailing);
+        let mut wrong_adler = original.clone();
+        let last = wrong_adler.len() - 1;
+        wrong_adler[last] ^= 0xff;
+        assert_verifier_matches_legacy(&original, &wrong_adler);
     }
 
     #[test]
@@ -529,4 +760,62 @@ mod tests {
         a.update(&bytes);
         assert_eq!(a.finish(), 0x8E88_EF11);
     }
+
+    #[test]
+    #[ignore = "manual release-mode comparison of streaming and pre-change verifiers"]
+    fn streaming_verifier_microbenchmark() {
+        use std::time::{Duration, Instant};
+
+        fn median(mut samples: Vec<Duration>) -> Duration {
+            samples.sort_unstable();
+            samples[samples.len() / 2]
+        }
+
+        let payload = compressible(256 * 1024 * 1024);
+        let payload_len = payload.len();
+        let original = build(&payload, 1);
+        drop(payload);
+        let mut candidate = Vec::new();
+        assert!(matches!(
+            optimize(&original, &mut candidate, &opts()).unwrap(),
+            Cand::Written(_)
+        ));
+        assert_verifier_matches_legacy(&original, &candidate);
+
+        for _ in 0..2 {
+            verify(&original, &candidate, &opts()).unwrap();
+            legacy_verify(&original, &candidate).unwrap();
+        }
+        let mut streaming = Vec::new();
+        let mut legacy = Vec::new();
+        for iteration in 0..7 {
+            if iteration % 2 == 0 {
+                let start = Instant::now();
+                verify(&original, &candidate, &opts()).unwrap();
+                streaming.push(start.elapsed());
+                let start = Instant::now();
+                legacy_verify(&original, &candidate).unwrap();
+                legacy.push(start.elapsed());
+            } else {
+                let start = Instant::now();
+                legacy_verify(&original, &candidate).unwrap();
+                legacy.push(start.elapsed());
+                let start = Instant::now();
+                verify(&original, &candidate, &opts()).unwrap();
+                streaming.push(start.elapsed());
+            }
+        }
+        let streaming_median = median(streaming);
+        let legacy_median = median(legacy);
+        println!(
+            "zlib verify: payload={} bytes, input={} bytes, candidate={} bytes, samples=7; streaming_median_ms={:.3}, legacy_median_ms={:.3}, speedup={:.2}x",
+            payload_len,
+            original.len(),
+            candidate.len(),
+            streaming_median.as_secs_f64() * 1000.0,
+            legacy_median.as_secs_f64() * 1000.0,
+            legacy_median.as_secs_f64() / streaming_median.as_secs_f64(),
+        );
+    }
+
 }

@@ -334,16 +334,24 @@ version required for their decision is unknown.
 | `0` | No failures. Includes `already_optimal`, `unsupported` and `skipped` (including refused inputs). |
 | `1` | At least one file failed; the rest were processed. |
 | `2` | Invalid usage (unknown flag, no paths, conflicting flags). Nothing was processed. |
-| `3` | Fatal error: the run could not be completed (unreadable input root, out of memory, stdout closed). |
+| `3` | A fatal stdout/report write error other than `EPIPE`. |
 | `4` | **A verification failure occurred.** The affected file was not replaced; the run is aborted. |
 | `130` | Interrupted by `SIGINT`; produced by the shell/OS, not by Tzim. |
+
+A missing or unreadable input path remains a per-file failure and exits `1` (see [safety §5](safety.md#5-failure-modes)).
+Allocation exhaustion is not a managed exit `3`: with `panic = "abort"`, the process/OS determines the
+termination status. Neither condition changes the meaning of `3`.
 
 A **closed stdout** is not a failure and does not change the result. When the reader of a pipe goes away —
 `tzim . -r | head -1` — the write fails with `EPIPE`; Tzim says nothing further and exits with the code the
 run had already earned (`0`, `1` or `4`), because losing the report should not turn a failed file into a
-success. Any other write error on stdout (a full disk, a broken redirect) is a fatal error and exits `3`.
+success. Any other write error on stdout (a full disk, a broken redirect) is a fatal report-write error and
+exits `3`, unless verification failure code `4` was already earned; in that combination `4` wins and the write
+diagnostic still goes to stderr. Informational commands have no prior run result, so a non-`EPIPE` stdout write
+error exits `3` and `EPIPE` exits `0`.
 
-Precedence when several conditions apply: `2` (immediate) → `4` → `3` → `1` → `0`.
+Precedence when several conditions apply: `2` (immediate) → `4` → `3` → `1` → `0`; `EPIPE` preserves the
+already-earned optimization result instead of replacing it.
 
 A verification failure is always treated as a bug. It aborts the run even without `--fail-fast`, logs the
 contract clause that failed, and leaves the file untouched. Files that were already replaced earlier in the

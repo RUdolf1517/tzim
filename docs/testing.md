@@ -4,9 +4,9 @@ Related: [guarantees](guarantees.md) · [formats](formats.md) · [safety](safety
 
 A file optimizer is trusted or it is worthless. Tests are therefore not coverage theatre: the failure modes
 that damage user data are tested explicitly, and where a clause has no check, this document says so instead of
-implying one exists. There is no property-testing framework and no failure-injection harness here; what exists
-is 101 unit tests, 89 integration tests and 10 packaging tests, each asserting a case someone thought of. A
-green suite means those cases hold, not that the contract holds.
+implying one exists. There is no property-testing framework and only targeted failure-injection seams, not a
+general per-stage harness. The suite spans unit, integration and packaging tests; exact counts vary by feature
+set and target. A green suite means those cases hold, not that the contract holds.
 
 ---
 
@@ -16,13 +16,13 @@ These hold for every format and are tested as properties, not as anecdotes.
 
 | ID | Invariant | How it is tested |
 | --- | --- | --- |
-| I1 | The original is never modified unless the candidate passes all checks | every failure test reads the original back and compares it byte for byte; there is no per-stage injection, so a stage cannot be forced to fail on demand |
+| I1 | The original is never modified unless the candidate passes all checks | failure tests read the original back and compare it byte for byte; `commit_failure_keeps_original_size_and_byte_identical_outcome` injects a post-verification, pre-rename failure, but other stages are not all injectable |
 | I2 | A candidate is only used if strictly smaller | fixtures whose best candidate is larger (`already_optimal_zip_is_left_alone`, `tiff_already_deflated_small_file_is_left_alone`, `ico_with_only_bitmaps_is_already_optimal`); a candidate of **exactly** equal size has no test, and currently fails — see B1 in the 0.11.0 audit and issue #26 |
 | I3 | No metadata is removed | per-format inventory comparison, including unknown/private chunks and extra fields |
 | I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler may exist, so there is nothing to test |
 | I5 | Concurrent modification aborts the operation | **no test.** The `(device, inode, length, mtime)` re-check in `replace.rs` is exercised only by its unit test `snapshot_roundtrip_detects_changes`; nothing modifies a file mid-run |
 | I6 | The release-default JPEG V1 candidate is checked by an independent decoder | `independent_oracle_rejects_a_symmetric_huffman_mapping_negative_control` uses a DHT-symbol permutation whose same-reader/writer model agrees on coefficients but the independent decoder sees a different pixel image; it runs in default and all-features CI |
-| I7 | Replacement is atomic where the platform allows | `guard_removes_uncommitted_file` shows the guard deletes an uncommitted candidate; nothing asserts that `rename` is the last fallible operation, and no test kills a run between `fsync` and `rename` |
+| I7 | Replacement is atomic where the platform allows | `guard_removes_uncommitted_file` shows the guard deletes an uncommitted candidate; injected post-rename directory-sync failures preserve the successful outcome, but no test kills a run between `fsync` and `rename` |
 | I8 | Unparseable input is refused, never repaired | targeted tests per format — `corrupt_png_is_refused_and_left_untouched`, `truncated_zip_is_refused`, `corrupt_entry_crc_is_refused`, `jpeg_truncated_file_fails_and_is_untouched`, `tiff_truncated_file_fails_and_is_untouched`, `a_corrupt_adler32_is_refused_and_the_file_is_untouched` — not a corpus |
 | I9 | Presentation never changes results | `colour_is_absent_in_a_pipe_and_present_when_forced` and `json_is_never_coloured`; the comparison against the previous release's totals is **not** automated — the corpus keeps no baseline |
 
@@ -102,6 +102,7 @@ the behaviour. `docs/cli.md` and `guarantees.md` describe the limit that does ex
 | `T-ZIP-10` | Truncated archives and inconsistent local headers are refused |
 | `T-ZIP-11` | Every entry's decompressed bytes and CRC are identical |
 | `T-ZIP-12` | `--max-uncompressed` and `--max-ratio` are enforced (decompression-bomb guard) — `t_zip_12_max_uncompressed_is_enforced`, and the ratio limit in an earlier test |
+| `T-ZIP-13` | A non-empty STORE-only archive returns `already_optimal` / `no_smaller_candidate` without changing the file; parse, limits, signed-archive denial, stored-size and CRC checks still precede the early return — `store_only_zip_fast_path_preserves_already_optimal_reason_and_exit_code`, `store_only_fast_path_keeps_parse_limit_deny_size_and_crc_checks` |
 
 ### ICO / APNG / nested / JPEG
 
@@ -224,6 +225,9 @@ the "not covered" table in §3 and in issue #35, not here.
 | `T-FS-14` | A symlink cycle under `--follow-symlinks` terminates and is reported: the kernel's symlink-hop limit (ELOOP) stops it long before the 64-level guard, the path is `failed`, exit `1`, and the rest of the run is unaffected | `t_fs_14_a_symlink_cycle_terminates_and_is_reported` |
 | `T-FS-15` | A directory the process cannot write to is `failed` with the original intact; skipped-with-a-reason if the process is root, because 0555 would not bind | `t_fs_15_a_read_only_directory_is_a_failure_and_the_file_survives` |
 | `T-FS-16` | A tree deeper than 64 levels is refused at the limit while the files above it are still processed | `t_fs_16_a_tree_deeper_than_sixty_four_levels_is_refused` |
+| `T-FS-17` | A commit error injected after verification but before rename leaves the original byte-identical, with `after == before`, `saved == 0`, and guarantee `byte_identical` | `commit_failure_keeps_original_size_and_byte_identical_outcome` |
+| `T-FS-18` | The Windows rename retry policy accepts only raw error 32, makes at most two retries, and does not retry error 5; policy tests run on all platforms, and a Windows-only real locked-handle test releases during backoff | `windows_sharing_violation_is_the_only_retryable_code`, `sharing_violation_gets_at_most_two_retries`, `access_denied_is_not_retried`, `windows_real_sharing_violation_retries_after_the_handle_is_released` |
+| `T-FS-19` | Injected parent-directory open/sync errors after rename produce exactly one stderr warning while the replacement succeeds | `post_rename_directory_sync_failures_warn_once_and_keep_success` |
 
 ### `--strip-metadata`
 
@@ -329,7 +333,7 @@ handler may well support it, but nothing in this repository proves it does.
 
 ### Filesystem and environment tests
 
-Covered today, each by an integration test that asserts the original file is byte-identical afterwards:
+The user-facing filesystem cases below are integration tests that check the real binary and original file. The final three rows are focused unit tests with injected errors; they establish the commit/retry/warning policy, not an end-to-end OS failure for every filesystem.
 
 | Scenario | Expected | Test |
 | --- | --- | --- |
@@ -360,15 +364,16 @@ filesystem.
 
 ### Failure injection
 
-**Not implemented.** There is no `test-hooks` feature and no `TZIM_TEST_*` variable in this build; nothing
-here claims otherwise. What exists instead is structural: the candidate is a separate file owned by a guard,
-the rename is the only operation that changes the visible state, and the guard removes the candidate on every
-early return. The nearest evidence is therefore indirect — `guard_removes_uncommitted_file` in `src/replace.rs`
-and the integration tests that leave a file untouched when a run fails — rather than a hook that forces a
-failure at each stage.
+There is no `test-hooks` feature and no `TZIM_TEST_*` variable in this build. A few private seams exercise
+specific boundaries without adding release-time hooks: `commit_failure_keeps_original_size_and_byte_identical_outcome`
+injects a post-verification, pre-rename commit error; `post_rename_directory_sync_failures_warn_once_and_keep_success`
+injects a post-rename directory-sync error; and the Windows retry tests inject raw OS error values into the
+rename policy. These tests do not force every filesystem operation to fail, and they do not simulate a crash
+or power loss.
 
-Adding real hooks is a task of its own (it means a feature that must never reach a release build); until then
-this section describes an intention, not a mechanism.
+The candidate is still a separate file owned by a guard, the rename is the only operation that changes the
+visible state, and the guard removes the candidate on every early return. Exhaustive per-stage hooks would be
+a separate task because any such feature must never reach a release build.
 
 ### Property tests
 
