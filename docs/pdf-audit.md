@@ -422,7 +422,7 @@ and mean 0.09019490508048468%, neither a substitute for the registered metric. Q
 registered render differences were both zero. No PDF baseline, threshold, #80 authorization, default or repack
 policy changed.
 
-## 14. Current whole-corpus `measure-repro` baseline — hosted verification pending
+## 14. Current whole-corpus `measure-repro` baseline — hosted Python 3.12 verification passed
 
 The owner authorized the explicitly versioned `measure-repro-2026-10-31-v2` comparison after the old published
 figures disagreed with the full-SHA replay. The target is the [versioned baseline JSON](../.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json).
@@ -464,8 +464,12 @@ bytes total 734,998; Zopfli encoded bytes total 698,990; per-stream-minimum byte
 identity and asset hashes, options, full rows and integer totals are recorded in the [measurement status](measurement-status.md)
 and under `.github/scripts/measure-repro-baselines/`.
 
-The complete independent local replay passed under Python 3.11.2 and reproduced the sample-manifest and results
-JSONL byte-for-byte. Final hosted Python 3.12 verification is pending; no final green claim is made here. Any
-hosted mismatch must be reported exactly rather than used to retune the baseline. This comparison does not replace
-or modify the original PDF audit decision: #57 remains refused after measurement, #80 remains non-default and
-opt-in, repacking remains forbidden, and full PDF admission remains open.
+The complete independent local replay passed under Python 3.11.2 and reproduced the sample manifest and results
+JSONL byte-for-byte. Final hosted Python 3.12 verification then passed in run
+[41295550453](https://github.com/RUdolf1517/tzim/actions/runs/41295550453) at exact SHA
+`38380eb592fbe181287d061da1b897348e06da51`: guard tests, pinned corpus fetch, measurement, and versioned
+baseline comparison succeeded without discrepancy. This exact-SHA evidence is not relabelled for later commits;
+the present change is documentation-only. Any future hosted mismatch must be reported exactly rather than used
+to retune the baseline. This comparison does not replace or modify the original PDF audit decision: #57 remains
+refused after measurement, #80 remains non-default and opt-in, repacking remains forbidden, and full PDF
+admission remains open.

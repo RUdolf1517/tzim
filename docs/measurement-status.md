@@ -96,7 +96,7 @@ historical reports: `e18d84d` [comment `6541884360`](https://github.com/RUdolf15
 run [41239337100](https://github.com/RUdolf1517/tzim/actions/runs/41239337100) is also retained as a red
 pre-v2 result; it is provenance for, not verification of, the new baseline.
 
-### Owner-authorized `measure-repro-2026-10-31-v2` — hosted verification pending
+### Owner-authorized `measure-repro-2026-10-31-v2` — hosted Python 3.12 verification passed
 
 The versioned target is `.github/scripts/measure-repro-baselines/measure-repro-2026-10-31-v2.json`, ID
 `measure-repro-2026-10-31-v2` (SHA-256
@@ -139,9 +139,12 @@ The PDF display cells are mean 0.42% at two printed decimals, positive share 69%
 rendered pages. The v2 comparison retains unrounded run values and JSONL rows; the owner-supplied source report's
 unrounded mean/qpdf mean were 0.42168367731371126% and 1.6538774233025468%. An independent local Python 3.11.2
 replay recomputed 0.4216836773137112% and 1.6538774233025473%; each matches the unchanged published precision.
-The complete local baseline comparator passed under Python 3.11.2, but the final hosted Python 3.12 run has
-not yet been performed, so no final green status is claimed. Any hosted mismatch must be reported exactly; the
-baseline is not to be retuned.
+The complete local baseline comparator passed under Python 3.11.2. The separate hosted Python 3.12 run
+[41295550453](https://github.com/RUdolf1517/tzim/actions/runs/41295550453) then passed at exact SHA
+`38380eb592fbe181287d061da1b897348e06da51`: guard tests, pinned corpus fetch, measurement, and versioned
+baseline comparison all succeeded with no discrepancy. That is exact-SHA evidence for that commit, not a
+measurement claim for any later commit; this documentation-only status update does not relabel it. Any future
+hosted mismatch must be reported exactly; the baseline is not to be retuned.
 
 The new Zopfli protocol is `pdf-zopfli-small-v1`, not a reproduction of the unavailable historical 150-file
 sample. From the same 1,009 accepted PDFs, it selects the 878 inputs of at most 65,536 bytes after global
@@ -161,8 +164,12 @@ zero errors, 137 positive/13 zero/0 negative files; median 0.1706970680653952%, 
 Q3 1.9785271611044837%, mean 1.3268557692507912%, positive share 91.33333333333333%, maximum
 12.518280198888563%. Stream-byte totals are 734,998 Flate, 698,990 Zopfli-encoded, and 698,978 after the
 per-stream minimum; sample input bytes total 1,345,005. All 150 paths/input hashes and per-file integer results
-are versioned in the baseline assets. The independent local Python 3.11.2 replay matched the sample-manifest and
-results JSONL byte-for-byte; the hosted Python 3.12 final run remains pending and must be a separate execution.
+are versioned in the baseline assets. The independent local Python 3.11.2 replay matched the sample manifest and results JSONL byte-for-byte. The
+separate hosted Python 3.12 execution in run
+[41295550453](https://github.com/RUdolf1517/tzim/actions/runs/41295550453) passed at exact SHA
+`38380eb592fbe181287d061da1b897348e06da51` and confirmed the versioned sample selection, all 150 result rows,
+and the aggregate without discrepancy. The hosted evidence remains bound to that exact SHA and is not relabelled
+by this documentation-only status update.
 
 ## Historical PR #84 execution status — 2026-10-30
 
