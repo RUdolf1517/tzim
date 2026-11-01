@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.15.0"
+  version "0.16.0"
   license "MIT"
 
   livecheck do
@@ -27,30 +27,30 @@ class Tzim < Formula
   # formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-aarch64-apple-darwin.tar.gz"
-      sha256 "694a8bc3b6b9c8101f2e897ee08e846de6c4dfaf0b676f4f325aeb8e5b3971e9"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.0/tzim-aarch64-apple-darwin.tar.gz"
+      sha256 "29da3142910fe08a01a00df939ea659f94e928b7ec8a13e6224640a426f5878e"
     end
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-apple-darwin.tar.gz"
-      sha256 "6423743eebcee8530fe6a197d47cd83d08fb9342e25d35f3469b98beb0e8b79e"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.0/tzim-x86_64-apple-darwin.tar.gz"
+      sha256 "4b7802f5add9a946a4f48260bafbebaeafa1e8497fba431270b88ecb99921f3f"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "9aad42cc0aee78dcc2362a821fc0b470fb4a1e295a14a4da20d44defd86ba91a"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.0/tzim-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "5a4cc1c6fe0d19f81f66744f47d0fd3ef352546e33828b1a6c1c765350c221c7"
     end
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "51fe2bc436c5b3f97e01885b0ad792d46e61a7d45637adf4d2a8bbe993559c39"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.0/tzim-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "b9db40ec0270b96a0ad624569c0dd4cf28918bb23be37586e22bb200024edc09"
     end
   end
 
   # Archives from v0.11.0 onwards ship the manual page and the three
   # completions next to the binary, so the formula installs the same
   # documentation the .deb, the .rpm and the repository carry. The guards keep
-  # older pinned archives installable; the v0.15.0 archives include all of these.
+  # older pinned archives installable; the v0.16.0 archives include all of these.
   def install
     bin.install "tzim"
     man1.install "man/tzim.1" if File.exist?("man/tzim.1")
