@@ -180,7 +180,7 @@ fn is_windows_rename_sharing_conflict(error: &io::Error, destination: &Path) -> 
 /// handle disallows DELETE, Windows returns ERROR_SHARING_VIOLATION (32); an
 /// ordinary access-control denial remains code 5 and is not treated as a lock.
 #[cfg(windows)]
-fn has_delete_sharing_conflict(destination: &Path) -> bool {
+fn delete_access_probe_error(destination: &Path) -> Option<i32> {
     use std::os::windows::fs::OpenOptionsExt;
 
     const DELETE_ACCESS: u32 = 0x0001_0000;
@@ -189,10 +189,15 @@ fn has_delete_sharing_conflict(destination: &Path) -> bool {
     options
         .access_mode(DELETE_ACCESS)
         .share_mode(SHARE_READ_WRITE_DELETE);
-    matches!(
-        options.open(destination),
-        Err(error) if error.raw_os_error() == Some(WINDOWS_ERROR_SHARING_VIOLATION)
-    )
+    options
+        .open(destination)
+        .err()
+        .and_then(|error| error.raw_os_error())
+}
+
+#[cfg(windows)]
+fn has_delete_sharing_conflict(destination: &Path) -> bool {
+    delete_access_probe_error(destination) == Some(WINDOWS_ERROR_SHARING_VIOLATION)
 }
 
 /// Retry a rename only when the caller proves a sharing conflict, with two
@@ -472,6 +477,7 @@ $stream.Dispose()
             panic!("PowerShell did not acquire the destination handle");
         }
 
+        let locked_probe_error = delete_access_probe_error(&destination);
         let attempts = std::cell::Cell::new(0);
         let mut first_error_code = None;
         let result = retry_sharing_violation(
@@ -509,6 +515,11 @@ $stream.Dispose()
 
         assert!(release_result.is_ok(), "could not signal the lock holder");
         assert!(child_status.success(), "PowerShell lock holder failed");
+        assert_eq!(
+            locked_probe_error,
+            Some(WINDOWS_ERROR_SHARING_VIOLATION),
+            "DELETE-access probe did not expose the lock: {locked_probe_error:?}"
+        );
         assert!(
             matches!(
                 first_error_code,
