@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Reproducible #107 experiment: baseline and an isolated test-only formatter
-# candidate are built from this exact checkout with identical Rust/Cargo flags.
+# Reproducible #107 experiment: compare the original float formatter with the
+# production fixed-point formatter from this exact checkout, using identical
+# Rust/Cargo settings on the same runner.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -10,6 +11,7 @@ OUT="${1:-${RUNNER_TEMP:-/tmp}/tzim-progress-ab}"
 BIN="$ROOT/target/$TARGET/release/tzim"
 mkdir -p "$OUT"
 
+git rev-parse HEAD > "$OUT/source-sha.txt"
 rustc -Vv > "$OUT/rustc.txt"
 cargo -V > "$OUT/cargo.txt"
 rustup target list --installed > "$OUT/rust-targets.txt"
@@ -18,6 +20,8 @@ musl-gcc --version > "$OUT/musl-gcc.txt"
 size --version > "$OUT/size.txt"
 cargo tree --locked --edges normal > "$OUT/cargo-tree.txt"
 cargo tree --locked --no-default-features --edges normal > "$OUT/cargo-tree-minimal.txt"
+sha256sum Cargo.lock .github/scripts/measure-progress-ab.sh .github/workflows/ci.yml \
+  > "$OUT/build-inputs.sha256"
 
 build_one() {
   local name=$1
@@ -34,31 +38,45 @@ build_one() {
   size -A "$OUT/$name" > "$OUT/$name.sections.txt"
 }
 
-build_one baseline-default default
-build_one baseline-minimal minimal
+# Preserve the production candidate. The baseline below is derived from this
+# same source SHA by changing only the rate-formatting call and removing the
+# helper, so unrelated source and dependencies are identical on both sides.
+cp src/progress.rs "$OUT/candidate-progress.rs"
+restore_candidate() {
+  cp "$OUT/candidate-progress.rs" src/progress.rs
+}
+trap restore_candidate EXIT
 
 python3 - <<'PY'
 from pathlib import Path
+
 p = Path("src/progress.rs")
 s = p.read_text()
-marker = "#[cfg(test)]\nfn format_rate_fixed_candidate(rate: f64) -> String {"
-replacement = "fn format_rate_fixed_candidate(rate: f64) -> String {"
-if s.count(marker) != 1:
-    raise SystemExit("could not find the unique test-only #107 candidate formatter")
-s = s.replace(marker, replacement, 1)
-old = 'let rate_text = rate(&self.recent).map(|r| format!("  {r:.1}/s"));'
-new = "let rate_text = rate(&self.recent).map(format_rate_fixed_candidate);"
-if s.count(old) != 1:
+helper_start = "// Format the rate without pulling in the general-purpose float formatter."
+helper_end = "/// Everything one frame of the line is built from."
+if s.count(helper_start) != 1 or s.count(helper_end) != 1:
+    raise SystemExit("could not find the unique #107 formatter implementation")
+start = s.index(helper_start)
+end = s.index(helper_end, start)
+s = s[:start] + s[end:]
+
+candidate = "let rate_text = rate(&self.recent).map(format_rate_fixed_tenths);"
+baseline = 'let rate_text = rate(&self.recent).map(|r| format!("  {r:.1}/s"));'
+if s.count(candidate) != 1:
     raise SystemExit("could not find the unique production rate-formatting call")
-s = s.replace(old, new, 1)
+s = s.replace(candidate, baseline, 1)
 p.write_text(s)
 PY
 
-# Exact differential checks first, then the ordinary and all-feature suites on
-# the candidate checkout. The normal CI matrix independently tests the baseline.
-cargo test --locked --lib progress::tests::fixed_rate_candidate_matches_float_formatting_at_rounding_boundaries \
+build_one baseline-default default
+build_one baseline-minimal minimal
+restore_candidate
+
+# Differential tests establish byte-for-byte formatter and frame equivalence;
+# the ordinary/all-feature suites gate the production candidate as well.
+cargo test --locked --lib progress::tests::fixed_rate_formatter_matches_float_formatting_at_rounding_boundaries \
   > "$OUT/candidate-rate-rounding-test.log" 2>&1
-cargo test --locked --lib progress::tests::fixed_rate_candidate_keeps_full_frame_bytes_across_layouts \
+cargo test --locked --lib progress::tests::fixed_rate_formatter_keeps_full_frame_bytes_across_layouts \
   > "$OUT/candidate-frame-test.log" 2>&1
 cargo test --locked > "$OUT/candidate-default-tests.log" 2>&1
 cargo test --locked --all-features > "$OUT/candidate-all-features-tests.log" 2>&1
@@ -71,8 +89,10 @@ import pathlib
 import sys
 
 out = pathlib.Path(sys.argv[1])
+
 def size(name):
     return int((out / f"{name}.bytes").read_text().strip())
+
 def sha(name):
     return (out / f"{name}.sha256").read_text().split()[0]
 
@@ -88,21 +108,26 @@ for label, baseline, candidate in [
         f"`{sha(baseline)}` | `{sha(candidate)}` |"
     )
 
+default_smaller = size("candidate-default") < size("baseline-default")
 summary = [
     "# Progress formatter A/B (#107)",
     "",
-    "Same checkout SHA, Rust toolchain, Cargo.lock, release profile and x86_64-unknown-linux-musl target.",
-    "The candidate changes only the displayed rate formatter; `rate` and ETA calculations are unchanged.",
+    f"Source SHA: `{(out / 'source-sha.txt').read_text().strip()}`.",
+    "Same checkout, Rust toolchain, Cargo.lock, release profile and x86_64-unknown-linux-musl target.",
+    "Baseline is this source with only the rate formatting restored to `format!(\"{r:.1}\")`; candidate is the production fixed-point formatter.",
+    "Differential rounding/frame tests and candidate default/all-feature tests run before the size comparison.",
     "",
     "| Build | Baseline bytes | Candidate bytes | Delta (candidate − baseline) | Baseline SHA-256 | Candidate SHA-256 |",
     "| --- | ---: | ---: | ---: | --- | --- |",
     *rows,
     "",
-    "Section reports are retained as `*-sections.txt`; the dependency tree and toolchain are retained too.",
-    "The candidate is adopted only if the differential tests pass and the full default release binary shrinks.",
+    f"Default release-size gate: {'PASS' if default_smaller else 'FAIL'} (candidate must be smaller).",
+    "Section reports, binaries, build logs, differential tests, source SHA, toolchain, dependency trees and input hashes are retained as artifacts.",
 ]
 (out / "summary.md").write_text("\n".join(summary) + "\n")
 print("\n".join(summary))
+if not default_smaller:
+    raise SystemExit("the production rate formatter must reduce the full default release binary")
 PY
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

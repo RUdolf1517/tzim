@@ -329,10 +329,14 @@ and no dead-code pass over this repository can remove it. `panic = "abort"` is a
 past it is `-Z build-std` on nightly, which §5.4 rejects.
 
 The other size lever was `core::fmt`, at 17.5 KiB: formatting a `u64` with `{}` pulls in the general
-formatter. `src/report.rs` now computes sizes, percentages and durations with integer arithmetic and its
-own two-decimal rounding, which removes that path from the binary without changing a single byte of output
-format. That is the shape of every remaining win here: code that is compiled but whose general case is
-never reached.
+formatter. `src/report.rs` computes sizes, percentages and durations with integer arithmetic and its own
+two-decimal rounding. The progress rate now uses exact integer tenths and nearest-even rounding instead of
+formatting a float. On the same checkout, Rust 1.88.0, release profile and `x86_64-unknown-linux-musl`
+target, the #107 A/B reduced the default binary from 1,135,160 to 1,114,680 bytes (−20,480) and the
+no-default-features binary from 590,328 to 573,944 bytes (−16,384); differential tests preserved the full
+rendered bytes. The production change is guarded by the same-checkout A/B job, which fails unless the
+candidate default binary is smaller. See the [measurement run](https://github.com/RUdolf1517/tzim/actions/runs/41324731829).
+That is the shape of every remaining win here: code that is compiled but whose general case is never reached.
 
 ### 5.4 Options rejected without measurement in this repository
 

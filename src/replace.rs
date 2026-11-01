@@ -162,7 +162,7 @@ pub fn changed_since(path: &Path, snap: &Snapshot) -> bool {
 #[cfg(any(windows, test))]
 const WINDOWS_ERROR_SHARING_VIOLATION: i32 = 32;
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn is_windows_sharing_violation(error: &io::Error) -> bool {
     error.raw_os_error() == Some(WINDOWS_ERROR_SHARING_VIOLATION)
 }
@@ -472,13 +472,14 @@ $stream.Dispose()
             panic!("PowerShell did not acquire the destination handle");
         }
 
-        let mut attempts = 0;
+        let attempts = std::cell::Cell::new(0);
         let mut first_error_code = None;
         let result = retry_sharing_violation(
             || {
-                attempts += 1;
+                let attempt = attempts.get() + 1;
+                attempts.set(attempt);
                 let result = fs::rename(temp.path(), &destination);
-                if attempts == 1 {
+                if attempt == 1 {
                     if let Err(error) = &result {
                         first_error_code = error.raw_os_error();
                     }
@@ -487,7 +488,7 @@ $stream.Dispose()
             },
             |error| {
                 let sharing_conflict = is_windows_rename_sharing_conflict(error, &destination);
-                if attempts == 1 && sharing_conflict {
+                if attempts.get() == 1 && sharing_conflict {
                     let _ = fs::write(&release, b"release");
                 }
                 sharing_conflict
@@ -517,7 +518,8 @@ $stream.Dispose()
         );
         assert!(result.is_ok(), "rename retry failed: {result:?}");
         assert_eq!(
-            attempts, 2,
+            attempts.get(),
+            2,
             "release during the first backoff should allow retry 1"
         );
         assert_eq!(destination_bytes, b"replacement");

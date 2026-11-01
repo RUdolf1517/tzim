@@ -271,8 +271,11 @@ observable result.
   the bar's 64 sub-cell positions, the rate over the last eight completions (and its refusal to invent one
   from a single sample), the ETA's two gates (three seconds and two completions), the `mm:ss` clock past the
   hour, clipping by display width against the wcwidth table, the width from `COLUMNS` with the 80-column
-  fallback, and the rule that a disabled, empty or non-terminal run creates no line at all. The escape
-  stripping is tested too: the pad-to-previous-width rule must count cells, not bytes.
+  fallback, and the rule that a disabled, empty or non-terminal run creates no line at all. The fixed-point
+  one-decimal rate formatter is differentially checked against float formatting at rounding boundaries and
+  neighboring values; full rendered lines are checked byte-for-byte across styles and widths. The hosted
+  #107 same-checkout A/B also gates the formatter on a smaller default release binary. The escape stripping
+  is tested too: the pad-to-previous-width rule must count cells, not bytes.
 - Memory budget (`src/pipeline.rs`): `worst_case_bytes` is asserted term by term — a file with no format, a
   PNG with and without dimensions in the header, a lying `IHDR` clamped by `--max-pixels`, a JPEG, a TIFF,
   FITS, PDF, FLAC, a ZIP charged its decompression ceiling, gzip charged nothing, and a `u64::MAX` length

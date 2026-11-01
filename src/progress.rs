@@ -145,10 +145,9 @@ fn rate(recent: &VecDeque<Instant>) -> Option<f64> {
     Some((recent.len() - 1) as f64 / seconds)
 }
 
-// Binary-size experiment for #107. Kept test-only until a same-SHA release A/B
-// proves both byte-identical formatting and a smaller final binary.
-#[cfg(test)]
-fn format_rate_fixed_candidate(rate: f64) -> String {
+// Format the rate without pulling in the general-purpose float formatter.
+// Same-SHA release measurements and differential tests are recorded in #107.
+fn format_rate_fixed_tenths(rate: f64) -> String {
     debug_assert!(rate.is_finite() && rate >= 0.0);
     let bits = rate.to_bits();
     let exponent_bits = ((bits >> 52) & 0x7ff) as i32;
@@ -238,7 +237,7 @@ impl Frame {
         let counter = format!("{}/{}", self.finished, self.total);
         self.style.paint_into(&mut line, Pen::Bold, &counter);
 
-        let rate_text = rate(&self.recent).map(|r| format!("  {r:.1}/s"));
+        let rate_text = rate(&self.recent).map(format_rate_fixed_tenths);
         let eta_text = rate(&self.recent)
             .filter(|_| elapsed >= ETA_AFTER)
             .and_then(|r| {
@@ -623,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_rate_candidate_matches_float_formatting_at_rounding_boundaries() {
+    fn fixed_rate_formatter_matches_float_formatting_at_rounding_boundaries() {
         let mut rates = vec![
             0.0,
             f64::from_bits(1),
@@ -656,7 +655,7 @@ mod tests {
         }
         for rate in rates {
             let expected = format!("  {rate:.1}/s");
-            let actual = format_rate_fixed_candidate(rate);
+            let actual = format_rate_fixed_tenths(rate);
             assert_eq!(
                 actual,
                 expected,
@@ -667,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_rate_candidate_keeps_full_frame_bytes_across_layouts() {
+    fn fixed_rate_formatter_keeps_full_frame_bytes_across_layouts() {
         let started = Instant::now();
         for interval in [
             Duration::from_nanos(1),
@@ -680,7 +679,7 @@ mod tests {
             let recent = VecDeque::from([started, started + interval]);
             let current_rate = rate(&recent).unwrap();
             let baseline_tail = format!("  {current_rate:.1}/s");
-            let candidate_tail = format_rate_fixed_candidate(current_rate);
+            let candidate_tail = format_rate_fixed_tenths(current_rate);
             assert_eq!(candidate_tail, baseline_tail);
             for style in [Style::plain(), Style::new(true)] {
                 for width in [20usize, 30, 80, 200] {
