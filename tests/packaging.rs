@@ -260,3 +260,13 @@ fn the_installer_verifies_what_it_downloads() {
     // source and hope.
     assert!(script.contains("SHA-256 mismatch"));
 }
+
+#[test]
+fn exit_code_help_and_docs_match_report_write_precedence() {
+    let help = tzim::cli::HELP;
+    let cli = read("docs/cli.md");
+    assert!(help.contains("stdout/report write error other than EPIPE"));
+    assert!(cli.contains("stdout/report write error other than `EPIPE`"));
+    assert!(cli.contains("Allocation exhaustion is not a managed exit `3`"));
+    assert!(cli.contains("unless verification failure code `4` was already earned"));
+}

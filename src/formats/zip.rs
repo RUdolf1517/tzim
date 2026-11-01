@@ -527,6 +527,21 @@ fn check_limits(archive: &Archive<'_>, opts: &Options) -> Result<()> {
     Ok(())
 }
 
+/// A non-empty STORE-only archive cannot gain from recompression. Keep this
+/// early return deliberately narrow: empty archives, metadata stripping and
+/// nested processing still follow the ordinary rebuild path, and callers must
+/// run every structural, policy, limit, size and CRC check before asking this
+/// predicate.
+fn store_only_no_gain(archive: &Archive<'_>, opts: &Options) -> bool {
+    !opts.strip_metadata
+        && !opts.nested
+        && !archive.entries.is_empty()
+        && archive
+            .entries
+            .iter()
+            .all(|entry| entry.method == METHOD_STORE)
+}
+
 // ---------------------------------------------------------------------------
 // Recompression
 // ---------------------------------------------------------------------------
@@ -621,6 +636,10 @@ pub fn optimize(data: &[u8], dst: &mut dyn Write, opts: &Options) -> Result<Cand
                 ));
             }
         }
+    }
+
+    if store_only_no_gain(&archive, opts) {
+        return Ok(Cand::NoGain);
     }
 
     let rebuilt = rebuild(data, &archive, opts)?;
@@ -1080,6 +1099,317 @@ fn read_fully(reader: &mut impl Read, buf: &mut [u8]) -> Result<usize> {
 mod tests {
     use super::*;
 
+    struct TestEntry {
+        name: Vec<u8>,
+        encoded: Vec<u8>,
+        comment: Vec<u8>,
+        method: u16,
+        time: u16,
+        date: u16,
+        crc: u32,
+        uncompressed_size: u32,
+    }
+
+    fn test_entry(
+        name: &[u8],
+        payload: &[u8],
+        method: u16,
+        level: u32,
+        comment: &[u8],
+        crc_delta: u32,
+        uncompressed_size: Option<u32>,
+    ) -> TestEntry {
+        let encoded = if method == METHOD_STORE {
+            payload.to_vec()
+        } else {
+            let mut encoder =
+                flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(level));
+            encoder.write_all(payload).unwrap();
+            encoder.finish().unwrap()
+        };
+        TestEntry {
+            name: name.to_vec(),
+            encoded,
+            comment: comment.to_vec(),
+            method,
+            time: 0x1234,
+            date: 0x5678,
+            crc: crc32fast::hash(payload) ^ crc_delta,
+            uncompressed_size: uncompressed_size.unwrap_or(payload.len() as u32),
+        }
+    }
+
+    fn test_zip(entries: &[TestEntry], archive_comment: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut offsets = Vec::with_capacity(entries.len());
+        for entry in entries {
+            offsets.push(out.len() as u32);
+            out.extend_from_slice(&LOCAL_SIG.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&entry.method.to_le_bytes());
+            out.extend_from_slice(&entry.time.to_le_bytes());
+            out.extend_from_slice(&entry.date.to_le_bytes());
+            out.extend_from_slice(&entry.crc.to_le_bytes());
+            out.extend_from_slice(&(entry.encoded.len() as u32).to_le_bytes());
+            out.extend_from_slice(&entry.uncompressed_size.to_le_bytes());
+            out.extend_from_slice(&(entry.name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes());
+            out.extend_from_slice(&entry.name);
+            out.extend_from_slice(&entry.encoded);
+        }
+
+        let cd_offset = out.len() as u32;
+        for (entry, local_offset) in entries.iter().zip(offsets) {
+            out.extend_from_slice(&CENTRAL_SIG.to_le_bytes());
+            out.extend_from_slice(&20u16.to_le_bytes()); // version made by
+            out.extend_from_slice(&20u16.to_le_bytes()); // version needed
+            out.extend_from_slice(&0u16.to_le_bytes()); // flags
+            out.extend_from_slice(&entry.method.to_le_bytes());
+            out.extend_from_slice(&entry.time.to_le_bytes());
+            out.extend_from_slice(&entry.date.to_le_bytes());
+            out.extend_from_slice(&entry.crc.to_le_bytes());
+            out.extend_from_slice(&(entry.encoded.len() as u32).to_le_bytes());
+            out.extend_from_slice(&entry.uncompressed_size.to_le_bytes());
+            out.extend_from_slice(&(entry.name.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // extra length
+            out.extend_from_slice(&(entry.comment.len() as u16).to_le_bytes());
+            out.extend_from_slice(&0u16.to_le_bytes()); // disk number start
+            out.extend_from_slice(&0u16.to_le_bytes()); // internal attributes
+            out.extend_from_slice(&0u32.to_le_bytes()); // external attributes
+            out.extend_from_slice(&local_offset.to_le_bytes());
+            out.extend_from_slice(&entry.name);
+            out.extend_from_slice(&entry.comment);
+        }
+        let cd_size = out.len() as u32 - cd_offset;
+        out.extend_from_slice(&EOCD_SIG.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        out.extend_from_slice(&cd_size.to_le_bytes());
+        out.extend_from_slice(&cd_offset.to_le_bytes());
+        out.extend_from_slice(&(archive_comment.len() as u16).to_le_bytes());
+        out.extend_from_slice(archive_comment);
+        out
+    }
+
+    fn options() -> Options {
+        Options {
+            zopfli: false,
+            max_pixels: 100_000_000,
+            max_uncompressed: 16 * 1024 * 1024,
+            max_ratio: 1000,
+            strip_metadata: false,
+            nested: false,
+            max_depth: 3,
+            depth: 0,
+            allow: crate::formats::Allow::default(),
+            fits_tile: false,
+        }
+    }
+
+    #[test]
+    fn store_only_fast_path_is_narrow_and_does_not_write() {
+        let archive = test_zip(
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                None,
+            )],
+            b"",
+        );
+        let parsed = parse_archive(&archive).unwrap();
+        let mut opts = options();
+        assert!(store_only_no_gain(&parsed, &opts));
+        let mut output = Vec::new();
+        assert!(matches!(
+            optimize(&archive, &mut output, &opts).unwrap(),
+            Cand::NoGain
+        ));
+        assert!(output.is_empty());
+
+        opts.strip_metadata = true;
+        assert!(!store_only_no_gain(&parsed, &opts));
+        opts.strip_metadata = false;
+        opts.nested = true;
+        assert!(!store_only_no_gain(&parsed, &opts));
+
+        let mixed = test_zip(
+            &[
+                test_entry(
+                    b"mimetype",
+                    b"application/test",
+                    METHOD_STORE,
+                    0,
+                    b"",
+                    0,
+                    None,
+                ),
+                test_entry(
+                    b"content.txt",
+                    &b"a deflated entry with useful repeated content\n".repeat(64),
+                    METHOD_DEFLATE,
+                    0,
+                    b"",
+                    0,
+                    None,
+                ),
+            ],
+            b"",
+        );
+        let parsed_mixed = parse_archive(&mixed).unwrap();
+        assert!(!store_only_no_gain(&parsed_mixed, &options()));
+    }
+
+    #[test]
+    fn store_only_fast_path_keeps_parse_limit_deny_size_and_crc_checks() {
+        let valid = test_zip(
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                None,
+            )],
+            b"",
+        );
+        let mut output = Vec::new();
+
+        let mut malformed = valid.clone();
+        malformed[0] ^= 1;
+        assert!(matches!(
+            optimize(&malformed, &mut output, &options()),
+            Err(Error::Parse(_))
+        ));
+
+        let mut limited = options();
+        limited.max_uncompressed = 1;
+        assert!(matches!(
+            optimize(&valid, &mut output, &limited),
+            Err(Error::Limit(_))
+        ));
+        let mut ratio_limited = options();
+        ratio_limited.max_ratio = 0;
+        assert!(matches!(
+            optimize(&valid, &mut output, &ratio_limited),
+            Err(Error::Limit(_))
+        ));
+
+        let signed = test_zip(
+            &[test_entry(
+                b"META-INF/SIGNATURE.SF",
+                b"signed payload",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                None,
+            )],
+            b"",
+        );
+        assert!(matches!(
+            optimize(&signed, &mut output, &options()),
+            Err(Error::Refused(_))
+        ));
+
+        let wrong_size = test_zip(
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                Some(b"stored bytes".len() as u32 + 1),
+            )],
+            b"",
+        );
+        assert!(matches!(
+            optimize(&wrong_size, &mut output, &options()),
+            Err(Error::Parse(message)) if message.contains("stored entry size mismatch")
+        ));
+
+        let wrong_crc = test_zip(
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                1,
+                None,
+            )],
+            b"",
+        );
+        assert!(matches!(
+            optimize(&wrong_crc, &mut output, &options()),
+            Err(Error::Parse(message)) if message.contains("stored entry CRC mismatch")
+        ));
+    }
+
+    #[test]
+    fn metadata_stripping_and_mixed_method_recompression_stay_on_rebuild_path() {
+        let stored = test_zip(
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"entry comment",
+                0,
+                None,
+            )],
+            b"archive comment",
+        );
+        let mut strip = options();
+        strip.strip_metadata = true;
+        let mut stripped = Vec::new();
+        assert!(matches!(
+            optimize(&stored, &mut stripped, &strip).unwrap(),
+            Cand::Written(_)
+        ));
+        verify(&stored, &stripped, &strip).unwrap();
+        let parsed = parse_archive(&stripped).unwrap();
+        assert!(parsed.comment.is_empty());
+        assert!(parsed.entries[0].comment.is_empty());
+        assert_eq!(read_u16(parsed.entries[0].local, 10).unwrap(), 0);
+        assert_eq!(read_u16(parsed.entries[0].local, 12).unwrap(), 0);
+
+        let payload = b"a deflated entry with useful repeated content\n".repeat(64);
+        let mixed = test_zip(
+            &[
+                test_entry(
+                    b"mimetype",
+                    b"application/test",
+                    METHOD_STORE,
+                    0,
+                    b"",
+                    0,
+                    None,
+                ),
+                test_entry(b"content.txt", &payload, METHOD_DEFLATE, 0, b"", 0, None),
+            ],
+            b"",
+        );
+        let mut rebuilt = Vec::new();
+        assert!(matches!(
+            optimize(&mixed, &mut rebuilt, &options()).unwrap(),
+            Cand::Written(_)
+        ));
+        assert!(rebuilt.len() < mixed.len());
+        verify(&mixed, &rebuilt, &options()).unwrap();
+        let parsed = parse_archive(&rebuilt).unwrap();
+        assert_eq!(parsed.entries[0].method, METHOD_STORE);
+        assert_eq!(parsed.entries[1].method, METHOD_DEFLATE);
+    }
+
     #[test]
     fn name_matching_ignores_case() {
         assert!(ends_with_ignore_case(b"META-INF/FOO.SF", ".sf"));
@@ -1131,5 +1461,6 @@ mod tests {
         d.extend_from_slice(&0u16.to_le_bytes());
         let archive = parse_archive(&d).unwrap();
         assert!(archive.entries.is_empty());
+        assert!(!store_only_no_gain(&archive, &options()));
     }
 }

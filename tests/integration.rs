@@ -1455,6 +1455,28 @@ fn corrupt_entry_crc_is_refused() {
 }
 
 #[test]
+fn store_only_zip_fast_path_preserves_already_optimal_reason_and_exit_code() {
+    let ws = Workspace::new("zip-store-only-fast-path");
+    let archive = build_zip(
+        &[ZipEntrySpec::stored("stored.txt", &compressible(8_192))],
+        b"",
+    );
+    let path = ws.write("stored.zip", &archive);
+
+    let (code, stdout, stderr) = run(&["stored.zip", "--json"], &ws.path);
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"status\":\"already_optimal\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"reason_code\":\"no_smaller_candidate\""),
+        "{stdout}"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), archive);
+}
+
+#[test]
 fn already_optimal_zip_is_left_alone() {
     let ws = Workspace::new("zip-optimal");
     // Level 9 leaves nothing to gain, so the archive must be reported as optimal.

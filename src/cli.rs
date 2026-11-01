@@ -166,7 +166,7 @@ EXIT CODES:
     0  success (including files that were already optimal, skipped or unsupported)
     1  at least one file failed; the others were still processed
     2  invalid usage; nothing was processed
-    3  fatal error; the run could not be completed
+    3  fatal stdout/report write error other than EPIPE
     4  verification failure; the affected file was not replaced
 
 COLOUR:

@@ -181,11 +181,23 @@ pub fn process_with_confirmation(
     process_inner(path, cfg, Some(confirm))
 }
 
+fn process_inner(path: &Path, cfg: &Config, confirm: Confirmation<'_>) -> Outcome {
+    process_inner_with_commit(path, cfg, confirm, replace::commit)
+}
+
 #[allow(unused_mut)]
-fn process_inner(path: &Path, cfg: &Config, mut confirm: Confirmation<'_>) -> Outcome {
+fn process_inner_with_commit<C>(
+    path: &Path,
+    cfg: &Config,
+    mut confirm: Confirmation<'_>,
+    commit: C,
+) -> Outcome
+where
+    C: FnOnce(&mut TempFile, &Path, &Snapshot, bool) -> std::io::Result<()>,
+{
     let started = Instant::now();
     let mut outcome = Outcome::new(path.to_path_buf(), Status::Skipped, 0);
-    let result = run(path, cfg, &mut outcome, &mut confirm);
+    let result = run(path, cfg, &mut outcome, &mut confirm, commit);
     if let Err(e) = result {
         outcome.reason_code = Some(ReasonCode::for_error(&e));
         match e {
@@ -211,12 +223,16 @@ fn process_inner(path: &Path, cfg: &Config, mut confirm: Confirmation<'_>) -> Ou
     outcome
 }
 
-fn run(
+fn run<C>(
     path: &Path,
     cfg: &Config,
     outcome: &mut Outcome,
     confirm: &mut Confirmation<'_>,
-) -> Result<()> {
+    commit: C,
+) -> Result<()>
+where
+    C: FnOnce(&mut TempFile, &Path, &Snapshot, bool) -> std::io::Result<()>,
+{
     #[cfg(not(feature = "fits"))]
     let _ = confirm;
 
@@ -410,15 +426,17 @@ fn run(
         }
     }
 
-    outcome.after = written;
-
     if replace::changed_since(path, &snapshot) {
         return Err(Error::Io(std::io::Error::other(
             "the file changed while it was being processed",
         )));
     }
 
-    replace::commit(&mut temp, path, &snapshot, !cfg.no_fsync)?;
+    commit(&mut temp, path, &snapshot, !cfg.no_fsync)?;
+    // Publish the candidate size only after the atomic replacement succeeded.
+    // Any commit failure leaves `after == before`, so failed outcomes truthfully
+    // retain the byte-identical guarantee and report zero bytes saved.
+    outcome.after = written;
     outcome.status = Status::Optimized;
     Ok(())
 }
@@ -427,6 +445,18 @@ fn run(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[cfg(feature = "gzip")]
+    fn gzip_member(payload: &[u8], level: u32) -> Vec<u8> {
+        let mut out = vec![0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 255];
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(level));
+        std::io::Write::write_all(&mut encoder, payload).unwrap();
+        out.extend_from_slice(&encoder.finish().unwrap());
+        out.extend_from_slice(&crc32fast::hash(payload).to_le_bytes());
+        out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        out
+    }
 
     fn config() -> Config {
         Config {
@@ -834,6 +864,72 @@ mod tests {
     fn missing_path_is_a_failure() {
         let outcome = process(Path::new("/nonexistent/tzim-test-file.png"), &config());
         assert_eq!(outcome.status, Status::Failed);
+    }
+
+    #[cfg(feature = "gzip")]
+    #[test]
+    fn commit_failure_keeps_original_size_and_byte_identical_outcome() {
+        let dir = std::env::temp_dir().join(format!("tzim-commit-fail-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("input.gz");
+        let payload =
+            b"A repetitive payload that compresses significantly at level nine.\n".repeat(256);
+        let original = gzip_member(&payload, 0);
+        fs::write(&path, &original).unwrap();
+        let cfg = config();
+        #[cfg(feature = "fits")]
+        let confirm: Confirmation<'_> = None;
+        #[cfg(not(feature = "fits"))]
+        let confirm: Confirmation<'_> = std::marker::PhantomData;
+
+        let outcome = process_inner_with_commit(
+            &path,
+            &cfg,
+            confirm,
+            |temp, destination, snapshot, fsync| {
+                assert_eq!(destination, path.as_path());
+                assert_eq!(snapshot.len, original.len() as u64);
+                assert!(!fsync);
+                let candidate = fs::read(temp.path()).unwrap();
+                assert!(candidate.len() < original.len());
+                Err(std::io::Error::other("injected replacement failure"))
+            },
+        );
+
+        assert_eq!(outcome.status, Status::Failed);
+        assert_eq!(outcome.before, original.len() as u64);
+        assert_eq!(outcome.after, outcome.before);
+        assert_eq!(outcome.saved(), 0);
+        assert_eq!(outcome.guarantee(), crate::report::Guarantee::ByteIdentical);
+        let summary =
+            crate::report::summarize(std::slice::from_ref(&outcome), std::time::Duration::ZERO);
+        assert_eq!(summary.before, summary.after);
+        let mut json = Vec::new();
+        crate::report::print_json(
+            &mut json,
+            std::slice::from_ref(&outcome),
+            &summary,
+            false,
+            false,
+        )
+        .unwrap();
+        let json = String::from_utf8(json).unwrap();
+        assert!(json.contains("\"status\":\"failed\""), "{json}");
+        assert!(
+            json.contains(&format!(
+                "\"before\":{},\"after\":{},\"saved\":0,\"guarantee\":\"byte_identical\"",
+                outcome.before, outcome.before
+            )),
+            "{json}"
+        );
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "candidate must be removed"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -67,6 +67,28 @@ fn finish(written: io::Result<()>) -> ExitCode {
     }
 }
 
+/// Resolve a failed report write without losing a more important file result.
+/// `EPIPE` is silent and preserves the result code; other write failures are
+/// diagnostic and return 3 unless verification failure 4 was already earned.
+fn finish_report_write(
+    written: io::Result<()>,
+    result_code: i32,
+    diagnostics: &mut dyn Write,
+) -> i32 {
+    match written {
+        Ok(()) => result_code,
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => result_code,
+        Err(error) => {
+            let _ = writeln!(diagnostics, "tzim: cannot write to stdout: {error}");
+            if result_code == 4 {
+                4
+            } else {
+                3
+            }
+        }
+    }
+}
+
 /// Diagnostics go to stderr, coloured by the same rules as the report but
 /// probed on stderr itself: a redirected stdout does not make a terminal's
 /// stderr monochrome.
@@ -329,16 +351,10 @@ fn run_optimize(args: &cli::Args) -> i32 {
         };
         report::print_human(&mut out, &outcomes, &opts)
     };
-    match written.and_then(|()| out.flush()) {
-        Ok(()) => code,
-        // Nobody is listening: say nothing, and let the exit code describe the
-        // work rather than the pipe. `tzim . -r | head -1` is not a failure.
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => code,
-        Err(e) => {
-            eprintln!("tzim: cannot write to stdout: {e}");
-            3
-        }
-    }
+    let written = written.and_then(|()| out.flush());
+    let stderr = io::stderr();
+    let mut diagnostics = stderr.lock();
+    finish_report_write(written, code, &mut diagnostics)
 }
 
 /// Whether this invocation qualifies for the FITS-only interactive
@@ -515,5 +531,50 @@ mod prompt_policy_tests {
         assert!(!should_prompt_fits_tile(&direct, &errored, true, true));
 
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod report_write_tests {
+    use super::*;
+
+    #[test]
+    fn broken_pipe_preserves_the_exit_code_already_earned() {
+        for code in [0, 1, 4] {
+            let mut diagnostics = Vec::new();
+            let result = finish_report_write(
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "reader closed")),
+                code,
+                &mut diagnostics,
+            );
+            assert_eq!(result, code);
+            assert!(diagnostics.is_empty());
+        }
+    }
+
+    #[test]
+    fn non_epipe_report_errors_return_three_unless_verification_failed() {
+        for code in [0, 1] {
+            let mut diagnostics = Vec::new();
+            let result =
+                finish_report_write(Err(io::Error::other("disk full")), code, &mut diagnostics);
+            assert_eq!(result, 3);
+            assert!(String::from_utf8(diagnostics)
+                .unwrap()
+                .contains("cannot write to stdout: disk full"));
+        }
+
+        let mut outcome = Outcome::new("input.png".into(), Status::Failed, 10);
+        outcome.error = Some(error::Error::verify("candidate differed"));
+        let earned = report::exit_code(&[outcome]);
+        assert_eq!(earned, 4);
+
+        let mut diagnostics = Vec::new();
+        let result =
+            finish_report_write(Err(io::Error::other("disk full")), earned, &mut diagnostics);
+        assert_eq!(result, 4);
+        assert!(String::from_utf8(diagnostics)
+            .unwrap()
+            .contains("cannot write to stdout: disk full"));
     }
 }

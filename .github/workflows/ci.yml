@@ -75,6 +75,112 @@ jobs:
         shell: bash
         run: exit 1
 
+  progress-ab-measurement:
+    name: progress formatter A/B
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Install the fixed musl measurement toolchain
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools binutils
+          rustup target add x86_64-unknown-linux-musl
+      - name: Build and compare baseline and candidate
+        shell: bash
+        run: bash .github/scripts/measure-progress-ab.sh "$RUNNER_TEMP/tzim-progress-ab"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "$RUNNER_TEMP/tzim-progress-ab/summary.md" progress-ab report full
+      - name: Keep the raw A/B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: progress-ab-measurement
+          path: ${{ runner.temp }}/tzim-progress-ab
+          if-no-files-found: warn
+          retention-days: 90
+
+  zip-store-measurement:
+    name: STORE-only ZIP early-return measurement
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Compare the baseline and candidate on a 512 MiB stored archive
+        shell: bash
+        run: bash .github/scripts/measure-zip-store-ab.sh "$RUNNER_TEMP/tzim-zip-store-ab"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "$RUNNER_TEMP/tzim-zip-store-ab/summary.md" zip-store report full
+      - name: Keep the raw measurement evidence (not the 512 MiB inputs or binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zip-store-measurement
+          path: |
+            ${{ runner.temp }}/tzim-zip-store-ab/summary.md
+            ${{ runner.temp }}/tzim-zip-store-ab/*.txt
+            ${{ runner.temp }}/tzim-zip-store-ab/*.log
+            ${{ runner.temp }}/tzim-zip-store-ab/*.json
+            ${{ runner.temp }}/tzim-zip-store-ab/*.stderr
+            ${{ runner.temp }}/tzim-zip-store-ab/*.time
+            ${{ runner.temp }}/tzim-zip-store-ab/*.sha256
+          if-no-files-found: warn
+          retention-days: 90
+
+  zlib-verify-measurement:
+    name: zlib verifier measurement
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Compare streaming verification with the pre-change reference
+        shell: bash
+        run: |
+          set -o pipefail
+          {
+            rustc -Vv
+            cargo -V
+            uname -a
+            cargo tree --locked --edges normal
+            /usr/bin/time -v cargo test --release --locked --lib formats::zlib::tests::streaming_verifier_microbenchmark -- --ignored --nocapture
+          } 2>&1 | tee "$RUNNER_TEMP/zlib-verify-measurement.log"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          summary="$RUNNER_TEMP/zlib-verify-summary.md"
+          {
+            echo "# zlib streaming verifier measurement (#106)"
+            echo
+            grep -E '^(rustc |cargo |Linux |zlib verify:)|Maximum resident set size|Elapsed \(wall clock\)' \
+              "$RUNNER_TEMP/zlib-verify-measurement.log" || true
+          } > "$summary"
+          bash .github/scripts/ci-report.sh "$summary" zlib-verify report full
+      - name: Keep the measurement output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zlib-verify-measurement
+          path: ${{ runner.temp }}/zlib-verify-measurement.log
+          if-no-files-found: warn
+          retention-days: 90
+
   # Exercise each newly admitted opt-in handler as its own feature on all three
   # operating systems. `all-features` above catches interactions; this catches
   # accidental reliance on an unrelated default or optional feature.
@@ -101,12 +207,11 @@ jobs:
   # One platform, because this is a configuration check and not a portability
   # check: the three operating systems are covered by the `test` matrix above.
   #
-  # Integration tests are compiled here and not run. Of the 120 tests in
-  # `tests/integration.rs`, 65 assert what gzip, ZIP, ICO, JPEG, TIFF, zlib or
-  # `--zopfli` do, and in this build those handlers are not compiled in — the
-  # tests would fail on "unsupported", not on a defect. Gating 65 of them one by
-  # one would not add coverage to this leg, it would take the leg's meaning away,
-  # so the targets that can run are named explicitly instead. Nothing is filtered
+  # Integration tests are compiled here and not run. Some assert what gzip,
+  # ZIP, ICO, JPEG, TIFF, zlib or `--zopfli` do, and in this build those handlers
+  # are not compiled in — the tests would fail on "unsupported", not on a defect.
+  # Gating them one by one would weaken the meaning of this leg, so the targets
+  # that can run are named explicitly instead. Nothing is filtered
   # by name: a filter would silently run fewer tests as the suite grows, which is
   # the failure mode this job exists to avoid.
   minimal:
@@ -535,6 +640,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Test pinned source fallback and installer failure handling
+        shell: bash
+        run: bash .github/scripts/test-install.sh
 
       - name: Install the published release into a temporary directory
         id: install

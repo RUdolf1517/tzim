@@ -54,8 +54,8 @@ with the tree is a historical note, not a lie, as long as it says which release 
 
 **Status (v0.1, kept as history):** implemented. That milestone shipped with 41 unit and 21 integration
 tests, a clean clippy run with `-D warnings`, and an 832 KiB static musl binary. The numbers describe v0.1,
-not the current tree: today there are 101 unit, 89 integration and 10 packaging tests
-([testing](testing.md)), and the binary is 1024 KiB ([size budget](size-budget.md#1-budget)). The
+not the current tree: the suite now spans unit, integration and packaging tests, whose counts depend on
+feature set and target ([testing](testing.md)); the binary is 1024 KiB ([size budget](size-budget.md#1-budget)). The
 remaining-work list of that milestone — committing `Cargo.lock`, publishing artifacts, filling the benchmark
 rows — was closed before v0.2.
 
