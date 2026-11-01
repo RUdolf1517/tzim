@@ -366,6 +366,19 @@ and five historical per-file Zopfli rows are unavailable. No baseline or thresho
 result; exact current release-candidate outcomes are retained in the raw evidence bundle. The release makes no
 full-format admission or universal-stability claims.
 
+### Planned engineering passes
+
+Two repository-wide engineering passes are planned without assigning either to a release or changing the format
+queue and dispositions above:
+
+- **Optimization.** Measure CPU time, peak memory, output bytes and stripped binary size before changing hot paths,
+  allocation behaviour, concurrency or packaging. Keep only changes whose exact-SHA before/after evidence shows a
+  real improvement without weakening independent verification, preservation checks, refusal behaviour or safety.
+- **Global code review.** Review the whole repository rather than only the latest diff: parsers and writers,
+  verification, atomic replacement, concurrency, resource limits, CLI/reporting, tests and release/packaging paths.
+  A finding needs a concrete location, severity and reproducible evidence; fixes stay separately scoped, and the
+  review is not a bulk rewrite or a reason to relax a contract.
+
 ---
 
 ## 3. Risks
