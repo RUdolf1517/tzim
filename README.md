@@ -94,17 +94,17 @@ wrong binary. The original Windows ZIP remains a manual fallback; see the [relea
 for fixed-tag checksum verification and extraction commands.
 
 Winget manifests are generated for **local** `--manifest` use; they are not published to or searched through
-a winget community source. From a source checkout with Python 3.9+, generate and use the exact v0.15.0
+a winget community source. From a source checkout with Python 3.9+, generate and use the exact v0.16.0
 manifest against its real release archive like this:
 
 ```powershell
-Invoke-WebRequest -Uri https://github.com/RUdolf1517/tzim/releases/download/v0.15.0/tzim-x86_64-pc-windows-msvc.zip -OutFile .\tzim-x86_64-pc-windows-msvc.zip
-python .\packaging\winget\generate.py --tag v0.15.0 --windows-archive .\tzim-x86_64-pc-windows-msvc.zip --output-dir .\winget-local
-winget validate --manifest .\winget-local\0.15.0
-winget install --manifest .\winget-local\0.15.0 --scope user --accept-package-agreements
+Invoke-WebRequest -Uri https://github.com/RUdolf1517/tzim/releases/download/v0.16.0/tzim-x86_64-pc-windows-msvc.zip -OutFile .\tzim-x86_64-pc-windows-msvc.zip
+python .\packaging\winget\generate.py --tag v0.16.0 --windows-archive .\tzim-x86_64-pc-windows-msvc.zip --output-dir .\winget-local
+winget validate --manifest .\winget-local\0.16.0
+winget install --manifest .\winget-local\0.16.0 --scope user --accept-package-agreements
 ```
 
-The release workflow generates and checksums a local manifest bundle for each future release. The already
+The release workflow generates and checksums a local manifest bundle for v0.16.0 and later releases. The already
 published v0.15.0 release and its assets are unchanged.
 
 </details>

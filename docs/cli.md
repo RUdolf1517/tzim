@@ -301,7 +301,7 @@ A representative default release-like build emits this one-line JSON object (sho
   "type": "capabilities",
   "capabilities_schema_version": 1,
   "result_schema_version": 2,
-  "tzim_version": "0.15.0",
+  "tzim_version": "0.16.0",
   "build_features": {"default": true, "png": true, "gzip": true, "zip": true, "ico": true, "jpeg": true, "jpeg-v1": true, "tiff": true, "zlib": true, "fits": false, "flac": false, "pdf": false, "zopfli": true},
   "compiled_formats": ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib"],
   "default_enabled_formats": ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib"],
