@@ -11,20 +11,49 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-01
+
 ### Added
 
-- **Versioned CLI capabilities and structured result reasons** (#85). `tzim --capabilities` reports the exact
-  build features, compiled/default-enabled handlers, selection semantics, handler opt-ins, transformations and
-  confirmation policy without scanning or modifying target files. JSON result schema 2 adds stable
-  `reason_code` identifiers while retaining existing statuses and diagnostic fields.
-- **Native Windows per-user installation and local-only winget manifests** (#87). `packaging/windows/install.ps1`
-  verifies fixed-tag release assets and supports rollback-safe install, upgrade and uninstall. Release-generated
-  local manifests pin the actual Windows ZIP hash; no community-source publication or discovery is provided.
+- **Versioned build capabilities and JSON result schema 2** (#85). `tzim --capabilities` emits a read-only
+  JSON object describing the binary's features, compiled and default-enabled formats, handler opt-ins,
+  transformations, and confirmation policies without scanning or modifying input paths. It reports
+  `capabilities_schema_version: 1` and identifies `result_schema_version: 2`; JSON results add stable
+  `reason_code` values while retaining existing statuses and diagnostics. See
+  [the CLI reference](docs/cli.md#capabilities-document).
+- **Windows x64 per-user installation and local-only winget manifests** (#87). The PowerShell installer verifies
+  the exact release ZIP and checksum, supports install, upgrade, rollback, and uninstall without elevation, and
+  updates only the current user's PATH. The release workflow generates a local winget bundle pinned to the
+  Windows ZIP hash; it is not published to or searched through a community source.
+- **Private vulnerability-reporting guidance.** `SECURITY.md` directs reports to GitHub's private vulnerability
+  reporting or a fallback email, describes scope and coordinated disclosure, and makes no fixed response-time
+  promise or claim that the software is vulnerability-free.
 
 ### Changed
 
 - **JPEG admission wording is build-aware** (#90). `--list-formats` distinguishes the default-enabled baseline
-  subset with independent V1 verification from codec-only builds that require `--formats jpeg`.
+  subset with independent V1 verification from codec-only builds, where JPEG requires `--formats jpeg`.
+
+### Fixed
+
+- **The pinned FITS reference reconstruction preserves terminal blank cards.** The CFITSIO `funpack -C` test
+  patch retains the final blank header card, allowing the fixed reference gate to compare literal cards through
+  `END` and exact storage arrays. Regression tests cover that behavior and the external controls. This corrects
+  the reference/evidence path; it does not change the FITS transform or its admission decision.
+
+### Measurement and evidence
+
+- The owner-authorized `measure-repro-2026-10-31-v2` baseline records explicit provenance and keeps the old
+  published-versus-measured differences and red pre-v2 run as historical errata. FITS refusal diagnostics now
+  retain all five identities and complete errors without changing candidate counts; the exact
+  `zerowidth.fits/array_0` failure remains visible. The distinct `pdf-zopfli-small-v1` sample retains all 150
+  ordered rows and results; it does not reconstruct the unavailable historical sample. See
+  [measurement status](docs/measurement-status.md) and the [FITS](docs/fits-audit.md) and
+  [PDF](docs/pdf-audit.md) audits.
+- No corpus, formula, precision, threshold, or admission rule was retuned to obtain these comparisons.
+  #57 remains **refused after measurement**; #59 remains applied only for opt-in `--fits-tile`; PDF and FLAC
+  remain non-default opt-ins. These measurements do not establish full FITS, PDF, or FLAC admission or add
+  preservation guarantees.
 
 ## [0.15.0] - 2026-10-30
 
@@ -1009,7 +1038,7 @@ both 0.7.0 and 0.7.1 builds.
 - 41 unit tests and 21 integration tests; CI on Linux, macOS and Windows; clippy `-D warnings`; static musl
   build with a measured size of 832 KiB and 14 dependency lines.
 
-## [Unreleased]
+## Pre-0.4.0 documentation history
 
 ### Added
 

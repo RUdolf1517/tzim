@@ -70,7 +70,7 @@ release workflow is the only place a shipped binary is produced.
 | cargo | anything with Rust 1.88+ | `cargo install --git https://github.com/RUdolf1517/tzim` |
 | archive | everything else | unpack the tarball or zip, put `tzim` on `PATH` |
 | PowerShell installer | Windows x64 | download `packaging/windows/install.ps1` as a file, inspect it, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tzim-install.ps1 -Version latest` |
-| winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.15.0` |
+| winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.16.0` |
 
 `install.sh` prefers the prebuilt binary and falls back to `cargo install --git` when the platform has no
 published build, so it never guesses a wrong binary. The PowerShell installer resolves `latest` once through
@@ -80,7 +80,7 @@ per-user replacement, and records only its own files and PATH entry for uninstal
 x64 asset and fails clearly on 32-bit or ARM64 Windows. It sends no telemetry; its only requests are the optional
 single latest-release API lookup and the fixed-tag Windows ZIP/checksum downloads, including GitHub's release
 asset CDN redirects. The release workflow adds the script and generated local winget bundle to the checksum set
-for future releases; the published v0.15.0 release and assets remain unchanged.
+for v0.16.0 and later releases; the published v0.15.0 release and assets remain unchanged.
 
 **It verifies what it downloads.** The archive is checked against the release's `SHA256SUMS` before it is
 unpacked, and a mismatch aborts the install with both hashes printed — it does not fall back to building from
@@ -97,12 +97,12 @@ than a silent one.
 
 ### Windows manual ZIP fallback
 
-The Windows ZIP remains available for users who prefer to install it themselves. These fixed-tag v0.15.0
+The Windows ZIP remains available for users who prefer to install it themselves. These fixed-tag v0.16.0
 commands download the archive and its matching checksum file, verify the exact asset before extraction, and
 leave user `PATH` unchanged. For a later release, change `$tag` so both requests still use the same tag.
 
 ```powershell
-$tag = 'v0.15.0'
+$tag = 'v0.16.0'
 $asset = 'tzim-x86_64-pc-windows-msvc.zip'
 $base = "https://github.com/RUdolf1517/tzim/releases/download/$tag"
 Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile ".\$asset"
@@ -112,7 +112,7 @@ if ($checksumMatches.Count -ne 1) { throw 'SHA256SUMS has no unique exact entry 
 $expected = $checksumMatches[0].Matches[0].Groups[1].Value
 $actual = (Get-FileHash -LiteralPath ".\$asset" -Algorithm SHA256).Hash
 if ($actual -ine $expected) { throw "SHA-256 mismatch: expected $expected, received $actual." }
-$destination = Join-Path $env:LOCALAPPDATA 'Programs\tzim-manual-v0.15.0'
+$destination = Join-Path $env:LOCALAPPDATA 'Programs\tzim-manual-v0.16.0'
 New-Item -ItemType Directory -Force -Path $destination | Out-Null
 Expand-Archive -LiteralPath ".\$asset" -DestinationPath $destination -Force
 & (Join-Path $destination 'tzim.exe') --version
@@ -146,9 +146,9 @@ files before anything is touched.
 
 - **No MSI or MSIX package.** Windows gets a per-user PowerShell installer and local winget manifests.
   Winget manifests are consumed only from a locally generated/extracted version directory, for example
-  `winget install --manifest .\winget-local\0.15.0`; they are
+  `winget install --manifest .\winget-local\0.16.0`; they are
   not published to or searched through a community source. The release workflow generates the manifest
-  bundle from the exact Windows asset SHA-256 and includes it in that future release's checksums.
+  bundle from the exact Windows asset SHA-256 and includes it in the release checksums.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
   binary is built and packaged, and this project would rather have fewer of them than stale ones.
 - **No crates.io publication yet.** The crate is packaged and built from the package in CI (`cargo package`),
