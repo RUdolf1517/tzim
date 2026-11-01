@@ -67,7 +67,7 @@ release workflow is the only place a shipped binary is produced.
 | Homebrew | macOS arm64, Linux x86_64 | `brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim` then `brew install RUdolf1517/tzim/tzim` |
 | apt | Debian, Ubuntu (amd64, arm64) | `curl -fsSLO .../releases/latest/download/tzim_amd64.deb` then `sudo apt install ./tzim_amd64.deb` |
 | dnf | Fedora, RHEL (x86_64, aarch64) | `curl -fsSLO .../releases/latest/download/tzim.x86_64.rpm` then `sudo dnf install ./tzim.x86_64.rpm` |
-| cargo | anything with Rust 1.88+ | `cargo install --git https://github.com/RUdolf1517/tzim` |
+| cargo | anything with Rust 1.88+ | `cargo install tzim --locked` from [crates.io](https://crates.io/crates/tzim) |
 | archive | everything else | unpack the tarball or zip, put `tzim` on `PATH` |
 | PowerShell installer | Windows x64 | download `packaging/windows/install.ps1` as a file, inspect it, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tzim-install.ps1 -Version latest` |
 | winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.16.0` |
@@ -151,10 +151,10 @@ files before anything is touched.
   bundle from the exact Windows asset SHA-256 and includes it in the release checksums.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
   binary is built and packaged, and this project would rather have fewer of them than stale ones.
-- **No crates.io publication yet.** The crate is packaged and built from the package in CI (`cargo package`),
-  so `cargo install tzim` is one `cargo publish` away rather than a rewrite, but the publication itself needs
-  a registry token and a decision about what a 1.0 crate name means. Until then the cargo channel is
-  `cargo install --git`.
+- **No automated crates.io publishing.** `tzim 0.16.0` is published on
+  [crates.io](https://crates.io/crates/tzim) and installs with `cargo install tzim --locked`. The owner
+  dry-ran and uploaded that exact `v0.16.0` tag; publishing a later version remains a separate explicit
+  action. CI continues to package and build the crate, but no Trusted Publishing workflow is configured.
 - **No Homebrew bottle, no distro repository.** The tap builds nothing: it unpacks the published tarball,
   so the bytes are the ones in `SHA256SUMS`.
 - **No automatic updates and no telemetry.** The binary opens no sockets.
