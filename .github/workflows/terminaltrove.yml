@@ -1,0 +1,324 @@
+name: TerminalTrove preview
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/terminaltrove.yml"
+      - ".github/terminaltrove/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every downloaded tool is pinned by its release asset and SHA-256, and the
+# Tzim archive is independently checked against both its release manifest and
+# the published v0.16.0 digest.
+env:
+  TZIM_RELEASE_TAG: v0.16.0
+  TZIM_ARCHIVE: tzim-x86_64-unknown-linux-musl.tar.gz
+  TZIM_ARCHIVE_SHA256: 5a4cc1c6fe0d19f81f66744f47d0fd3ef352546e33828b1a6c1c765350c221c7
+  VHS_VERSION: 0.12.1
+  VHS_ARCHIVE_SHA256: eb33787a5b1cebf91fe0b18bd231e2d71d36c1ff4babd99ddac1a6ab411efd10
+  TTYD_RELEASE_TAG: 1.7.7
+  TTYD_SHA256: 8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55
+  FFMPEG_RELEASE_TAG: autobuild-2026-10-29-19-17
+  FFMPEG_ASSET: ffmpeg-n8.1.3-25-g611cec792a-linux64-gpl-8.1.tar.xz
+  FFMPEG_SHA256: ec20dac0af43bc7c58f92830c154ad53bb69994abc05bfea2fdbec8ca7e9ee96
+
+jobs:
+  record:
+    name: Record and validate terminal preview
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out recording inputs
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download and verify published Tzim v0.16.0
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/terminaltrove"
+          release_dir="$root/release"
+          extracted_dir="$root/extracted"
+          mkdir -p "$release_dir" "$extracted_dir"
+
+          gh release download "$TZIM_RELEASE_TAG" \
+            --repo RUdolf1517/tzim \
+            --dir "$release_dir"
+          (
+            cd "$release_dir"
+            sha256sum -c SHA256SUMS
+            printf '%s  %s\n' "$TZIM_ARCHIVE_SHA256" "$TZIM_ARCHIVE" \
+              | sha256sum --check --strict
+          )
+
+          tar -xzf "$release_dir/$TZIM_ARCHIVE" -C "$extracted_dir"
+          binary="$(find "$extracted_dir" -type f -name tzim -print -quit)"
+          test -n "$binary"
+          test -x "$binary"
+          version="$("$binary" --version)"
+          printf 'Published binary reports: %s\n' "$version"
+          test "$version" = "tzim ${TZIM_RELEASE_TAG#v}"
+
+          binary_sha256="$(sha256sum "$binary" | cut -d ' ' -f 1)"
+          printf 'Extracted binary SHA-256: %s\n' "$binary_sha256"
+          printf 'TZIM_BINARY=%s\nTZIM_BINARY_SHA256=%s\n' \
+            "$binary" "$binary_sha256" >> "$GITHUB_ENV"
+          printf 'binary_sha256=%s\n' "$binary_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned VHS, ttyd, and FFmpeg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/terminaltrove/tools"
+          mkdir -p "$root/bin" "$root/vhs" "$root/ttyd" \
+            "$root/ffmpeg-download" "$root/ffmpeg"
+
+          vhs_archive="vhs_${VHS_VERSION}_Linux_x86_64.tar.gz"
+          gh release download "v$VHS_VERSION" \
+            --repo charmbracelet/vhs \
+            --pattern "$vhs_archive" \
+            --dir "$root"
+          printf '%s  %s\n' "$VHS_ARCHIVE_SHA256" "$root/$vhs_archive" \
+            | sha256sum --check --strict
+          tar -xzf "$root/$vhs_archive" -C "$root/vhs"
+          vhs_binary="$(find "$root/vhs" -type f -name vhs -print -quit)"
+          test -n "$vhs_binary"
+          install -m 0755 "$vhs_binary" "$root/bin/vhs"
+
+          gh release download "$TTYD_RELEASE_TAG" \
+            --repo tsl0922/ttyd \
+            --pattern ttyd.x86_64 \
+            --pattern SHA256SUMS \
+            --dir "$root/ttyd"
+          (
+            cd "$root/ttyd"
+            grep -Eq '^[[:xdigit:]]{64}[[:space:]]+ttyd\.x86_64$' SHA256SUMS
+            sha256sum --ignore-missing --check SHA256SUMS
+            printf '%s  ttyd.x86_64\n' "$TTYD_SHA256" \
+              | sha256sum --check --strict
+          )
+          install -m 0755 "$root/ttyd/ttyd.x86_64" "$root/bin/ttyd"
+
+          gh release download "$FFMPEG_RELEASE_TAG" \
+            --repo BtbN/FFmpeg-Builds \
+            --pattern "$FFMPEG_ASSET" \
+            --dir "$root/ffmpeg-download"
+          printf '%s  %s\n' "$FFMPEG_SHA256" \
+            "$root/ffmpeg-download/$FFMPEG_ASSET" \
+            | sha256sum --check --strict
+          tar -xJf "$root/ffmpeg-download/$FFMPEG_ASSET" -C "$root/ffmpeg"
+          ffmpeg_binary="$(find "$root/ffmpeg" -type f -name ffmpeg -perm -u+x -print -quit)"
+          ffprobe_binary="$(find "$root/ffmpeg" -type f -name ffprobe -perm -u+x -print -quit)"
+          test -n "$ffmpeg_binary"
+          test -n "$ffprobe_binary"
+          ffmpeg_bin_dir="$(dirname "$ffmpeg_binary")"
+          ffmpeg_root="$(dirname "$ffmpeg_bin_dir")"
+
+          printf '%s\n' "$root/bin" "$ffmpeg_bin_dir" >> "$GITHUB_PATH"
+          printf 'FFMPEG_BIN_DIR=%s\n' "$ffmpeg_bin_dir" >> "$GITHUB_ENV"
+          if [[ -d "$ffmpeg_root/lib" ]]; then
+            printf 'LD_LIBRARY_PATH=%s\n' "$ffmpeg_root/lib" >> "$GITHUB_ENV"
+            export LD_LIBRARY_PATH="$ffmpeg_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          fi
+          export PATH="$root/bin:$ffmpeg_bin_dir:$PATH"
+
+          vhs_version="$(vhs --version 2>&1)"
+          printf '%s\n' "$vhs_version"
+          [[ "$vhs_version" == *"$VHS_VERSION"* ]]
+          ttyd_version="$(ttyd --version 2>&1)"
+          printf '%s\n' "$ttyd_version"
+          [[ "$ttyd_version" == *"$TTYD_RELEASE_TAG"* ]]
+          ffmpeg -version > "$root/ffmpeg-version.txt"
+          ffprobe -version > "$root/ffprobe-version.txt"
+          sed -n '1p' "$root/ffmpeg-version.txt"
+          sed -n '1p' "$root/ffprobe-version.txt"
+
+      - name: Preflight the real reduction and record the VHS session
+        env:
+          BINARY_SHA256: ${{ steps.release.outputs.binary_sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/terminaltrove"
+          artifact="$root/artifact"
+          preflight="$root/preflight"
+          session="$root/session"
+          mkdir -p "$artifact" "$preflight"
+          export PATH="$(dirname "$TZIM_BINARY"):$PATH"
+          test "$(command -v tzim)" = "$TZIM_BINARY"
+          test "$(sha256sum "$(command -v tzim)" | cut -d ' ' -f 1)" = "$BINARY_SHA256"
+          export NO_COLOR=1
+
+          version="$("$TZIM_BINARY" --version)"
+          test "$version" = "tzim 0.16.0"
+          cp .github/terminaltrove/fixture.png "$preflight/sample.png"
+          before="$(stat -c '%s' "$preflight/sample.png")"
+          "$TZIM_BINARY" --no-color --no-progress "$preflight/sample.png" \
+            > "$preflight/optimization.log" 2>&1
+          cat "$preflight/optimization.log"
+          after="$(stat -c '%s' "$preflight/sample.png")"
+          printf 'Preflight fixture: %s bytes -> %s bytes\n' "$before" "$after"
+          test "$after" -lt "$before"
+
+          cp .github/terminaltrove/preview.tape "$artifact/preview.tape"
+          cp .github/terminaltrove/fixture.png "$artifact/fixture.png"
+          rm -f "$artifact/session.log"
+          export SESSION_DIR="$session"
+          export SESSION_LOG="$artifact/session.log"
+          cd "$artifact"
+          timeout 180s vhs preview.tape
+          test -s "$artifact/tzim-terminaltrove.gif"
+
+          # The PNG is a decoded frame from the finished GIF, not a separately
+          # composed or reconstructed image.
+          ffmpeg -hide_banner -loglevel error -y -sseof -1 \
+            -i "$artifact/tzim-terminaltrove.gif" \
+            -frames:v 1 -update 1 "$artifact/tzim-terminaltrove.png"
+          test -s "$artifact/tzim-terminaltrove.png"
+          test -s "$artifact/session.log"
+          duration="$(ffprobe -v error -show_entries format=duration \
+            -of default=noprint_wrappers=1:nokey=1 "$artifact/tzim-terminaltrove.gif")"
+
+          python3 - "$artifact" <<'PY'
+          import json
+          import re
+          import struct
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          artifact = Path(sys.argv[1])
+          gif = artifact / "tzim-terminaltrove.gif"
+          png = artifact / "tzim-terminaltrove.png"
+          log_path = artifact / "session.log"
+
+          probe = json.loads(subprocess.check_output([
+              "ffprobe", "-v", "error", "-select_streams", "v:0",
+              "-count_frames",
+              "-show_entries", "format=duration:stream=width,height,nb_read_frames",
+              "-of", "json", str(gif),
+          ], text=True))
+          stream = probe["streams"][0]
+          duration = float(probe["format"]["duration"])
+          width, height = int(stream["width"]), int(stream["height"])
+          frame_count = int(stream.get("nb_read_frames", "0"))
+          if not 15 <= duration <= 30:
+              raise SystemExit(f"GIF duration {duration:.3f}s is outside 15–30s")
+          if width < 1600 or height < 800 or frame_count < 2:
+              raise SystemExit(
+                  f"unexpected GIF geometry/frames: {width}x{height}, {frame_count}"
+              )
+
+          png_header = png.read_bytes()[:24]
+          if not png_header.startswith(b"\x89PNG\r\n\x1a\n"):
+              raise SystemExit("extracted preview is not a PNG")
+          png_width, png_height = struct.unpack(">II", png_header[16:24])
+          if (png_width, png_height) != (width, height):
+              raise SystemExit(
+                  f"PNG frame dimensions {png_width}x{png_height} do not match GIF"
+              )
+
+          transcript = log_path.read_bytes().decode("utf-8", "replace")
+          required = ("tzim 0.16.0", "tzim --no-progress sample.png", "Summary:")
+          missing = [item for item in required if item not in transcript]
+          if missing:
+              raise SystemExit(f"session transcript missing: {', '.join(missing)}")
+          before = re.findall(r"Before: ([0-9]+) bytes", transcript)
+          after = re.findall(r"After: ([0-9]+) bytes", transcript)
+          if not before or not after or int(after[-1]) >= int(before[-1]):
+              raise SystemExit("session transcript does not show a real size reduction")
+          if re.search(r"(?m)^.*\b[1-9][0-9]* failed\b", transcript):
+              raise SystemExit("Tzim reported a failed file in the recorded session")
+
+          print(f"Recorded GIF: {width}x{height}, {duration:.3f}s, {frame_count} frames")
+          print(f"Extracted PNG frame: {png_width}x{png_height}")
+          print(f"Transcript confirms: {before[-1]} bytes -> {after[-1]} bytes")
+          print("Transcript confirms release version, visible command, and summary")
+          PY
+
+          png_sha256="$(sha256sum "$artifact/tzim-terminaltrove.png" | cut -d ' ' -f 1)"
+          gif_sha256="$(sha256sum "$artifact/tzim-terminaltrove.gif" | cut -d ' ' -f 1)"
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          python3 - "$artifact/README.md" "$BINARY_SHA256" "$png_sha256" \
+            "$gif_sha256" "$run_url" "$GITHUB_SHA" "$duration" <<'PY'
+          import sys
+          from pathlib import Path
+
+          _, output, binary_sha, png_sha, gif_sha, run_url, commit, duration = sys.argv
+          readme = f"""# TerminalTrove preview recording
+
+          - Published release: `v0.16.0`
+          - Source asset: `tzim-x86_64-unknown-linux-musl.tar.gz` (checksum-verified)
+          - Extracted binary SHA-256: `{binary_sha}`
+          - Workflow commit: `{commit}`
+          - Workflow run: {run_url}
+          - Recording runner: `ubuntu-24.04`
+          - GIF duration: `{duration}s` (`ffprobe`; validated to be 15–30 seconds)
+          - PNG: extracted by FFmpeg from a frame of the recorded GIF
+
+          ## SHA-256
+
+          - `tzim-terminaltrove.png`: `{png_sha}`
+          - `tzim-terminaltrove.gif`: `{gif_sha}`
+
+          ## Replay
+
+          Install the same pinned tools used by the workflow (VHS `v0.12.1`,
+          ttyd `1.7.7`, and the FFmpeg build named in
+          `.github/workflows/terminaltrove.yml`), then run these commands from
+          the directory containing this README, `preview.tape`, and `fixture.png`:
+
+          ```bash
+          set -euo pipefail
+          work="$(mktemp -d)"
+          mkdir -p "$work/release"
+          gh release download v0.16.0 --repo RUdolf1517/tzim --dir "$work/release"
+          (cd "$work/release" && sha256sum -c SHA256SUMS)
+          mkdir -p "$work/extracted"
+          tar -xzf "$work/release/tzim-x86_64-unknown-linux-musl.tar.gz" -C "$work/extracted"
+          tzim_bin="$(find "$work/extracted" -type f -name tzim -print -quit)"
+          export PATH="$(dirname "$tzim_bin"):$(dirname "$(command -v vhs)"):$(dirname "$(command -v ffmpeg)"):$PATH"
+          export SESSION_DIR="$work/session"
+          export SESSION_LOG="$work/session.log"
+          export NO_COLOR=1
+          vhs preview.tape
+          ffmpeg -hide_banner -loglevel error -y -sseof -1 \\
+            -i tzim-terminaltrove.gif -frames:v 1 -update 1 tzim-terminaltrove.png
+          ```
+
+          `session.log` is the raw PTY transcript from the recorded commands.
+          The terminal setup is hidden by the VHS tape; the visible version,
+          optimization, and before/after byte counts come from the published
+          binary and commands in that same session.
+          """
+          Path(output).write_text(readme, encoding="utf-8")
+          PY
+
+          {
+            echo "### TerminalTrove recording"
+            echo
+            echo "- Run: [$GITHUB_RUN_ID]($run_url)"
+            echo "- Extracted v0.16.0 binary SHA-256: \`$BINARY_SHA256\`"
+            echo "- GIF: ${duration:-validated by ffprobe}"
+            echo "- PNG SHA-256: \`$png_sha256\`"
+            echo "- GIF SHA-256: \`$gif_sha256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload ordinary Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminaltrove-v0.16.0-${{ github.run_id }}
+          path: ${{ runner.temp }}/terminaltrove/artifact/
+          if-no-files-found: error
+          retention-days: 30
