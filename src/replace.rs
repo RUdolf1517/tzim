@@ -219,9 +219,10 @@ where
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
-        retry_sharing_violation(|| fs::rename(from, to), |error| {
-            is_windows_rename_sharing_conflict(error, to)
-        })
+        retry_sharing_violation(
+            || fs::rename(from, to),
+            |error| is_windows_rename_sharing_conflict(error, to),
+        )
     }
     #[cfg(not(windows))]
     {
@@ -377,7 +378,9 @@ mod tests {
             || {
                 attempts += 1;
                 if attempts < 3 {
-                    Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+                    Err(io::Error::from_raw_os_error(
+                        WINDOWS_ERROR_SHARING_VIOLATION,
+                    ))
                 } else {
                     Ok(())
                 }
@@ -391,7 +394,9 @@ mod tests {
         let result = retry_sharing_violation(
             || {
                 attempts += 1;
-                Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+                Err(io::Error::from_raw_os_error(
+                    WINDOWS_ERROR_SHARING_VIOLATION,
+                ))
             },
             is_windows_sharing_violation,
         );
@@ -504,7 +509,10 @@ $stream.Dispose()
         assert!(release_result.is_ok(), "could not signal the lock holder");
         assert!(child_status.success(), "PowerShell lock holder failed");
         assert!(
-            matches!(first_error_code, Some(WINDOWS_ERROR_SHARING_VIOLATION) | Some(5)),
+            matches!(
+                first_error_code,
+                Some(WINDOWS_ERROR_SHARING_VIOLATION) | Some(5)
+            ),
             "unexpected Windows sharing error: {first_error_code:?}"
         );
         assert!(result.is_ok(), "rename retry failed: {result:?}");
