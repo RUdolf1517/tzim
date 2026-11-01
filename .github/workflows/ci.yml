@@ -91,6 +91,12 @@ jobs:
       - name: Build and compare baseline and candidate
         shell: bash
         run: bash .github/scripts/measure-progress-ab.sh "$RUNNER_TEMP/tzim-progress-ab"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "$RUNNER_TEMP/tzim-progress-ab/summary.md" progress-ab report full
       - name: Keep the raw A/B evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -112,6 +118,12 @@ jobs:
       - name: Compare the baseline and candidate on a 512 MiB stored archive
         shell: bash
         run: bash .github/scripts/measure-zip-store-ab.sh "$RUNNER_TEMP/tzim-zip-store-ab"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/ci-report.sh "$RUNNER_TEMP/tzim-zip-store-ab/summary.md" zip-store report full
       - name: Keep the raw measurement evidence (not the 512 MiB inputs or binaries)
         if: always()
         uses: actions/upload-artifact@v4
@@ -146,6 +158,20 @@ jobs:
             cargo tree --locked --edges normal
             /usr/bin/time -v cargo test --release --locked --lib formats::zlib::tests::streaming_verifier_microbenchmark -- --ignored --nocapture
           } 2>&1 | tee "$RUNNER_TEMP/zlib-verify-measurement.log"
+      - name: Publish the measured result to the pull request
+        if: always() && github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          summary="$RUNNER_TEMP/zlib-verify-summary.md"
+          {
+            echo "# zlib streaming verifier measurement (#106)"
+            echo
+            grep -E '^(rustc |cargo |Linux |zlib verify:)|Maximum resident set size|Elapsed \(wall clock\)' \
+              "$RUNNER_TEMP/zlib-verify-measurement.log" || true
+          } > "$summary"
+          bash .github/scripts/ci-report.sh "$summary" zlib-verify report full
       - name: Keep the measurement output
         if: always()
         uses: actions/upload-artifact@v4
