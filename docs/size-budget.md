@@ -332,10 +332,13 @@ The other size lever was `core::fmt`, at 17.5 KiB: formatting a `u64` with `{}` 
 formatter. `src/report.rs` computes sizes, percentages and durations with integer arithmetic and its own
 two-decimal rounding. The progress rate now uses exact integer tenths and nearest-even rounding instead of
 formatting a float. On the same checkout, Rust 1.88.0, release profile and `x86_64-unknown-linux-musl`
-target, the #107 A/B reduced the default binary from 1,135,160 to 1,114,680 bytes (−20,480) and the
-no-default-features binary from 590,328 to 573,944 bytes (−16,384); differential tests preserved the full
-rendered bytes. The production change is guarded by the same-checkout A/B job, which fails unless the
-candidate default binary is smaller. See the [measurement run](https://github.com/RUdolf1517/tzim/actions/runs/41324731829).
+target, the #107 size A/B measured production source SHA `003e280abc014fa9921768071bae670e45642cb0`:
+the default binary was 1,135,160 → 1,114,680 bytes (−20,480), and no-default-features was 590,328 →
+573,944 bytes (−16,384). The current regression suite separately compares full frames using an injected
+legacy-vs-candidate formatter, in addition to the direct rounding-boundary tests; this test evidence is
+distinct from the recorded size measurement. The production change is gated by the same-checkout A/B,
+which fails unless the candidate default binary is smaller. See the [#107 measurement report for source
+SHA `003e280abc014fa9921768071bae670e45642cb0`](https://github.com/RUdolf1517/tzim/pull/113#issuecomment-6560770460).
 That is the shape of every remaining win here: code that is compiled but whose general case is never reached.
 
 ### 5.4 Options rejected without measurement in this repository

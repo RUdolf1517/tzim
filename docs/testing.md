@@ -273,8 +273,10 @@ observable result.
   hour, clipping by display width against the wcwidth table, the width from `COLUMNS` with the 80-column
   fallback, and the rule that a disabled, empty or non-terminal run creates no line at all. The fixed-point
   one-decimal rate formatter is differentially checked against float formatting at rounding boundaries and
-  neighboring values; full rendered lines are checked byte-for-byte across styles and widths. The hosted
-  #107 same-checkout A/B also gates the formatter on a smaller default release binary. The escape stripping
+  neighboring values. A formatter-injected full-frame check renders the same `Frame` through the
+  candidate and legacy `format!("  {rate:.1}/s")` formatter, then compares complete output bytes for
+  identical rates, styles and widths; wide layouts assert the rate tail is present. The hosted #107
+  same-checkout A/B also gates the formatter on a smaller default release binary. The escape stripping
   is tested too: the pad-to-previous-width rule must count cells, not bytes.
 - Memory budget (`src/pipeline.rs`): `worst_case_bytes` is asserted term by term — a file with no format, a
   PNG with and without dimensions in the header, a lying `IHDR` clamped by `--max-pixels`, a JPEG, a TIFF,

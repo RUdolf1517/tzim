@@ -212,6 +212,14 @@ impl Frame {
     /// terminal is narrow: the estimate first, then the rate. Nothing is ever
     /// truncated in the middle of a glyph, and the result never buys a wrap.
     pub fn render(&self, width: usize) -> String {
+        self.render_with_rate_formatter(width, format_rate_fixed_tenths)
+    }
+
+    fn render_with_rate_formatter(
+        &self,
+        width: usize,
+        format_rate: impl Fn(f64) -> String,
+    ) -> String {
         let elapsed = self.now.duration_since(self.started);
         let mut line = String::with_capacity(width.min(160));
 
@@ -237,7 +245,7 @@ impl Frame {
         let counter = format!("{}/{}", self.finished, self.total);
         self.style.paint_into(&mut line, Pen::Bold, &counter);
 
-        let rate_text = rate(&self.recent).map(format_rate_fixed_tenths);
+        let rate_text = rate(&self.recent).map(format_rate);
         let eta_text = rate(&self.recent)
             .filter(|_| elapsed >= ETA_AFTER)
             .and_then(|r| {
@@ -677,10 +685,6 @@ mod tests {
             Duration::from_secs(86_400),
         ] {
             let recent = VecDeque::from([started, started + interval]);
-            let current_rate = rate(&recent).unwrap();
-            let baseline_tail = format!("  {current_rate:.1}/s");
-            let candidate_tail = format_rate_fixed_tenths(current_rate);
-            assert_eq!(candidate_tail, baseline_tail);
             for style in [Style::plain(), Style::new(true)] {
                 for width in [20usize, 30, 80, 200] {
                     let frame = Frame {
@@ -692,13 +696,18 @@ mod tests {
                         style,
                         tick: 3,
                     };
-                    let line = frame.render(width);
-                    let candidate_line = line.replace(&baseline_tail, &candidate_tail);
-                    assert_eq!(candidate_line, line);
+                    let candidate_line = frame.render(width);
+                    let legacy_line =
+                        frame.render_with_rate_formatter(width, |rate| format!("  {rate:.1}/s"));
+                    assert_eq!(
+                        candidate_line, legacy_line,
+                        "interval={interval:?}, width={width}"
+                    );
                     assert!(cells(&candidate_line) <= width);
                     assert!(!candidate_line.contains('\n'));
                     if width == 200 {
-                        assert!(candidate_line.contains("eta "));
+                        assert!(candidate_line.contains("eta "), "{candidate_line}");
+                        assert!(candidate_line.contains("/s"), "{candidate_line}");
                     }
                 }
             }

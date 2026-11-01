@@ -149,7 +149,7 @@ one is the intended behaviour and is not yet exercised.
 | Candidate is not smaller | temporary file removed | `already_optimal` | `0` | `already_optimal_zip_is_left_alone` |
 | Original changed during processing | operation aborted | `failed` (`internal`/`io`) | `1` | — (`snapshot_roundtrip_detects_changes` covers the predicate, not the race) |
 | `fsync` of the candidate fails | temporary file removed, nothing replaced | `failed` (`io`) | `1` | — |
-| `rename` fails | temporary file removed; Windows retries only error 32 twice | `failed` (`io`) | `1` | `sharing_violation_gets_at_most_two_retries`, `access_denied_is_not_retried` |
+| `rename` fails | temporary file removed; Windows retries only proven sharing conflicts: raw error 32 directly, raw error 5 only if a separate DELETE-access probe returns 32; at most two retries; ordinary permission errors are not retried | `failed` (`io`) | `1` | `sharing_violation_gets_at_most_two_retries`, `access_denied_is_not_retried`, `access_denied_is_not_retried_without_delete_share_evidence` |
 | Parent-directory open or `fsync` fails after a successful rename | exactly one warning on stderr; JSON stdout is unchanged | `optimized` | `0` | `post_rename_directory_sync_failures_warn_once_and_keep_success` |
 | `SIGINT` / `SIGTERM` | process ends, temporary file may remain | — | `130` / `143` | — |
 | Panic (`panic = "abort"`) | process aborts, temporary file may remain | — | `134` on Unix | — |
