@@ -46,8 +46,10 @@ For every file, in this order (`src/pipeline.rs::run`, then `src/replace.rs::com
 15. **Flush** the candidate with `fsync` (unless `--no-fsync`), then close the handle — required before a
     rename on Windows.
 16. **Replace.** A `rename(candidate, original)` in the same directory, then disarm the guard. On POSIX
-    this is atomic. Windows retries only raw OS error 32 (`ERROR_SHARING_VIOLATION`), at most twice, with
-    25 ms and 50 ms backoffs; error 5 (`ERROR_ACCESS_DENIED`) and every other error are not retried.
+    this is atomic. Windows retries raw OS error 32 (`ERROR_SHARING_VIOLATION`), at most twice, with
+    25 ms and 50 ms backoffs. Error 5 (`ERROR_ACCESS_DENIED`) is retried only when a separate DELETE-access
+    probe confirms an incompatible open handle (itself reported as error 32); ordinary permission errors
+    and every other error are not retried.
 17. **Flush the directory** on Unix, unless `--no-fsync` (`open` the parent directory and `fsync` its
     handle, best effort) so the rename itself is durable. An open or sync failure after rename produces
     exactly one warning on stderr; the replacement remains `optimized`, exit `0`, and the report on stdout
@@ -171,9 +173,11 @@ bug in Tzim.
   `(device, inode, length, mtime)` can detect.
 - **External writer:** the same mechanism applies. A file that changes mid-run is not replaced, and the
   user is told so.
-- **Windows:** an open handle held by another process can cause the `rename` to fail. Only raw OS error
-  32 (`ERROR_SHARING_VIOLATION`) is retried, at most twice (25 ms then 50 ms); error 5
-  (`ERROR_ACCESS_DENIED`) and all other failures surface immediately with the original intact.
+- **Windows:** an open handle held by another process can cause the `rename` to fail. Raw OS error 32
+  (`ERROR_SHARING_VIOLATION`) is retried, at most twice (25 ms then 50 ms). Raw error 5
+  (`ERROR_ACCESS_DENIED`) is retried only when an additional DELETE-access probe returns error 32,
+  proving a conflicting share mode; ordinary permission failures and all other errors surface immediately
+  with the original intact.
 
 ---
 

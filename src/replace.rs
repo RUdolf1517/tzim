@@ -156,9 +156,9 @@ pub fn changed_since(path: &Path, snap: &Snapshot) -> bool {
 }
 
 /// Windows reports a transient destination handle conflict as
-/// ERROR_SHARING_VIOLATION. Retry only that documented condition; in
-/// particular, ERROR_ACCESS_DENIED can also mean ordinary permissions and is
-/// never retried without stronger evidence.
+/// ERROR_SHARING_VIOLATION. Retry that code directly. ERROR_ACCESS_DENIED can
+/// also mean ordinary permissions, so code 5 is retried only when a separate
+/// DELETE-access probe confirms an incompatible open handle.
 #[cfg(any(windows, test))]
 const WINDOWS_ERROR_SHARING_VIOLATION: i32 = 32;
 
@@ -167,18 +167,47 @@ fn is_windows_sharing_violation(error: &io::Error) -> bool {
     error.raw_os_error() == Some(WINDOWS_ERROR_SHARING_VIOLATION)
 }
 
-/// Retry a rename only for the specific Windows sharing-violation code, with
-/// two bounded retries and a short increasing delay. Compiled for tests on all
-/// platforms so its policy can be exercised without Windows-specific fixtures.
+#[cfg(windows)]
+fn is_windows_rename_sharing_conflict(error: &io::Error, destination: &Path) -> bool {
+    match error.raw_os_error() {
+        Some(WINDOWS_ERROR_SHARING_VIOLATION) => true,
+        Some(5) => has_delete_sharing_conflict(destination),
+        _ => false,
+    }
+}
+
+/// Probe the destination for DELETE access with permissive sharing. If another
+/// handle disallows DELETE, Windows returns ERROR_SHARING_VIOLATION (32); an
+/// ordinary access-control denial remains code 5 and is not treated as a lock.
+#[cfg(windows)]
+fn has_delete_sharing_conflict(destination: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const DELETE_ACCESS: u32 = 0x0001_0000;
+    const SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
+    let mut options = OpenOptions::new();
+    options
+        .access_mode(DELETE_ACCESS)
+        .share_mode(SHARE_READ_WRITE_DELETE);
+    matches!(
+        options.open(destination),
+        Err(error) if error.raw_os_error() == Some(WINDOWS_ERROR_SHARING_VIOLATION)
+    )
+}
+
+/// Retry a rename only when the caller proves a sharing conflict, with two
+/// bounded retries and a short increasing delay. Compiled for tests on all
+/// platforms so the retry budget and error policy can be exercised directly.
 #[cfg(any(windows, test))]
-fn retry_sharing_violation<F>(mut rename: F) -> io::Result<()>
+fn retry_sharing_violation<F, P>(mut rename: F, mut is_sharing_conflict: P) -> io::Result<()>
 where
     F: FnMut() -> io::Result<()>,
+    P: FnMut(&io::Error) -> bool,
 {
     let mut retries = 0u32;
     loop {
         match rename() {
-            Err(error) if retries < 2 && is_windows_sharing_violation(&error) => {
+            Err(error) if retries < 2 && is_sharing_conflict(&error) => {
                 retries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(retries)));
             }
@@ -190,7 +219,9 @@ where
 fn rename_with_retry(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
-        retry_sharing_violation(|| fs::rename(from, to))
+        retry_sharing_violation(|| fs::rename(from, to), |error| {
+            is_windows_rename_sharing_conflict(error, to)
+        })
     }
     #[cfg(not(windows))]
     {
@@ -329,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_sharing_violation_is_the_only_retryable_code() {
+    fn raw_error_32_is_the_unconditional_sharing_violation_code() {
         let sharing = io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION);
         let access_denied = io::Error::from_raw_os_error(5);
         let generic_permission =
@@ -342,26 +373,28 @@ mod tests {
     #[test]
     fn sharing_violation_gets_at_most_two_retries() {
         let mut attempts = 0;
-        let result = retry_sharing_violation(|| {
-            attempts += 1;
-            if attempts < 3 {
-                Err(io::Error::from_raw_os_error(
-                    WINDOWS_ERROR_SHARING_VIOLATION,
-                ))
-            } else {
-                Ok(())
-            }
-        });
+        let result = retry_sharing_violation(
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+                } else {
+                    Ok(())
+                }
+            },
+            is_windows_sharing_violation,
+        );
         assert!(result.is_ok());
         assert_eq!(attempts, 3, "initial attempt plus two retries");
 
         attempts = 0;
-        let result = retry_sharing_violation(|| {
-            attempts += 1;
-            Err(io::Error::from_raw_os_error(
-                WINDOWS_ERROR_SHARING_VIOLATION,
-            ))
-        });
+        let result = retry_sharing_violation(
+            || {
+                attempts += 1;
+                Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+            },
+            is_windows_sharing_violation,
+        );
         assert_eq!(
             result.unwrap_err().raw_os_error(),
             Some(WINDOWS_ERROR_SHARING_VIOLATION),
@@ -436,17 +469,25 @@ $stream.Dispose()
 
         let mut attempts = 0;
         let mut first_error_code = None;
-        let result = retry_sharing_violation(|| {
-            attempts += 1;
-            let result = fs::rename(temp.path(), &destination);
-            if attempts == 1 {
-                if let Err(error) = &result {
-                    first_error_code = error.raw_os_error();
+        let result = retry_sharing_violation(
+            || {
+                attempts += 1;
+                let result = fs::rename(temp.path(), &destination);
+                if attempts == 1 {
+                    if let Err(error) = &result {
+                        first_error_code = error.raw_os_error();
+                    }
+                }
+                result
+            },
+            |error| {
+                let sharing_conflict = is_windows_rename_sharing_conflict(error, &destination);
+                if attempts == 1 && sharing_conflict {
                     let _ = fs::write(&release, b"release");
                 }
-            }
-            result
-        });
+                sharing_conflict
+            },
+        );
         let release_result = fs::write(&release, b"release");
         if release_result.is_err() {
             let _ = child.kill();
@@ -462,7 +503,10 @@ $stream.Dispose()
 
         assert!(release_result.is_ok(), "could not signal the lock holder");
         assert!(child_status.success(), "PowerShell lock holder failed");
-        assert_eq!(first_error_code, Some(WINDOWS_ERROR_SHARING_VIOLATION));
+        assert!(
+            matches!(first_error_code, Some(WINDOWS_ERROR_SHARING_VIOLATION) | Some(5)),
+            "unexpected Windows sharing error: {first_error_code:?}"
+        );
         assert!(result.is_ok(), "rename retry failed: {result:?}");
         assert_eq!(
             attempts, 2,
@@ -475,12 +519,38 @@ $stream.Dispose()
     #[test]
     fn access_denied_is_not_retried() {
         let mut attempts = 0;
-        let result = retry_sharing_violation(|| {
-            attempts += 1;
-            Err(io::Error::from_raw_os_error(5))
-        });
+        let result = retry_sharing_violation(
+            || {
+                attempts += 1;
+                Err(io::Error::from_raw_os_error(5))
+            },
+            is_windows_sharing_violation,
+        );
         assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
         assert_eq!(attempts, 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn access_denied_is_not_retried_without_delete_share_evidence() {
+        let dir = std::env::temp_dir().join(format!("tzim-access-denied-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let destination = dir.join("destination.bin");
+        fs::write(&destination, b"ordinary writable file").unwrap();
+        assert!(!has_delete_sharing_conflict(&destination));
+
+        let mut attempts = 0;
+        let result = retry_sharing_violation(
+            || {
+                attempts += 1;
+                Err(io::Error::from_raw_os_error(5))
+            },
+            |error| is_windows_rename_sharing_conflict(error, &destination),
+        );
+        assert_eq!(result.unwrap_err().raw_os_error(), Some(5));
+        assert_eq!(attempts, 1);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
