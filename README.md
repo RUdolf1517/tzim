@@ -46,7 +46,7 @@ tried, and left byte-for-byte untouched.
 ```bash
 curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh | sh   # binary, no Rust
 brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim && brew install RUdolf1517/tzim/tzim
-cargo install --git https://github.com/RUdolf1517/tzim                               # Rust 1.88+
+cargo install tzim --locked                                                          # Rust 1.88+
 ```
 
 Linux (x86_64 and ARM64), macOS (Apple silicon and Intel). The install script checks the archive against the
