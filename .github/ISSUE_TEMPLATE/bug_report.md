@@ -6,6 +6,9 @@ labels: bug
 assignees: ''
 ---
 
+<!-- Security vulnerability? Do not disclose it in a public issue.
+     Use a private channel from https://github.com/RUdolf1517/tzim/security/policy instead. -->
+
 ## What happened
 
 <!-- One or two sentences. Be concrete. -->

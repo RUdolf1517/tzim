@@ -118,7 +118,10 @@ that rejected the output.
 
 ## 6. Reporting bugs
 
-Use the issue templates. For a suspected data-loss bug:
+Use the issue templates for non-security bugs. For a suspected vulnerability, follow
+[SECURITY.md](SECURITY.md) and do not disclose the details in a public issue.
+
+For a suspected data-loss bug:
 
 1. Stop using the affected version.
 2. Do not run Tzim again on the same files (it may replace more of them).
