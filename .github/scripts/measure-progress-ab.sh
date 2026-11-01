@@ -60,8 +60,8 @@ start = s.index(helper_start)
 end = s.index(helper_end, start)
 s = s[:start] + s[end:]
 
-candidate = "let rate_text = rate(&self.recent).map(format_rate_fixed_tenths);"
-baseline = 'let rate_text = rate(&self.recent).map(|r| format!("  {r:.1}/s"));'
+candidate = "self.render_with_rate_formatter(width, format_rate_fixed_tenths)"
+baseline = 'self.render_with_rate_formatter(width, |rate| format!("  {rate:.1}/s"))'
 if s.count(candidate) != 1:
     raise SystemExit("could not find the unique production rate-formatting call")
 s = s.replace(candidate, baseline, 1)
