@@ -11,6 +11,11 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Documentation
+
+- Record planned optimization and global code-review passes without assigning them to a release or changing the
+  existing format dispositions.
+
 ## [0.16.0] - 2026-11-01
 
 ### Added
