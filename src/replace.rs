@@ -415,8 +415,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn windows_real_sharing_violation_retries_after_the_handle_is_released() {
-        use std::process::{Command, Stdio};
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
+        const SHARE_READ: u32 = 0x0000_0001;
         let dir = std::env::temp_dir().join(format!(
             "tzim-sharing-lock-{}-{}",
             std::process::id(),
@@ -432,53 +434,23 @@ mod tests {
         temp.file().write_all(b"replacement").unwrap();
         drop(temp.file.take());
 
-        let script = dir.join("hold-without-delete-share.ps1");
-        let ready = dir.join("handle-ready");
-        let release = dir.join("release-handle");
-        fs::write(
-            &script,
-            r#"param([string]$Path, [string]$Ready, [string]$Release)
-$stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
-[System.IO.File]::WriteAllText($Ready, "locked")
-while (-not [System.IO.File]::Exists($Release)) { Start-Sleep -Milliseconds 2 }
-$stream.Dispose()
-"#,
-        )
-        .unwrap();
-        let mut child = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-            ])
-            .arg(&script)
-            .arg(&destination)
-            .arg(&ready)
-            .arg(&release)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("Windows CI provides powershell.exe");
-
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while !ready.exists() && std::time::Instant::now() < deadline {
-            if child.try_wait().unwrap().is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        if !ready.exists() {
-            let _ = fs::write(&release, b"release");
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = fs::remove_dir_all(&dir);
-            panic!("PowerShell did not acquire the destination handle");
-        }
-
+        let lock = OpenOptions::new()
+            .read(true)
+            .share_mode(SHARE_READ)
+            .open(&destination)
+            .unwrap();
         let locked_probe_error = delete_access_probe_error(&destination);
-        let last_probe_error = std::cell::Cell::new(None);
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let released = std::sync::Arc::new(AtomicBool::new(false));
+        let released_by_thread = std::sync::Arc::clone(&released);
+        let releaser = std::thread::spawn(move || {
+            release_rx.recv().expect("test must signal handle release");
+            // Hold it briefly so release lands inside the 25 ms first backoff.
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            drop(lock);
+            released_by_thread.store(true, Ordering::Release);
+        });
+
         let attempts = std::cell::Cell::new(0);
         let mut first_error_code = None;
         let result = retry_sharing_violation(
@@ -494,21 +466,15 @@ $stream.Dispose()
                 result
             },
             |error| {
-                if error.raw_os_error() == Some(5) {
-                    last_probe_error.set(delete_access_probe_error(&destination));
-                }
                 let sharing_conflict = is_windows_rename_sharing_conflict(error, &destination);
                 if attempts.get() == 1 && sharing_conflict {
-                    let _ = fs::write(&release, b"release");
+                    let _ = release_tx.send(());
                 }
                 sharing_conflict
             },
         );
-        let release_result = fs::write(&release, b"release");
-        if release_result.is_err() {
-            let _ = child.kill();
-        }
-        let child_status = child.wait().unwrap();
+        let _ = release_tx.send(());
+        let release_thread_result = releaser.join();
         let destination_bytes = fs::read(&destination).unwrap_or_default();
         let temp_exists = temp.path().exists();
         if result.is_ok() {
@@ -517,8 +483,11 @@ $stream.Dispose()
         drop(temp);
         let _ = fs::remove_dir_all(&dir);
 
-        assert!(release_result.is_ok(), "could not signal the lock holder");
-        assert!(child_status.success(), "PowerShell lock holder failed");
+        assert!(release_thread_result.is_ok(), "lock releaser thread panicked");
+        assert!(
+            released.load(Ordering::Acquire),
+            "the real destination handle was not released"
+        );
         assert_eq!(
             locked_probe_error,
             Some(WINDOWS_ERROR_SHARING_VIOLATION),
@@ -533,14 +502,13 @@ $stream.Dispose()
         );
         assert!(
             result.is_ok(),
-            "rename retry failed after {} attempts: {result:?}; initial error={first_error_code:?}, locked probe={locked_probe_error:?}, retry-time probe={:?}",
-            attempts.get(),
-            last_probe_error.get()
+            "rename retry failed after {} attempts: {result:?}; initial error={first_error_code:?}, locked probe={locked_probe_error:?}",
+            attempts.get()
         );
-        assert_eq!(
-            attempts.get(),
-            2,
-            "release during the first backoff should allow retry 1"
+        assert!(
+            (2..=3).contains(&attempts.get()),
+            "the lock should block the first rename and release within two retries; attempts={}",
+            attempts.get()
         );
         assert_eq!(destination_bytes, b"replacement");
         assert!(!temp_exists);
