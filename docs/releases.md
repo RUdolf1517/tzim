@@ -72,28 +72,36 @@ release workflow is the only place a shipped binary is produced.
 | PowerShell installer | Windows x64 | download `packaging/windows/install.ps1` as a file, inspect it, then run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tzim-install.ps1 -Version latest` |
 | winget local manifest | Windows x64 | generate from the exact release ZIP and install with `winget install --manifest .\winget-local\0.16.0` |
 
-`install.sh` prefers the prebuilt binary and falls back to `cargo install --git` when the platform has no
-published build, so it never guesses a wrong binary. The PowerShell installer resolves `latest` once through
-the GitHub Releases API, then uses fixed-tag URLs for the Windows ZIP and `SHA256SUMS`; explicit versions skip
-the latest lookup. It verifies the exact archive hash, ZIP entries and executable version before an atomic
-per-user replacement, and records only its own files and PATH entry for uninstall. It supports the published
-x64 asset and fails clearly on 32-bit or ARM64 Windows. It sends no telemetry; its only requests are the optional
-single latest-release API lookup and the fixed-tag Windows ZIP/checksum downloads, including GitHub's release
-asset CDN redirects. The release workflow adds the script and generated local winget bundle to the checksum set
-for v0.16.0 and later releases; the published v0.15.0 release and assets remain unchanged.
+`install.sh` prefers the prebuilt binary and falls back to a source build only when the selected GitHub
+release has no asset for the current platform, or when the platform has no prebuilt target. A download,
+checksum, unpacking, executable or version error is fatal and never gets reported as an absent asset. A 404 for
+a mirrored asset is also fatal: a broken or incomplete mirror must not silently switch installation sources.
+
+**A version pin is honored on every path.** With `TZIM_VERSION=0.16.0`, a missing GitHub release asset may
+fall back to `cargo install --git ... --tag v0.16.0`; it never uses `TZIM_BRANCH` or `main`. Without a version
+pin, source fallback uses `TZIM_BRANCH` (default `main`). Both the downloaded executable and cargo-built
+executable are run with `--version` before and after installation; a pinned version must match exactly. The
+PowerShell installer resolves `latest` once through the GitHub Releases API, then uses fixed-tag URLs for the
+Windows ZIP and `SHA256SUMS`; explicit versions skip the latest lookup. It verifies the exact archive hash, ZIP
+entries and executable version before an atomic per-user replacement, and records only its own files and PATH
+entry for uninstall. It supports the published x64 asset and fails clearly on 32-bit or ARM64 Windows. It sends
+no telemetry; its only requests are the optional single latest-release API lookup and the fixed-tag Windows
+ZIP/checksum downloads, including GitHub's release asset CDN redirects. The release workflow adds the script
+and generated local winget bundle to the checksum set for v0.16.0 and later releases; the published v0.15.0
+release and assets remain unchanged.
 
 **It verifies what it downloads.** The archive is checked against the release's `SHA256SUMS` before it is
-unpacked, and a mismatch aborts the install with both hashes printed — it does not fall back to building from
-source and hope. The installed binary is then run once (`--version`) before the script reports success, and
-with `TZIM_VERSION` set the reported version has to match the one that was asked for. A `curl | sh` installer
-that trusts the network path more than it trusts the project's own checksums would be a strange thing to ship
-next to a program whose entire argument is that claims should be checked.
+unpacked. A mismatch, a missing checksum file, a network/server error, or a corrupt archive aborts the install;
+none can fall back to source. The installed binary is run with `--version` before success is reported, and with
+`TZIM_VERSION` set the version must match the requested release. A `curl | sh` installer that trusts the network
+path more than it trusts the project's own checksums would be a strange thing to ship next to a program whose
+entire argument is that claims should be checked.
 
-`TZIM_VERSION`, `TZIM_INSTALL_DIR`, `TZIM_REPO` and `TZIM_BRANCH` adjust what it does. `TZIM_BASE_URL` points
-the download at a mirror, which is how an air-gapped machine installs this: the layout is `<base>/<asset>` and
-`<base>/SHA256SUMS`, and the checksum check is not optional there either. `TZIM_INSECURE=1` skips it, prints a
-warning, and exists for a mirror that publishes binaries but not hashes — an explicit, documented risk rather
-than a silent one.
+`TZIM_VERSION`, `TZIM_INSTALL_DIR`, `TZIM_REPO` and `TZIM_BRANCH` adjust what it does. `TZIM_BRANCH` applies
+only when no version is pinned. `TZIM_BASE_URL` points the download at a mirror, which is how an air-gapped
+machine installs this: the layout is `<base>/<asset>` and `<base>/SHA256SUMS`, and the checksum check is not
+optional there either. `TZIM_INSECURE=1` skips it, prints a warning, and exists for a mirror that publishes
+binaries but not hashes — an explicit, documented risk rather than a silent one.
 
 ### Windows manual ZIP fallback
 

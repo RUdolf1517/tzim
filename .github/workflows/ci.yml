@@ -536,6 +536,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test pinned source fallback and installer failure handling
+        shell: bash
+        run: bash .github/scripts/test-install.sh
+
       - name: Install the published release into a temporary directory
         id: install
         continue-on-error: true
