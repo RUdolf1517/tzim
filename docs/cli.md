@@ -11,6 +11,7 @@ is attached (see [§10](#10-colour-and-progress)).
 ```
 tzim [OPTIONS] <PATH>...
 tzim --list-formats
+tzim --capabilities
 tzim --info
 tzim --check-deps
 tzim --help
@@ -114,7 +115,8 @@ reproducible and diffable.
 | `--no-fsync` | off | skip `fsync` of the candidate and its directory (faster, less durable) |
 | `--` | — | end of options; required for paths beginning with `-` |
 | `-i, --info` | — | print what the program is: version, promise, formats, the JPEG verification level of this build, links, licence, contact; exits `0` without touching any path |
-| `--list-formats` | — | print the handlers compiled into this build and what each one preserves; exits `0` |
+| `--list-formats` | — | print the handlers compiled into this build and what each one preserves; the JPEG row says default-enabled only with `jpeg-v1`, otherwise codec-only and opt-in via `--formats jpeg`; exits `0` |
+| `--capabilities` | — | print one versioned JSON object describing build features, compiled/default-enabled formats, selection flags, handler opt-ins, transformations and confirmation behavior; read-only and exits `0` |
 | `--check-deps` | — | print the external programs needed at run time, which is none, and exit `0` |
 | `-h, --help` | — | the full text of §2; exits `0` |
 | `-V, --version` | — | one line, `tzim <version>`; exits `0` |
@@ -232,9 +234,9 @@ and piped into files.
 object. Nothing else is written to stdout. Warnings and errors still appear on stderr as human text.
 
 ```json
-{"type":"file","path":"photo.png","format":"png","status":"optimized","before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"note":null,"error":null}
-{"type":"file","path":"notes.txt","format":null,"status":"unsupported","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":null,"error":null}
-{"type":"summary","schema":1,"files":2,"optimized":1,"would_optimize":0,"already_optimal":0,"unsupported":1,"skipped":0,"failed":0,"before":1258332,"after":1065041,"saved":193291,"duration_ms":414,"dry_run":false}
+{"type":"file","path":"photo.png","format":"png","status":"optimized","reason_code":null,"before":1258291,"after":1065000,"saved":193291,"guarantee":"format_equivalent","duration_ms":412,"note":null,"error":null}
+{"type":"file","path":"notes.txt","format":null,"status":"unsupported","reason_code":"unsupported_format","before":41,"after":41,"saved":0,"guarantee":"byte_identical","duration_ms":0,"note":null,"error":null}
+{"type":"summary","schema":2,"files":2,"optimized":1,"would_optimize":0,"already_optimal":0,"unsupported":1,"skipped":0,"failed":0,"before":1258332,"after":1065041,"saved":193291,"duration_ms":414,"dry_run":false,"strip_metadata":false}
 ```
 
 Field rules:
@@ -244,8 +246,9 @@ Field rules:
 | `type` | string | `file` or `summary` |
 | `path` | string | lossy UTF-8 rendering of the path, for humans |
 | `path_raw_b64` | string, optional | base64 of the raw path bytes; present on Unix only when the path is not valid UTF-8 |
-| `format` | string or null | handler id, from `Format::id`: `png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`. An APNG is reported as `png`, because the PNG handler is what rewrites it |
+| `format` | string or null | handler id, from `Format::id`: `png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, plus `fits`, `flac` and `pdf` when compiled. An APNG is reported as `png`, because the PNG handler is what rewrites it |
 | `status` | string | `optimized`, `would_optimize`, `already_optimal`, `unsupported`, `skipped`, `failed` |
+| `reason_code` | string or null | stable machine-readable explanation; `null` for `optimized`/`would_optimize`, a stable identifier for other outcomes. `status`, `note` and `error` retain their existing meanings and diagnostics |
 | `before`, `after` | integer | file sizes in bytes; equal for every non-optimizing outcome |
 | `saved` | integer | `before - after` |
 | `guarantee` | string | `format_equivalent` for `optimized` / `would_optimize`; `byte_identical` otherwise |
@@ -253,11 +256,74 @@ Field rules:
 | `duration_ms` | integer | wall time spent on this file |
 | `note` | string or null | why the file landed in this status: the refusal reason for `skipped`, the filesystem reason for a skipped replacement |
 | `error` | object or null | present **only** with `"status":"failed"`, otherwise `null`: `{"kind": "...", "message": "..."}`. `kind` is one of `io`, `parse`, `verify`, `internal` — never `unsupported`, `limit` or `refused`, because those are not failures: a refusal is a `skipped` status with the reason in `note`, and unsupported content is the `unsupported` status, with the reason in `note` only when a handler overruled the detector |
-| `schema` | integer | present in the summary only; bumped on breaking schema changes |
+| `schema` | integer | present in the summary only; identifies the JSON result schema version |
 | `dry_run` | boolean | present in the summary only |
+| `strip_metadata` | boolean | present in the summary only; mirrors the explicit run flag |
 
-JSON strings are escaped according to RFC 8259, with `\u00XX` escapes for control characters. Object keys
-and enum values are stable; new optional fields may be added in minor versions.
+`reason_code` values in result schema 2 are stable identifiers:
+
+| Code | Meaning |
+| --- | --- |
+| `aborted_by_fail_fast` | this path was not started after the run stopped |
+| `above_maximum_size`, `below_minimum_size` | configured file-size admission bound |
+| `confirmation_declined` | FITS consent was not granted; original is unchanged |
+| `configured_limit_exceeded`, `memory_budget_exceeded`, `directory_depth_exceeded` | an explicit resource or traversal bound refused work |
+| `filesystem_error`, `input_parse_error`, `verification_failed`, `internal_error` | corresponding failure class; see the unchanged `error` object for details |
+| `format_not_compiled`, `format_not_selected`, `unsupported_format`, `handler_rejected_signature` | no usable selected handler or a handler rejected a weak signature |
+| `handler_refused` | a recognized input was refused by handler policy |
+| `multiple_hard_links`, `read_only_file`, `ownership_change_denied`, `not_a_regular_file`, `symbolic_link_not_followed`, `invalid_symbolic_link_target` | file/path safety policy |
+| `no_smaller_candidate` | no acceptable smaller candidate was produced |
+| `path_filtered_by_include_exclude` | excluded by the extension filters |
+| `skipped_unclassified`, `failed_unclassified` | safe fallback if an outcome lacks a more specific code |
+
+Codes do not replace the human `note` or detailed `error.message`. Consumers must treat an unknown code as an unknown reason, retain the original `status` and diagnostics, and must not infer admission, consent or success from a code they do not understand. Unknown object fields may be ignored only when the consumer's behavior does not depend on them. A consumer requiring a schema version it does not recognize must reject the stream and fail closed rather than guess. `schema` is on the final summary record; a streaming consumer that must decide before then should buffer records or treat unrecognized additions as non-authorizing.
+
+### Capabilities document
+
+`tzim --capabilities` is an informational command that writes exactly one JSON object, not an NDJSON file stream. It performs no directory traversal, file reads, writes, or confirmation prompts. Its `capabilities_schema_version` is `1`; the `result_schema_version` it describes is `2` (the `schema` value on a `--json` summary record).
+
+The object keeps distinct:
+
+- `build_features`: boolean feature flags that affect public formats or optimization options;
+- `compiled_formats`: handlers present in this binary, regardless of run selection;
+- `default_enabled_formats`: handlers admitted without a run-time handler opt-in. FITS is deliberately omitted even in a build with the `fits` feature, because `--fits-tile` is separate explicit consent;
+- `selection_flags`: `--formats` is an allowlist, not a force flag, and never grants a handler-specific opt-in;
+- `handler_opt_ins`: run-time handler opt-ins and default-admission gates for compiled handlers; each record's presence means the handler is available. Compile-time-only FLAC/PDF options are represented by `build_features`, `compiled_formats`, and `default_enabled_formats` instead;
+- `transformations`: flags available in this build, each default-off and requiring explicit invocation. FITS contributes `--fits-tile` only when compiled;
+- `confirmation_policies`: confirmation and non-interactive behavior for transformations that can prompt. The FITS policy is present only when FITS is compiled and describes the direct-single-file TTY default-No prompt, post-verification timing, and the non-interactive explicit opt-in.
+
+A feature-limited binary reports its own actual feature booleans and format arrays; `--all-features` reports its wider set. Handler opt-ins, transformations, and confirmation policies are listed only when available in that build. A compiled or listed format is not evidence of user consent. Consumers must require the exact capability and schema fields their action depends on; an unknown schema version or unknown opt-in policy must fail closed. Unknown fields can be ignored only when they do not affect that decision.
+
+A representative default release-like build emits this one-line JSON object (shown pretty-printed here):
+
+```json
+{
+  "type": "capabilities",
+  "capabilities_schema_version": 1,
+  "result_schema_version": 2,
+  "tzim_version": "0.15.0",
+  "build_features": {"default": true, "png": true, "gzip": true, "zip": true, "ico": true, "jpeg": true, "jpeg-v1": true, "tiff": true, "zlib": true, "fits": false, "flac": false, "pdf": false, "zopfli": true},
+  "compiled_formats": ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib"],
+  "default_enabled_formats": ["png", "gzip", "zip", "ico", "jpeg", "tiff", "zlib"],
+  "selection_flags": [{"flag": "--formats", "semantics": "allowlist", "scope": "compiled_formats", "default_set": "default_enabled_formats", "does_not_grant_handler_opt_ins": true}],
+  "handler_opt_ins": [
+    {"format": "jpeg", "default_admission_feature": "jpeg-v1", "default_enabled": true, "codec_only_selection_flag": "--formats jpeg"}
+  ],
+  "transformations": [
+    {"flag": "--strip-metadata", "default": false},
+    {"flag": "--nested", "default": false},
+    {"flag": "--zopfli", "default": false}
+  ],
+  "confirmation_policies": [],
+  "side_effects": {"scans_files": false, "writes_files": false, "prompts": false}
+}
+```
+
+JSON strings are escaped according to RFC 8259, with `\u00XX` escapes for control characters. Result and
+capabilities schema versions evolve independently. Field meanings and enum values are stable within each
+schema; additive optional fields may be introduced in a minor release, while a breaking field or meaning change
+increments that document's schema version. Object keys are stable. Consumers must fail closed when a schema
+version required for their decision is unknown.
 
 ---
 

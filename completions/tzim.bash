@@ -37,7 +37,7 @@ _tzim() {
             --max-uncompressed --max-ratio --memory-budget --nested --max-depth --formats \
             --fits-tile --zopfli \
             --follow-symlinks --allow-hardlinks --allow-root-ownership-change --no-fsync \
-            --strip-metadata --info --list-formats --check-deps --help --version \
+            --strip-metadata --info --list-formats --capabilities --check-deps --help --version \
             -r -n -j -q -i -h -V" -- "$cur") )
         return 0
     fi

@@ -123,6 +123,11 @@ opt-level = 3
 opt-level = "s"
 ```
 
+For `release` builds targeting `x86_64-unknown-linux-musl`, `build.rs` also passes
+`-Wl,--no-eh-frame-hdr` to the binary linker. This omits the linker-generated `.eh_frame_hdr` lookup index while
+retaining `.eh_frame`; it is limited to this release target/profile and does not change transformation or verification
+code. The 1,082,208-byte ceiling below remains unchanged.
+
 Notes:
 
 - `opt-level = "s"` applies to **this crate**; dependencies are at `3` except `jpeg-decoder`, whose

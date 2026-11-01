@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 
-use crate::report::{Outcome, Status};
+use crate::report::{Outcome, ReasonCode, Status};
 
 /// Runs `work` over `files` with bounded parallelism and returns the outcomes in
 /// discovery order, so output is deterministic regardless of timing.
@@ -104,6 +104,7 @@ fn should_abort(outcome: &Outcome, fail_fast: bool) -> bool {
 
 fn aborted_outcome(path: &Path) -> Outcome {
     let mut outcome = Outcome::new(path.to_path_buf(), Status::Skipped, 0);
+    outcome.reason_code = Some(ReasonCode::AbortedByFailFast);
     outcome.note = Some("not processed: the run was aborted".to_string());
     outcome
 }

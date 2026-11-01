@@ -288,7 +288,11 @@ fn json_output_has_one_record_per_file_and_a_summary() {
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(json_file_records(&stdout), 2, "{stdout}");
     assert!(stdout.contains("\"type\":\"summary\""), "{stdout}");
-    assert!(stdout.contains("\"schema\":1"), "{stdout}");
+    assert!(stdout.contains("\"schema\":2"), "{stdout}");
+    assert!(
+        stdout.contains("\"reason_code\":\"unsupported_format\""),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"dry_run\":false"), "{stdout}");
 
     // Every line must be valid JSON: a strict parser checks the escaping.
@@ -462,8 +466,16 @@ fn include_and_exclude_filters() {
     let png_before = std::fs::read(&png).unwrap();
     let gz_before = std::fs::read(&gz).unwrap();
 
-    let (code, _, stderr) = run(&[".", "--include", "gz"], &ws.path);
+    let (code, stdout, stderr) = run(&[".", "--include", "gz", "--json"], &ws.path);
     assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("\"reason_code\":\"path_filtered_by_include_exclude\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"note\":\"filtered out by --include/--exclude\""),
+        "{stdout}"
+    );
     assert_eq!(
         std::fs::read(&png).unwrap(),
         png_before,
@@ -555,8 +567,12 @@ fn a_hard_linked_file_is_skipped_unless_allowed() {
     let twin = ws.path.join("twin.png");
     std::fs::hard_link(&path, &twin).expect("the fixture directory supports hard links");
 
-    let (code, stdout, stderr) = run(&["linked.png"], &ws.path);
+    let (code, stdout, stderr) = run(&["linked.png", "--json"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+    assert!(
+        stdout.contains("\"reason_code\":\"multiple_hard_links\""),
+        "{stdout}"
+    );
     assert!(
         stdout.contains("hard link") && stdout.contains("--allow-hardlinks"),
         "the reason must name the flag: {stdout}"

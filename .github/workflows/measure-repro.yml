@@ -1,34 +1,14 @@
 name: measure-repro
 
-# #72: re-run the two published measurements from a corpus that a stranger can
-# re-create, and say out loud whether the numbers still reproduce.
-#
-# The audits' figures (`docs/fits-audit.md` §8.2, `docs/pdf-audit.md` §9.2) came
-# from a corpus fetched by hand and recorded as "repository plus commit". That is
-# not re-runnable: `git clone --depth 1` takes a default branch, and GitHub does
-# not serve an arbitrary SHA as a ref, so the commit the audit quotes is not what
-# a reader would get. This job anchors the corpus on
-#
-#   * `codeload` URLs at full commit SHAs,
-#   * a SHA-256 for each of the seven archives,
-#   * and a per-file manifest — size and SHA-256 — for all 2 386 files,
-#
-# and then verifies the extracted tree against that manifest immediately before
-# measuring, and refuses to read a file the manifest does not name. The archive
-# hashes are the **first** recorded baseline for those URLs; nobody is claiming
-# they are the archives the original runs used, and a changed tarball is detected
-# only because the baseline exists from now on.
-#
-# Not a merge requirement, and not allowed to be quiet either: no
-# `continue-on-error`, and a disagreement with the publication is a red run. It is
-# a question for the owner — is the audit wrong, or did the environment move — not
-# something to normalise away.
-#
-# Open gaps this job does not close, and cannot: no archive survey FITS product
-# (still small test cutouts, so the FITS gains remain gains on small images), and
-# no PDF from the toolchain that produced the published PDF corpus. The eight and
-# fifteen per cent thresholds quoted in the audits are the old pre-registered
-# numbers, reported — not a new pre-registration.
+# #72: reproduce the disclosed `measure-repro-2026-10-31-v2` baseline from
+# full-SHA-pinned inputs and a per-file manifest. The old published values and
+# red run remain historical errata; this check does not silently rewrite them.
+# The new `pdf-zopfli-small-v1` sample is versioned with all 150 input identities
+# and exact per-file results, and is explicitly not the unavailable historical sample.
+# A green status means the disclosed baseline reproduced, including its expected
+# refusals and retained FITS exact failure; it does not mean zero failures or full
+# FITS/PDF admission. No corpus, thresholds, requiredness, or admission decision is
+# changed here. The archive/corpus limitations below remain open.
 
 on:
   workflow_call:
@@ -45,7 +25,7 @@ on:
         description: SHA actually checked out by the gate.
         value: ${{ jobs.measure.outputs.checked_out_sha }}
       result:
-        description: The original measurement comparison result.
+        description: The versioned measurement-baseline comparison result.
         value: ${{ jobs.measure.outputs.gate_result }}
   pull_request:
     paths:
@@ -53,8 +33,11 @@ on:
       - ".github/scripts/pdf-measure.py"
       - ".github/scripts/measure-fetch.py"
       - ".github/scripts/measure-repro.py"
+      - ".github/scripts/pdf-zopfli-measure.py"
+      - ".github/scripts/measure-repro-baselines/**"
       - ".github/scripts/measure-requirements.txt"
       - ".github/scripts/test_measure.py"
+      - ".github/scripts/test_pdf_zopfli.py"
       - ".github/workflows/measure-repro.yml"
 
 permissions:
@@ -72,7 +55,7 @@ env:
 
 jobs:
   measure:
-    name: re-run the published measurements
+    name: reproduce the versioned measurement baseline
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     outputs:
@@ -142,7 +125,7 @@ jobs:
 
       - name: Install the pinned measurement environment
         # `--require-hashes` is the whole point: every wheel is named and hashed,
-        # so a different numpy, astropy, libqpdf or MuPDF than the one these
+        # so a different NumPy, Astropy, libqpdf, MuPDF or Zopfli than the one these
         # numbers were recorded with cannot slip in. The versions this installs
         # are written to the evidence below.
         run: |
@@ -163,7 +146,8 @@ jobs:
       - name: Verify corpus selection and measurement guard tests
         # Runs before the corpus is touched, so a broken guard is not buried
         # under a two-minute download. This covers full-SHA pins, explicit
-        # case-sensitive exclusions, and the two historical measurement bugs.
+        # case-sensitive exclusions, historical measurement bugs, all five FITS
+        # refusal diagnostics, and the exact Zopfli sample/results/error controls.
         run: |
           set -euo pipefail
           python -m unittest discover -s .github/scripts -p 'test_*.py' -v 2>&1 \
@@ -177,7 +161,7 @@ jobs:
             --manifest "$MEASURE_ROOT/manifest.json" 2>&1 | tee evidence/fetch.txt
           cp "$MEASURE_ROOT/manifest.json" evidence/manifest.json
 
-      - name: Re-run the measurements and compare with the publication
+      - name: Measure and compare with the versioned baseline
         # The script verifies the manifest itself before measuring and returns
         # non-zero on any disagreement; `set -e` is what makes this step red.
         run: |
@@ -203,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "### Measurement re-run"
+            echo "### Versioned measurement-baseline re-run"
             if [ -f evidence/run/summary.md ]; then
               tail -n +2 evidence/run/summary.md
             else
@@ -218,7 +202,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # The complete published-table comparison is the answer to "why is
+          # The complete versioned-baseline comparison is the answer to "why is
           # this red". Publish the generated Markdown summary, not just the last
           # two metric failures; the full evidence bundle is still retained below.
           if [ -f evidence/run/summary.md ]; then

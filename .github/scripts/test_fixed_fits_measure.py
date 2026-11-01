@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test exact FITS diagnostics, positive-control wiring and unchanged threshold gates."""
+"""Test literal FITS diagnostics, both controls and the unchanged threshold gates."""
 
 from __future__ import annotations
 
@@ -495,6 +495,123 @@ class FixedFitsMeasureTests(unittest.TestCase):
             self.assertEqual(identity["sha256"], hashlib.sha256(candidate.read_bytes()).hexdigest())
             self.assertTrue(row["exact"], row)
 
+    def test_reference_rebuild_preserves_raw_cards_and_nontransformed_hdus(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "literal-source.fits"
+            candidate = root / "literal-reference.fits"
+            primary_data = np.arange(48 * 64, dtype=np.int16).reshape(48, 64)
+            primary_data[0, 0] = -32768
+            primary = fits.PrimaryHDU(data=primary_data)
+            primary.header["BLANK"] = -32768
+            primary.header["OBJECT"] = ("literal primary", "preserve primary user comment")
+            primary.header.append(("HISTORY", "literal source history card"))
+            extension = fits.ImageHDU(data=np.arange(32 * 40, dtype=np.int16).reshape(32, 40), name="SCI")
+            extension.header["OBJECT"] = ("literal extension", "preserve extension user comment")
+            extension.header["EXTVER"] = (3, "source extension version comment")
+            extension.header["EXTLEVEL"] = (2, "source extension level comment")
+            extension.header["BUNIT"] = ("Jy/pixel", "source unit comment")
+            extension.header["BSCALE"] = (2.0, "source scale comment")
+            extension.header["BZERO"] = (10.0, "source zero comment")
+            fits.HDUList([primary, extension]).writeto(source, overwrite=True, checksum=True)
+
+            eligible_images, mapping = self.fits_measure.rebuild(str(source), str(candidate))
+            exact, reason = self.fits_measure.verify(str(source), str(candidate), mapping)
+            self.assertEqual(eligible_images, 2)
+            self.assertTrue(exact, reason)
+
+            source_layouts = self.fits_measure._hdu_layouts(source)
+            candidate_layouts = self.fits_measure._hdu_layouts(candidate)
+            source_bytes = source.read_bytes()
+            candidate_bytes = candidate.read_bytes()
+            source_header = source_bytes[source_layouts[0][0] : source_layouts[0][1]]
+            candidate_header = candidate_bytes[candidate_layouts[1][0] : candidate_layouts[1][1]]
+            source_cards, _ = self.fits_measure._header_cards(source_header)
+            candidate_cards, _ = self.fits_measure._header_cards(candidate_header)
+            candidate_card_set = set(candidate_cards)
+            for source_card in source_cards:
+                keyword = self.fits_measure._card_keyword(source_card)
+                mapped = self.fits_measure._mapped_image_card(keyword)
+                if mapped and keyword != "END":
+                    expected = mapped.encode("ascii").ljust(8, b" ") + source_card[8:]
+                    self.assertIn(expected, candidate_card_set, (keyword, expected))
+            for expected_keyword in ("BLANK", "OBJECT", "HISTORY"):
+                source_card = next(card for card in source_cards if self.fits_measure._card_keyword(card) == expected_keyword)
+                self.assertIn(source_card, candidate_card_set)
+            candidate_extension_header = candidate_bytes[candidate_layouts[2][0] : candidate_layouts[2][1]]
+            source_extension_header = source_bytes[source_layouts[1][0] : source_layouts[1][1]]
+            source_extension_cards, _ = self.fits_measure._header_cards(source_extension_header)
+            candidate_extension_cards, _ = self.fits_measure._header_cards(candidate_extension_header)
+            self.assertIn(
+                next(card for card in source_extension_cards if self.fits_measure._card_keyword(card) == "EXTNAME"),
+                set(candidate_extension_cards),
+            )
+            for expected_keyword in ("OBJECT", "EXTVER", "EXTLEVEL", "BUNIT", "BSCALE", "BZERO"):
+                self.assertIn(
+                    next(card for card in source_extension_cards if self.fits_measure._card_keyword(card) == expected_keyword),
+                    set(candidate_extension_cards),
+                    expected_keyword,
+                )
+
+            # An ineligible empty primary with a checksum is copied as its exact
+            # original FITS record, not rewritten with stale checksum cards.
+            empty_source = root / "empty-primary-source.fits"
+            empty_candidate = root / "empty-primary-reference.fits"
+            empty_primary = fits.PrimaryHDU()
+            empty_primary.header["OBJECT"] = ("empty primary", "TESS-like uncompressed primary")
+            image = fits.ImageHDU(data=np.arange(64 * 96, dtype=np.int32).reshape(64, 96), name="SCI")
+            fits.HDUList([empty_primary, image]).writeto(empty_source, overwrite=True, checksum=True)
+            count, empty_mapping = self.fits_measure.rebuild(str(empty_source), str(empty_candidate))
+            self.assertEqual(count, 1)
+            empty_source_layout = self.fits_measure._hdu_layouts(empty_source)[0]
+            empty_candidate_layout = self.fits_measure._hdu_layouts(empty_candidate)[0]
+            empty_source_bytes = empty_source.read_bytes()
+            empty_candidate_bytes = empty_candidate.read_bytes()
+            self.assertEqual(
+                empty_source_bytes[empty_source_layout[0] : empty_source_layout[2]],
+                empty_candidate_bytes[empty_candidate_layout[0] : empty_candidate_layout[2]],
+            )
+            empty_exact, empty_reason = self.fits_measure.verify(
+                str(empty_source), str(empty_candidate), empty_mapping
+            )
+            self.assertTrue(empty_exact, empty_reason)
+
+    def test_reference_repair_restores_a_missing_literal_user_card(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "missing-user-source.fits"
+            candidate = root / "missing-user-candidate.fits"
+            image = fits.PrimaryHDU(data=np.arange(256, dtype=np.int16).reshape(16, 16))
+            image.header["OBJECT"] = ("restored", "must be restored exactly")
+            image.header.append(("HISTORY", "literal source history"))
+            image.writeto(source, overwrite=True, checksum=True)
+
+            # Keep Astropy's initial physical header so the test can model one
+            # user card omitted by that writer before the raw-header repair.
+            with mock.patch.object(self.fits_measure, "_preserve_reference_hdu_bytes"):
+                self.fits_measure.rebuild(str(source), str(candidate))
+            source_layout = self.fits_measure._hdu_layouts(source)[0]
+            candidate_layout = self.fits_measure._hdu_layouts(candidate)[1]
+            source_bytes = source.read_bytes()
+            candidate_bytes = candidate.read_bytes()
+            source_header = source_bytes[source_layout[0] : source_layout[1]]
+            candidate_header = candidate_bytes[candidate_layout[0] : candidate_layout[1]]
+            candidate_cards, candidate_padding = self.fits_measure._header_cards(candidate_header)
+            missing = next(i for i, card in enumerate(candidate_cards) if self.fits_measure._card_keyword(card) == "OBJECT")
+            without_object = candidate_cards[:missing] + candidate_cards[missing + 1 :]
+            simulated_writer_header = b"".join(without_object) + b" " * len(candidate_padding)
+
+            repaired = self.fits_measure._repair_compressed_header(
+                source_header, simulated_writer_header, "missing-user-source.fits"
+            )
+            repaired_cards, _ = self.fits_measure._header_cards(repaired)
+            source_object = next(
+                card for card in self.fits_measure._header_cards(source_header)[0]
+                if self.fits_measure._card_keyword(card) == "OBJECT"
+            )
+            self.assertIn(source_object, repaired_cards)
+            self.assertEqual(len(repaired), len(candidate_header))
+
     def test_empty_tier_distribution_is_explicit_and_not_zero_percent(self) -> None:
         result = self.measure.distribution_stats([])
         self.assertEqual(result["n"], 0)
@@ -512,7 +629,7 @@ class FixedFitsMeasureTests(unittest.TestCase):
                 if cwd is not None:
                     row["cwd"] = str(cwd)
                 if argv[0] == "fpack":
-                    source = Path(cwd) / argv[1]
+                    source = Path(cwd) / argv[-1]
                     shutil.copyfile(source, Path(str(source) + ".fz"))
                 elif argv[0] == "funpack":
                     output = Path(argv[argv.index("-O") + 1])
@@ -554,8 +671,8 @@ class FixedFitsMeasureTests(unittest.TestCase):
             "failed",
         )
 
-    def test_fits_threshold_requires_all_reference_candidate_gates(self) -> None:
-        def control(status: str) -> dict:
+    def test_fits_threshold_requires_reference_gates_and_both_controls(self) -> None:
+        def positive_control(status: str) -> dict:
             passed = status == "passed"
             return {
                 "control_id": "cfitsio-fpack-funpack-C-integer-primary-v1",
@@ -563,6 +680,7 @@ class FixedFitsMeasureTests(unittest.TestCase):
                 "ok": passed,
                 "fixture_dtype": "int16",
                 "fpack_float_array_oracle_used": False,
+                "fpack_invocation": ["fpack", "-g", "-q", "0", "fixture.fits"],
                 "fpack": {"returncode": 0 if passed else 1},
                 "fitsverify": {"returncode": 0 if passed else 1},
                 "funpack": {"returncode": 0 if passed else 1},
@@ -572,6 +690,45 @@ class FixedFitsMeasureTests(unittest.TestCase):
                     "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
                     "diagnostics_complete": True,
                     "ok": passed,
+                },
+            }
+
+        def negative_control(passed: bool = True) -> dict:
+            comparison = {
+                "diagnostic_schema": "tzim-funpack-roundtrip-diagnostics-v2",
+                "diagnostics_complete": True,
+                "ok": False,
+                "hdu_count_equal": True,
+                "attribution": "candidate_comparison",
+                "failure_class_counts": {"header_only": 1},
+                "hdu_checks": [{"storage_payload_equality": True}],
+            }
+            return {
+                "control_id": "astropy-reference-literal-header-negative-control-v1",
+                "status": "passed" if passed else "failed",
+                "ok": passed,
+                "positive_control_status": "passed",
+                "pre_corruption_verifier_exact": True,
+                "mutation": {
+                    "applied": True,
+                    "keyword": "OBJECT",
+                    "source_identity_unchanged": True,
+                    "payload_bytes_touched": False,
+                    "candidate_before_corruption": {"bytes": 2880, "sha256": "before"},
+                    "candidate_after_corruption": {"bytes": 2880, "sha256": "after"},
+                },
+                "negative_gate_status": "failed",
+                "negative_fitsverify_status": "passed",
+                "negative_funpack_returncode": 0,
+                "negative_gate_failure_class_counts": {"header_only": 1},
+                "gate_validation": {
+                    "status": "failed",
+                    "identity_matches_measurement_candidate": True,
+                    "source_identity_matches": True,
+                    "astropy_verifier_exact": True,
+                    "fitsverify": {"status": "passed", "candidate_returncode": 0},
+                    "funpack": {"returncode": 0},
+                    "reconstructed_array_literal_header_comparison": comparison,
                 },
             }
 
@@ -587,35 +744,47 @@ class FixedFitsMeasureTests(unittest.TestCase):
         ]
         tier2 = self.measure.distribution_stats([30.0] * 14)
         empty_tier1 = self.measure.distribution_stats([])
-        positive_control = control("passed")
-        applied = self.measure.threshold_disposition(rows, empty_tier1, tier2, positive_control)
-        independently_applied = self.recompute.threshold_disposition(rows, empty_tier1, tier2, positive_control)
+        positive = positive_control("passed")
+        negative = negative_control()
+        self.assertTrue(self.measure.negative_control_passed(negative))
+        self.assertTrue(self.recompute.negative_control_passed(negative))
+        applied = self.measure.threshold_disposition(rows, empty_tier1, tier2, positive, negative)
+        independently_applied = self.recompute.threshold_disposition(rows, empty_tier1, tier2, positive, negative)
         self.assertEqual(applied, independently_applied)
         self.assertEqual(applied["status"], "applied")
         self.assertIn("Tier 2 clears", applied["decision"])
         self.assertEqual(applied["tier1_threshold"]["result"], "empty set; not evaluated (not 0%)")
 
-        failed_control = control("failed")
-        control_blocked = self.measure.threshold_disposition(rows, empty_tier1, tier2, failed_control)
-        independently_blocked = self.recompute.threshold_disposition(rows, empty_tier1, tier2, failed_control)
+        failed_positive = positive_control("failed")
+        control_blocked = self.measure.threshold_disposition(rows, empty_tier1, tier2, failed_positive, negative)
+        independently_blocked = self.recompute.threshold_disposition(rows, empty_tier1, tier2, failed_positive, negative)
         self.assertEqual(control_blocked, independently_blocked)
         self.assertEqual(control_blocked["status"], "not_applied")
         self.assertTrue(any("positive control" in item for item in control_blocked["blockers"]))
 
-        incomplete_control = control("passed")
-        incomplete_control["funpack_invocation"].remove("-C")
+        failed_negative = negative_control(passed=False)
+        negative_blocked = self.measure.threshold_disposition(rows, empty_tier1, tier2, positive, failed_negative)
+        independently_negative_blocked = self.recompute.threshold_disposition(
+            rows, empty_tier1, tier2, positive, failed_negative
+        )
+        self.assertEqual(negative_blocked, independently_negative_blocked)
+        self.assertEqual(negative_blocked["status"], "not_applied")
+        self.assertTrue(any("negative control" in item for item in negative_blocked["blockers"]))
+
+        incomplete_positive = positive_control("passed")
+        incomplete_positive["funpack_invocation"].remove("-C")
         self.assertEqual(
-            self.measure.threshold_disposition(rows, empty_tier1, tier2, incomplete_control)["status"],
+            self.measure.threshold_disposition(rows, empty_tier1, tier2, incomplete_positive, negative)["status"],
             "not_applied",
         )
         self.assertEqual(
-            self.recompute.threshold_disposition(rows, empty_tier1, tier2, incomplete_control)["status"],
+            self.recompute.threshold_disposition(rows, empty_tier1, tier2, incomplete_positive, negative)["status"],
             "not_applied",
         )
 
         rows[0]["reference_candidate_validation"]["status"] = "failed"
-        blocked = self.measure.threshold_disposition(rows, empty_tier1, tier2, positive_control)
-        independently_blocked = self.recompute.threshold_disposition(rows, empty_tier1, tier2, positive_control)
+        blocked = self.measure.threshold_disposition(rows, empty_tier1, tier2, positive, negative)
+        independently_blocked = self.recompute.threshold_disposition(rows, empty_tier1, tier2, positive, negative)
         self.assertEqual(blocked, independently_blocked)
         self.assertEqual(blocked["status"], "not_applied")
         self.assertEqual(blocked["decision"], "threshold not applied")

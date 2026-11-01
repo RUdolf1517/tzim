@@ -1,0 +1,73 @@
+--- a/utilities/fpackutil.c
++++ b/utilities/fpackutil.c
+@@ -8,0 +9 @@
++#include <string.h>
+@@ -1632,0 +1634,54 @@
++/* Count literal all-space cards immediately before END in the current HDU. */
++static void fp_count_trailing_blank_cards (fitsfile *fptr, int *count, int *status)
++{
++        int nkeys, nmore, record;
++        char card[FLEN_CARD];
++
++        *count = 0;
++        fits_get_hdrspace (fptr, &nkeys, &nmore, status);
++        if (*status > 0)
++            return;
++
++        /* CFITSIO's keyword count stops at headend. The first card after that
++           position may be a literal blank before END; use a marked local error
++           status to stop cleanly when no further record is available. */
++        for (record = nkeys + 1; record <= nkeys + nmore + 1; record++) {
++            int record_status = 0;
++            fits_write_errmark ();
++            fits_read_record (fptr, record, card, &record_status);
++            if (record_status > 0) {
++                fits_clear_errmark ();
++                break;
++            }
++            fits_clear_errmark ();
++            if (card[0] != '\0')
++                break;
++            (*count)++;
++        }
++}
++
++/* CFITSIO's decompressor normalizes terminal blank cards out of the header.
++   Under funpack -C, restore only the missing cards, without changing any
++   other card or relaxing the caller's literal-header comparison. */
++static void fp_restore_trailing_blank_cards (fitsfile *outfptr, int source_count, int *status)
++{
++        int output_count, index;
++        char blank_card[FLEN_CARD];
++
++        if (*status > 0)
++            return;
++
++        fp_count_trailing_blank_cards (outfptr, &output_count, status);
++        if (*status > 0 || source_count <= output_count)
++            return;
++
++        memset (blank_card, ' ', 80);
++        blank_card[80] = '\0';
++        for (index = output_count; index < source_count; index++) {
++            fits_write_record (outfptr, blank_card, status);
++            if (*status > 0)
++                return;
++        }
++}
++
++/*--------------------------------------------------------------------------*/
+@@ -1635 +1690 @@
+-	int hdutype, lval;
++	int hdutype, lval, source_blank_count = 0;
+@@ -1659,0 +1715,4 @@
++            /* Save the source header's terminal blanks before decompression;
++               the decompressor may change the input's current HDU position. */
++            if (*status == 0 && !fpvar.do_checksums)
++                fp_count_trailing_blank_cards (infptr, &source_blank_count, status);
+@@ -1661 +1720,4 @@
+-            fits_img_decompress (infptr, outfptr, status);
++            if (*status == 0)
++                fits_img_decompress (infptr, outfptr, status);
++            if (*status == 0 && !fpvar.do_checksums)
++                fp_restore_trailing_blank_cards (outfptr, source_blank_count, status);

@@ -822,6 +822,7 @@ def positive_control_passed(control: dict) -> bool:
     comparison = control.get("literal_header_storage_array_comparison") or {}
     funpack_argv = control.get("funpack_invocation") or []
     fitsverify_argv = control.get("fitsverify_invocation") or []
+    fpack_argv = control.get("fpack_invocation") or []
     command_results_ok = all(
         (control.get(name) or {}).get("returncode") == 0
         for name in ("fpack", "fitsverify", "funpack")
@@ -832,6 +833,9 @@ def positive_control_passed(control: dict) -> bool:
         and control.get("fixture_dtype") == "int16"
         and control.get("fpack_float_array_oracle_used") is False
         and command_results_ok
+        and "-g" in fpack_argv
+        and fpack_argv[fpack_argv.index("-g") + 1 : fpack_argv.index("-g") + 2] == ["-q"]
+        and fpack_argv[fpack_argv.index("-q") + 1 : fpack_argv.index("-q") + 2] == ["0"]
         and "-l" in fitsverify_argv
         and "-C" in funpack_argv
         and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
@@ -884,7 +888,7 @@ def run_funpack_positive_control(
             source_bytes, source_sha = digest(source)
             control["source_identity"] = {"bytes": source_bytes, "sha256": source_sha}
 
-            fpack_argv = [fpack, source.name]
+            fpack_argv = [fpack, "-g", "-q", "0", source.name]
             fpack_result = run(fpack_argv, logs, cwd=temp)
             control["fpack_invocation"] = fpack_argv
             control["fpack"] = fpack_result
@@ -955,6 +959,212 @@ def run_funpack_positive_control(
     return control
 
 
+
+def negative_control_passed(control: dict) -> bool:
+    """Require a clean, valid candidate to fail only the strict header gate."""
+    gate = control.get("gate_validation") or {}
+    comparison = gate.get("reconstructed_array_literal_header_comparison") or {}
+    hdu_checks = comparison.get("hdu_checks") or []
+    payloads_unchanged = bool(hdu_checks) and all(
+        check.get("storage_payload_equality") is True for check in hdu_checks
+    )
+    fitsverify = gate.get("fitsverify") or {}
+    mutation = control.get("mutation") or {}
+    before = mutation.get("candidate_before_corruption") or {}
+    after = mutation.get("candidate_after_corruption") or {}
+    return (
+        control.get("status") == "passed"
+        and control.get("ok") is True
+        and control.get("pre_corruption_verifier_exact") is True
+        and mutation.get("applied") is True
+        and mutation.get("keyword") == "OBJECT"
+        and mutation.get("source_identity_unchanged") is True
+        and mutation.get("payload_bytes_touched") is False
+        and before.get("bytes") == after.get("bytes")
+        and isinstance(before.get("sha256"), str)
+        and isinstance(after.get("sha256"), str)
+        and before.get("sha256") != after.get("sha256")
+        and control.get("positive_control_status") == "passed"
+        and gate.get("status") == "failed"
+        and gate.get("identity_matches_measurement_candidate") is True
+        and gate.get("source_identity_matches") is True
+        and gate.get("astropy_verifier_exact") is True
+        and fitsverify.get("status") == "passed"
+        and fitsverify.get("candidate_returncode") == 0
+        and (gate.get("funpack") or {}).get("returncode") == 0
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
+        and comparison.get("diagnostics_complete") is True
+        and comparison.get("ok") is False
+        and comparison.get("hdu_count_equal") is True
+        and comparison.get("attribution") == "candidate_comparison"
+        and comparison.get("failure_class_counts", {}).get("header_only", 0) >= 1
+        and payloads_unchanged
+    )
+
+
+def corrupt_header_value(path: Path, keyword: str, original_value: str) -> dict:
+    """Change one value byte in a physical FITS header without touching payloads."""
+    expected = original_value.encode("ascii")
+    with fits.open(path, disable_image_compression=True, memmap=False) as hdus:
+        target = None
+        for hdu_index, hdu in enumerate(hdus):
+            if not bool(hdu.header.get("ZIMAGE", False)):
+                continue
+            for card_index, card in enumerate(hdu.header.cards):
+                if card.keyword != keyword:
+                    continue
+                before = card.image.encode("ascii")
+                relative = before.find(expected)
+                if relative < 0:
+                    continue
+                after = bytearray(before)
+                after[relative] = ord("X") if expected[0] != ord("X") else ord("Y")
+                target = {
+                    "hdu_index": hdu_index,
+                    "card_index": card_index,
+                    "relative_byte_offset": relative,
+                    "absolute_file_offset": int(hdu._header_offset) + card_index * 80 + relative,
+                    "before_card_hex": before.hex(),
+                    "after_card_hex": bytes(after).hex(),
+                    "before_value": original_value,
+                    "after_value": bytes(after[relative : relative + len(expected)]).decode("ascii"),
+                }
+                break
+            if target is not None:
+                break
+    if target is None:
+        raise RuntimeError(f"cannot locate {keyword}={original_value!r} in a compressed image header")
+    with path.open("r+b") as stream:
+        stream.seek(target["absolute_file_offset"])
+        stream.write(bytes([ord("X") if expected[0] != ord("X") else ord("Y")]))
+    target["keyword"] = keyword
+    target["applied"] = True
+    return target
+
+
+def run_reference_negative_control(
+    fitsverify: str,
+    funpack: str,
+    fits_measure_module,
+    positive_control: dict,
+    work: Path,
+    logs: list[dict],
+) -> dict:
+    """Prove the actual Astropy reference-candidate gate rejects corruption.
+
+    A candidate produced by the registered Astropy `rebuild()` path is first
+    checked against the synthetic source. One byte in its OBJECT card is then
+    changed, without touching the compressed payload. The final candidate
+    identity is registered and the same `fitsverify`/`funpack -C` gate must reject
+    it specifically as a literal-header-only mismatch. Temporary FITS files are
+    never retained in the evidence artifact.
+    """
+    control = {
+        "control_id": "astropy-reference-literal-header-negative-control-v1",
+        "control_type": "external_negative_control",
+        "status": "failed",
+        "expected": "valid Astropy reference candidate with one changed OBJECT-card byte fails the literal-header gate",
+        "reference_float_array_oracle_used": False,
+        "positive_control_status": positive_control.get("status", "missing"),
+        "corruption_policy": "mutate a single physical OBJECT-card byte after candidate generation; never alter payload bytes",
+    }
+    if fits is None or np is None:
+        control["reason"] = f"negative-control fixture dependencies unavailable: {FITS_IO_IMPORT_ERROR}"
+        return control
+    if fits_measure_module is None or not hasattr(fits_measure_module, "rebuild"):
+        control["reason"] = "Astropy CompImageHDU reference generator is unavailable"
+        return control
+
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="fits-reference-negative-control-", dir=work) as temporary_dir:
+            temp = Path(temporary_dir)
+            source = temp / "negative-control-source.fits"
+            candidate_dir = temp / "reference-candidates"
+            candidate_dir.mkdir()
+            candidate = candidate_dir / "negative-control.reference.fits"
+            unpack_work = temp / "unpack-work"
+            unpack_work.mkdir()
+            data = np.arange(64 * 96, dtype=np.int16).reshape(64, 96)
+            primary = fits.PrimaryHDU(data=data)
+            primary.header["OBJECT"] = "REFERENCE NEGATIVE CONTROL"
+            primary.header.append(("HISTORY", "Synthetic integer-only negative control"))
+            primary.writeto(source, overwrite=True, checksum=False)
+            source_bytes, source_sha = digest(source)
+            control["source_identity"] = {"bytes": source_bytes, "sha256": source_sha}
+
+            eligible_images, mapping = fits_measure_module.rebuild(str(source), str(candidate))
+            exact, why = fits_measure_module.verify(str(source), str(candidate), mapping)
+            if not exact:
+                raise RuntimeError(f"uncorrupted Astropy reference candidate did not verify exactly: {why}")
+            pre_corruption_bytes, pre_corruption_sha = digest(candidate)
+            mutation = corrupt_header_value(candidate, "OBJECT", "REFERENCE NEGATIVE CONTROL")
+            candidate_bytes, candidate_sha = digest(candidate)
+            mutation.update(
+                candidate_before_corruption={"bytes": pre_corruption_bytes, "sha256": pre_corruption_sha},
+                candidate_after_corruption={"bytes": candidate_bytes, "sha256": candidate_sha},
+                source_identity_unchanged=True,
+                payload_bytes_touched=False,
+            )
+            control["mutation"] = mutation
+            reference = {
+                "product_id": "negative-control",
+                "filename": candidate.name,
+                "bytes": candidate_bytes,
+                "sha256": candidate_sha,
+                "source_bytes": source_bytes,
+                "source_sha256": source_sha,
+                "generation": "Astropy CompImageHDU reference; one OBJECT-card byte intentionally changed after generation",
+                "generation_method": "same rebuild() path used for frozen reference candidates",
+                "eligible_images": eligible_images,
+                "mapping": mapping,
+            }
+            audit = {
+                "status": "tier2",
+                "exact": True,
+                "why": why,
+                "reference_candidate": reference,
+                "exactness_basis": "the uncorrupted Astropy candidate passed the array/header verifier before the deliberate header mutation",
+            }
+            gate = validate_reference_candidate(
+                source=source,
+                audit=audit,
+                reference_candidate_dir=candidate_dir,
+                work=unpack_work,
+                product_id="negative-control",
+                order=99,
+                fitsverify=fitsverify,
+                funpack=funpack,
+                positive_control=positive_control,
+                logs=logs,
+            )
+            control["pre_corruption_verifier_exact"] = exact
+            control["pre_corruption_verifier_reason"] = why
+            control["gate_validation"] = gate
+            control["negative_fitsverify_status"] = (gate.get("fitsverify") or {}).get("status")
+            control["negative_funpack_returncode"] = (gate.get("funpack") or {}).get("returncode")
+            control["negative_gate_status"] = gate.get("status")
+            control["negative_gate_failure_class_counts"] = (
+                (gate.get("reconstructed_array_literal_header_comparison") or {}).get("failure_class_counts", {})
+            )
+            control["ok"] = True
+            control["status"] = "passed"
+            if not negative_control_passed(control):
+                control["ok"] = False
+                control["status"] = "failed"
+                control["reason"] = "the deliberate header corruption did not satisfy all negative-control expectations"
+            else:
+                control["reason"] = (
+                    "passed: valid Astropy reference candidate kept matching identity, passed fitsverify and funpack, "
+                    "then failed the strict literal-header gate with payload bytes unchanged"
+                )
+    except Exception as error:
+        control["ok"] = False
+        control["status"] = "failed"
+        control["reason"] = f"{type(error).__name__}: {error}"
+        control["exception"] = control["reason"]
+    return control
+
 def validate_reference_candidate(
     source: Path,
     audit: dict,
@@ -967,7 +1177,7 @@ def validate_reference_candidate(
     positive_control: dict,
     logs: list[dict],
 ) -> dict:
-    """HEASARC-validate the exact Astropy candidate that produced a Tier-2 row."""
+    """HEASARC-validate the exact registered reference candidate for a Tier-2 row."""
     reference = audit.get("reference_candidate") if isinstance(audit, dict) else None
     audit_status = audit.get("status") if isinstance(audit, dict) else "not_measured"
     if audit_status != "tier2" or not isinstance(reference, dict):
@@ -985,11 +1195,13 @@ def validate_reference_candidate(
         "registered_sha256": reference.get("sha256"),
         "astropy_verifier_exact": audit.get("exact"),
         "astropy_verifier_reason": audit.get("why"),
+        "candidate_verifier": "fits-measure.py exact array/header verifier (Astropy reader; not the byte-level acceptance oracle)",
         "generation": reference.get("generation"),
+        "generation_command": reference.get("generation_command"),
         "eligible_images": reference.get("eligible_images"),
         "hdu_mapping": reference.get("mapping"),
-        "fitsverify_invocation": "fitsverify -l <exact Astropy Tier-2 candidate>",
-        "funpack_invocation": "funpack -C -O <temporary reconstructed FITS> <exact Astropy Tier-2 candidate>",
+        "fitsverify_invocation": "fitsverify -l <exact registered reference candidate>",
+        "funpack_invocation": "funpack -C -O <temporary reconstructed FITS> <exact registered reference candidate>",
         "funpack_checksum_mode": "-C; prevent CFITSIO from synthesizing/updating CHECKSUM/DATASUM; compare those cards literally",
         "positive_control_status": positive_control.get("status", "missing"),
         "header_payload_attribution": (
@@ -1010,11 +1222,19 @@ def validate_reference_candidate(
             result["reason"] = "the exact reference candidate recorded by fits-measure.py is missing"
             return result
         candidate_bytes, candidate_sha = digest(candidate)
+        source_bytes, source_sha = digest(source)
         identity_matches = candidate_bytes == reference.get("bytes") and candidate_sha == reference.get("sha256")
+        source_identity_matches = (
+            source_bytes == reference.get("source_bytes")
+            and source_sha == reference.get("source_sha256")
+        )
         result.update(
             observed_bytes=candidate_bytes,
             observed_sha256=candidate_sha,
             identity_matches_measurement_candidate=identity_matches,
+            source_bytes=source_bytes,
+            source_sha256=source_sha,
+            source_identity_matches=source_identity_matches,
         )
 
         source_check = run([fitsverify, "-l", str(source)], logs)
@@ -1076,8 +1296,10 @@ def validate_reference_candidate(
             failures.append("external funpack -C positive control failed; candidate header/payload differences are not attributed")
         if not identity_matches:
             failures.append("candidate identity differs from the bytes used by the reference measurement")
+        if not source_identity_matches:
+            failures.append("reference candidate source bytes/SHA-256 differ from the exact frozen source")
         if audit.get("exact") is not True:
-            failures.append("existing Astropy reference verifier did not report an exact candidate")
+            failures.append("existing reference array/header verifier did not report an exact candidate")
         if not fitsverify_ok:
             failures.append(result["fitsverify"].get("reason", "fitsverify failed"))
         if not funpack_ok:
@@ -1087,7 +1309,7 @@ def validate_reference_candidate(
             result["status"] = "blocked_positive_control"
         elif not failures:
             result["status"] = "passed"
-            result["reason"] = "exact candidate identity, HEASARC check, funpack -C, positive control, and literal-header/storage-array round trip passed"
+            result["reason"] = "exact source/candidate identities, HEASARC check, funpack -C, positive control, and literal-header/storage-array round trip passed"
         result["reason"] = "; ".join(failures) if failures else result.get("reason", "")
     except Exception as error:
         result["reason"] = f"{type(error).__name__}: {error}"
@@ -1105,13 +1327,17 @@ def validate_reference_candidate(
 
 
 def threshold_disposition(
-    rows: list[dict], tier1_stats: dict, tier2_stats: dict, positive_control: dict
+    rows: list[dict], tier1_stats: dict, tier2_stats: dict,
+    positive_control: dict, negative_control: dict,
 ) -> dict:
-    """Apply issue #59's unchanged rule only after the -C control and candidate gates."""
+    """Apply issue #59's unchanged numeric rule only after both external controls and candidate gates."""
     blockers = []
     positive_control_ok = positive_control_passed(positive_control)
+    negative_control_ok = negative_control_passed(negative_control)
     if not positive_control_ok:
         blockers.append("external funpack -C positive control did not pass; survey header/payload differences are not attributable")
+    if not negative_control_ok:
+        blockers.append("external reference negative control did not fail the gate on an intentionally corrupted literal header")
     if len(rows) != 14:
         blockers.append(f"expected all 14 frozen products, found {len(rows)}")
     tier2_rows = []
@@ -1127,7 +1353,7 @@ def threshold_disposition(
         if audit.get("status") == "tier2":
             tier2_rows.append(row)
             if audit.get("exact") is not True:
-                blockers.append(f"{product_id}: Astropy reference candidate did not pass its original verifier")
+                blockers.append(f"{product_id}: reference candidate did not pass its original array/header verifier")
             validation = row.get("reference_candidate_validation") or {}
             if validation.get("status") != "passed":
                 blockers.append(f"{product_id}: reference-candidate HEASARC/funpack gate is {validation.get('status')}")
@@ -1136,8 +1362,9 @@ def threshold_disposition(
         return {
             "status": "not_applied",
             "decision": "threshold not applied",
-            "reason": "positive control or one or more fixed-row/reference-candidate checks remain unresolved",
+            "reason": "an external control or one or more fixed-row/reference-candidate checks remain unresolved",
             "positive_control_status": positive_control.get("status", "missing"),
+            "negative_control_status": negative_control.get("status", "missing"),
             "blockers": blockers,
             "tier2_threshold": {
                 "median_gain_pct_at_least": 8.0,
@@ -1190,6 +1417,7 @@ def threshold_disposition(
         "status": "applied",
         "decision": decision,
         "positive_control_status": positive_control.get("status", "missing"),
+        "negative_control_status": negative_control.get("status", "missing"),
         "blockers": [],
         "tier2_threshold": {
             "median_gain_pct_at_least": 8.0,
@@ -1287,6 +1515,17 @@ def main() -> int:
     positive_control_ok = positive_control_passed(positive_control)
     (out / "positive-control.json").write_text(
         json.dumps(positive_control, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    negative_control = run_reference_negative_control(
+        fitsverify=str(Path(args.fitsverify).resolve()),
+        funpack=str(Path(args.funpack).resolve()),
+        fits_measure_module=fits_measure,
+        positive_control=positive_control,
+        work=work,
+        logs=logs,
+    )
+    (out / "negative-control.json").write_text(
+        json.dumps(negative_control, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     rows: list[dict] = []
 
@@ -1515,7 +1754,7 @@ def main() -> int:
         if reference_comparison is not None:
             hdu_diagnostics.append({
                 "product_id": row.get("product_id"),
-                "comparison_kind": "astropy_reference_candidate_funpack_C_vs_source",
+                "comparison_kind": "astropy_reference_candidate_funpack_C_vs_exact_source",
                 "candidate_bytes": reference.get("bytes"),
                 "candidate_sha256": reference.get("sha256"),
                 "positive_control_status": positive_control.get("status"),
@@ -1551,6 +1790,14 @@ def main() -> int:
     audit_refusal_reasons = dict(sorted(Counter(
         row.get("reason", "unspecified") for row in audit_rows if row.get("status") == "refused"
     ).items()))
+    audit_refusal_details = [
+        {
+            "path": Path(row.get("path", "")).name,
+            "reason": row.get("reason", "unspecified"),
+            "error": row.get("err"),
+        }
+        for row in audit_rows if row.get("status") == "refused"
+    ]
     audit_tier2_rows = [row for row in audit_rows if row.get("status") == "tier2"]
     audit_gains = [
         row["pct"] for row in audit_tier2_rows
@@ -1631,7 +1878,7 @@ def main() -> int:
         }
 
     reference_hdu_diagnostics = {
-        "comparison_kind": "Astropy reference candidate funpack -C versus exact source",
+        "comparison_kind": "Astropy CompImageHDU reference candidate funpack -C versus exact source",
         **comparison_diagnostics(rows, "reference_candidate_validation", "reconstructed_array_literal_header_comparison"),
     }
     tzim_hdu_diagnostics = {
@@ -1661,7 +1908,9 @@ def main() -> int:
         "not_measured_n": sum(1 for row in rows if (row.get("existing_two_tier_instrument") or {}).get("status") == "not_measured"),
         "note": "Tier 1 recompression rows are comparators derived from the frozen products and may overlap a Tier 2 product; they are not new survey inputs.",
     }
-    threshold_result = threshold_disposition(rows, tier1_stats, tier2_stats, positive_control)
+    threshold_result = threshold_disposition(
+        rows, tier1_stats, tier2_stats, positive_control, negative_control
+    )
     audit_stats = {
         "audit_rows": len(audit_rows),
         "tier2_candidate_rows": len(audit_tier2_rows),
@@ -1692,6 +1941,17 @@ def main() -> int:
             "max": max(tzim_gains) if tzim_gains else None,
         },
         "external_funpack_C_positive_control": positive_control_summary,
+        "external_reference_negative_control": {
+            "control_id": negative_control.get("control_id"),
+            "status": negative_control.get("status", "missing"),
+            "ok": negative_control_passed(negative_control),
+            "expected_gate_status": "failed",
+            "observed_gate_status": negative_control.get("negative_gate_status"),
+            "fitsverify_status": negative_control.get("negative_fitsverify_status"),
+            "funpack_returncode": negative_control.get("negative_funpack_returncode"),
+            "failure_class_counts": negative_control.get("negative_gate_failure_class_counts", {}),
+            "payload_bytes_touched": (negative_control.get("mutation") or {}).get("payload_bytes_touched"),
+        },
         "reference_candidate_gate": {
             "expected_candidates_n": len(reference_rows),
             "validation_status_counts": reference_validation_counts,
@@ -1722,6 +1982,10 @@ def main() -> int:
         "fitsverify_source": {
             "cfitsio_commit": "113781d8aa442cf8d3c27295d9084674b8b039f2",
             "cfitsio_archive_sha256": "d93c0de372a264156d2f3e1eab2d4159e132c35c2216f71c0af0009b92a72b5e",
+            "cfitsio_funpack_patch": ".github/scripts/cfitsio-preserve-trailing-blank.patch",
+            "cfitsio_funpack_patch_sha256": hashlib.sha256(
+                Path(__file__).resolve().with_name("cfitsio-preserve-trailing-blank.patch").read_bytes()
+            ).hexdigest(),
             "version_line": next((
                 line.strip()
                 for row in rows
@@ -1730,7 +1994,7 @@ def main() -> int:
             ), None),
         },
         "derived_tier1_is_comparator_only": True,
-        "fpack_checksum_behavior": "documentation/comparator only; never used to admit or repair a candidate",
+        "fpack_control_scope": "independent integer-only positive control only; never used to generate reference candidates or repair candidate bytes",
     }
     (out / "aggregate.json").write_text(json.dumps(aggregate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     def distribution_text(label: str, stats: dict) -> str:
@@ -1747,7 +2011,7 @@ def main() -> int:
         "# Fixed #59 FITS measurement",
         "",
         f"- Frozen 14-product source manifest SHA-256: `{manifest_sha}`",
-        f"- Environment: Python `{sys.version.split()[0]}`, NumPy `{aggregate['numpy_version']}`, Astropy `{aggregate['astropy_version']}`; CFITSIO commit `{aggregate['fitsverify_source']['cfitsio_commit']}` (archive SHA-256 `{aggregate['fitsverify_source']['cfitsio_archive_sha256']}`).",
+        f"- Environment: Python `{sys.version.split()[0]}`, NumPy `{aggregate['numpy_version']}`, Astropy `{aggregate['astropy_version']}`; CFITSIO commit `{aggregate['fitsverify_source']['cfitsio_commit']}` (archive SHA-256 `{aggregate['fitsverify_source']['cfitsio_archive_sha256']}`); pinned `funpack -C` terminal-blank patch SHA-256 `{aggregate['fitsverify_source']['cfitsio_funpack_patch_sha256']}`.",
         f"- Existing two-tier instrument SHA-256: `{aggregate['existing_two_tier_script_sha256']}`; exact reference-candidate generation and check commands/results are retained in the rows/logs.",
         f"- Fetch statuses: `{json.dumps(aggregate['fetch_status_counts'], sort_keys=True)}`",
         f"- Measurement statuses: `{json.dumps(aggregate['measurement_status_counts'], sort_keys=True)}`",
@@ -1756,7 +2020,9 @@ def main() -> int:
         f"- {distribution_text('Tier 2 Astropy reference-candidate gain', aggregate['existing_fits_measure_tier2_gain_pct'])}",
         f"- {distribution_text('Tier 1 existing-tile comparator gain', aggregate['existing_tile_tier1_comparator_gain_pct'])}",
         f"- Refusals by reason: `{json.dumps(audit_refusal_reasons, sort_keys=True)}`",
-        f"- External positive control: **{positive_control_summary['status']}** via pinned CFITSIO `fpack` → `fitsverify -l` → `funpack -C` → this same literal-header/storage-array comparator; integer-only fixture, no fpack float-array oracle.",
+        f"- Refusal diagnostics: `{json.dumps(audit_refusal_details, sort_keys=True)}`",
+        f"- External positive control: **{positive_control_summary['status']}** via pinned CFITSIO `fpack -g -q 0` → `fitsverify -l` → `funpack -C` → this same literal-header/storage-array comparator; integer-only fixture, no fpack float-array oracle.",
+        f"- External negative control: **{negative_control.get('status', 'missing')}**; the deliberately changed `OBJECT` card candidate was expected to fail the literal-header gate, with HEASARC/funpack status `{negative_control.get('negative_fitsverify_status', 'missing')}`/`{negative_control.get('negative_funpack_returncode', 'missing')}`, classes `{json.dumps(negative_control.get('negative_gate_failure_class_counts', {}), sort_keys=True)}`, and payload touched=`{(negative_control.get('mutation') or {}).get('payload_bytes_touched')}`.",
         f"- Reference candidate HEASARC/funpack -C gate: {reference_gate['validated_candidates_n']}/{reference_gate['expected_candidates_n']} passed; overall statuses `{json.dumps(reference_gate['validation_status_counts'], sort_keys=True)}`; `fitsverify -l` statuses `{json.dumps(reference_gate['fitsverify_status_counts'], sort_keys=True)}`.",
         f"- Reference per-HDU classes: `{json.dumps(reference_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; cards-through-END equal={reference_hdu_diagnostics['header_cards_through_end_equal_hdu_count']}, unequal={reference_hdu_diagnostics['header_cards_through_end_mismatch_hdu_count']}, padding-only={reference_hdu_diagnostics['padding_only_hdu_count']}, inserted/dropped/changed cards=`{json.dumps(reference_hdu_diagnostics['header_card_difference_counts'], sort_keys=True)}`, storage-payload mismatches={reference_hdu_diagnostics['payload_mismatch_hdu_count']}; attribution enabled={positive_control_summary['ok']}.",
         f"- Tzim per-HDU classes: `{json.dumps(tzim_hdu_diagnostics['failure_class_counts'], sort_keys=True)}`; cards-through-END equal={tzim_hdu_diagnostics['header_cards_through_end_equal_hdu_count']}, unequal={tzim_hdu_diagnostics['header_cards_through_end_mismatch_hdu_count']}, padding-only={tzim_hdu_diagnostics['padding_only_hdu_count']}, inserted/dropped/changed cards=`{json.dumps(tzim_hdu_diagnostics['header_card_difference_counts'], sort_keys=True)}`, storage-payload mismatches={tzim_hdu_diagnostics['payload_mismatch_hdu_count']}.",
@@ -2046,6 +2312,11 @@ def main() -> int:
         failures.append(
             "external CFITSIO fpack/fitsverify/funpack -C positive control did not pass; "
             "survey header/payload differences are not attributable"
+        )
+    if not negative_control_passed(negative_control):
+        failures.append(
+            "Astropy reference-candidate negative control did not prove that the literal-header gate "
+            "rejects an intentionally corrupted candidate"
         )
     if failures:
         (out / "blockers.txt").write_text("\n".join(failures) + "\n", encoding="utf-8")

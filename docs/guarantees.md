@@ -1036,15 +1036,18 @@ full FITS format admission or stability.
 
 **Historical audit, not current release/performance evidence.** The historical 178-file audit reported median
 **21.9%** on **84.8%** of its sample and admitted Tier 2 under its written thresholds; those figures remain
-history. The owner selected an opt-in `--fits-tile` implementation, not full FITS admission. The a1 #59 report's
-14 default-checksum `funpack` comparisons are superseded as an instrument outcome and are not evidence of
-candidate content failures: each literal-header/storage-array reconstruction must use `funpack -C`. The
-corrected gate requires an external integer-only CFITSIO positive control through that same comparison path;
-structured diagnostics include per-HDU equality, card indices, keywords, first-difference offsets, and exact
-80-column cards. Four TESS `fitsverify -l` checksum warnings remain independent blockers, so the pre-registered
-threshold is **not applied**. Tzim skipped all 14 products unchanged, distinct from the reference-candidate check.
-Recompressing tiles already `GZIP_1`/`GZIP_2` measured **0.00%** in the historical run and **does not ship** — a
-`ZIMAGE` table is copied verbatim. No FITS inputs were repaired or uploaded. See [FITS audit §12](fits-audit.md#12-corrected-59-reader-mode-protocol), [the historical report in §11](fits-audit.md#11-pr-84-follow-up--59-fixed-survey-sample), and [measurement status](measurement-status.md) for identities and limits.
+history. The owner selected an opt-in `--fits-tile` implementation, not full FITS admission. The earlier a1 and
+padded-comparator `funpack` outcomes are preserved as historical instrument results, not candidate-content
+verdicts; the current exact comparison reconstructs every pair with `funpack -C`. At exact source SHA
+`c69d25e377215031dee2f2245afc967604423ae9`, fixed run [41215985536](https://github.com/RUdolf1517/tzim/actions/runs/41215985536)
+passed all 14 reference-candidate round trips and 20/20 literal cards-through-`END`/storage-payload HDU checks,
+with zero card or payload mismatches. The positive and negative controls passed; `fitsverify -l` reported 10 clean
+passes and 4 inherited-warning passes. The pre-registered #59 threshold is **applied** for opt-in `--fits-tile`
+only; Tier 1 is empty/not evaluated and Tzim skipped all 14 products unchanged. This is not full FITS admission.
+The previously reported four TESS checksum-warning blockers do not describe the c69 run. Recompressing tiles
+already `GZIP_1`/`GZIP_2` measured **0.00%** in the historical audit and **does not ship** — a `ZIMAGE` table is
+copied verbatim. No FITS inputs were repaired or uploaded; the ROSAT permission boundary remains unchanged. See
+the [exact run report](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545587417), [FITS audit §15](fits-audit.md#15-current-exact-sha-rerun-at-c69d25e), and [measurement status](measurement-status.md) for the exact identities and limits.
 
 **Confirmation (#83).** `--fits-tile` remains the only transformation that can request confirmation. For a
 single direct regular file on a TTY, the handler first establishes eligibility, builds the candidate, and runs

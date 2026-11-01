@@ -7,7 +7,7 @@ use crate::detect;
 use crate::error::{Error, Result};
 use crate::formats::{self, Allow, Cand, Options};
 use crate::replace::{self, Snapshot, TempFile};
-use crate::report::{Outcome, Status};
+use crate::report::{Outcome, ReasonCode, Status};
 
 const PDF_PARSER_RESERVE_BYTES: u64 = 128 * 1024 * 1024;
 const FLAC_WORKING_RESERVE_BYTES: u64 = 8 * 1024 * 1024;
@@ -187,6 +187,7 @@ fn process_inner(path: &Path, cfg: &Config, mut confirm: Confirmation<'_>) -> Ou
     let mut outcome = Outcome::new(path.to_path_buf(), Status::Skipped, 0);
     let result = run(path, cfg, &mut outcome, &mut confirm);
     if let Err(e) = result {
+        outcome.reason_code = Some(ReasonCode::for_error(&e));
         match e {
             Error::Limit(message) | Error::Refused(message) => {
                 outcome.status = Status::Skipped;
@@ -221,10 +222,12 @@ fn run(
 
     let md = fs::symlink_metadata(path)?;
     if md.file_type().is_symlink() {
+        outcome.reason_code = Some(ReasonCode::SymbolicLinkNotFollowed);
         outcome.note = Some("symbolic link".to_string());
         return Ok(());
     }
     if !md.is_file() {
+        outcome.reason_code = Some(ReasonCode::NotARegularFile);
         outcome.note = Some("not a regular file".to_string());
         return Ok(());
     }
@@ -234,19 +237,23 @@ fn run(
     outcome.after = snapshot.len;
 
     if snapshot.len < cfg.min_size {
+        outcome.reason_code = Some(ReasonCode::BelowMinimumSize);
         outcome.note = Some(format!("smaller than --min-size ({})", cfg.min_size));
         return Ok(());
     }
     if snapshot.len > cfg.max_size {
+        outcome.reason_code = Some(ReasonCode::AboveMaximumSize);
         outcome.note = Some(format!("larger than --max-size ({})", cfg.max_size));
         return Ok(());
     }
     #[cfg(unix)]
     if snapshot.nlink > 1 && !cfg.allow_hardlinks {
+        outcome.reason_code = Some(ReasonCode::MultipleHardLinks);
         outcome.note = Some("has more than one hard link (use --allow-hardlinks)".to_string());
         return Ok(());
     }
     if snapshot.readonly {
+        outcome.reason_code = Some(ReasonCode::ReadOnlyFile);
         outcome.note = Some("file is read-only".to_string());
         return Ok(());
     }
@@ -259,6 +266,7 @@ fn run(
             // "unsupported: unsupported format" was a wart in every line and
             // every JSON record.
             outcome.status = Status::Unsupported;
+            outcome.reason_code = Some(ReasonCode::UnsupportedFormat);
             return Ok(());
         }
     };
@@ -268,6 +276,7 @@ fn run(
         outcome.status = Status::Skipped;
         let enabled = cfg.allow.names();
         if !formats::compiled(format) {
+            outcome.reason_code = Some(ReasonCode::FormatNotCompiled);
             let built = formats::compiled_names();
             outcome.note = Some(format!(
                 "this build has no {} handler (compiled: {})",
@@ -279,6 +288,7 @@ fn run(
                 }
             ));
         } else {
+            outcome.reason_code = Some(ReasonCode::FormatNotSelected);
             outcome.note = Some(format!(
                 "{} is not enabled for this run (use --formats; enabled: {})",
                 format.name(),
@@ -304,6 +314,7 @@ fn run(
         cfg.max_uncompressed,
     );
     if cost > cfg.memory_budget {
+        outcome.reason_code = Some(ReasonCode::MemoryBudgetExceeded);
         outcome.note = Some(format!(
             "worst case {cost} bytes of memory exceeds --memory-budget ({}); \
              lower --max-pixels or --max-uncompressed, raise the budget, or use fewer --jobs",
@@ -323,6 +334,7 @@ fn run(
         let original_uid = md.uid();
         let our_uid = temp.file().metadata()?.uid();
         if original_uid != our_uid && !cfg.allow_root_ownership_change {
+            outcome.reason_code = Some(ReasonCode::OwnershipChangeDenied);
             outcome.note = Some(
                 "owned by another user; replacing it would change ownership \
                  (use --allow-root-ownership-change)"
@@ -356,6 +368,7 @@ fn run(
     let written = match cand {
         Cand::NoGain => {
             outcome.status = Status::AlreadyOptimal;
+            outcome.reason_code = Some(ReasonCode::NoSmallerCandidate);
             return Ok(());
         }
         Cand::Written(n) => n,
@@ -389,6 +402,7 @@ fn run(
         if let Some(confirm) = confirm.as_deref_mut() {
             if !confirm(path) {
                 outcome.status = Status::Skipped;
+                outcome.reason_code = Some(ReasonCode::ConfirmationDeclined);
                 outcome.note =
                     Some("FITS tile rewrite was not confirmed; the file is unchanged".to_string());
                 return Ok(());

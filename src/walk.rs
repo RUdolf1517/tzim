@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use crate::cli::Args;
 use crate::detect;
 use crate::error::Error;
+use crate::report::ReasonCode;
 
 /// Result of turning command-line paths into the list of files to process.
 pub struct Scan {
     pub files: Vec<PathBuf>,
-    /// Paths deliberately not processed, with a human-readable reason.
-    pub skipped: Vec<(PathBuf, String)>,
+    /// Paths deliberately not processed, with a human-readable and stable reason.
+    pub skipped: Vec<(PathBuf, String, ReasonCode)>,
     /// Paths that could not be processed at all.
     pub errors: Vec<(PathBuf, Error)>,
 }
@@ -23,7 +24,7 @@ pub struct Scan {
 /// - a failure on one argument never hides the others.
 pub fn scan(args: &Args) -> Scan {
     let mut expanded: Vec<PathBuf> = Vec::new();
-    let mut problems: Vec<(PathBuf, Error)> = Vec::new();
+    let mut problems: Vec<(PathBuf, Error, ReasonCode)> = Vec::new();
 
     for path in &args.paths {
         detect::expand(
@@ -43,7 +44,11 @@ pub fn scan(args: &Args) -> Scan {
 
     for path in expanded {
         if !wanted(&path, args) {
-            skipped.push((path, "filtered out by --include/--exclude".to_string()));
+            skipped.push((
+                path,
+                "filtered out by --include/--exclude".to_string(),
+                ReasonCode::PathFilteredByIncludeExclude,
+            ));
             continue;
         }
         if !seen_files.insert(identity(&path)) {
@@ -54,10 +59,12 @@ pub fn scan(args: &Args) -> Scan {
     }
 
     // Problems reported by the directory walker: missing paths, links, ...
-    for (path, err) in problems {
+    // Keep reason identifiers beside the internal Error so they never depend
+    // on the wording retained for human diagnostics.
+    for (path, err, reason_code) in problems {
         match &err {
             Error::Io(_) => errors.push((path, err)),
-            _ => skipped.push((path, err.to_string())),
+            _ => skipped.push((path, err.to_string(), reason_code)),
         }
     }
 

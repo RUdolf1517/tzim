@@ -43,6 +43,7 @@ def positive_control_passed(control):
     comparison = control.get("literal_header_storage_array_comparison") or {}
     funpack_argv = control.get("funpack_invocation") or []
     fitsverify_argv = control.get("fitsverify_invocation") or []
+    fpack_argv = control.get("fpack_invocation") or []
     commands_ok = all(
         (control.get(name) or {}).get("returncode") == 0
         for name in ("fpack", "fitsverify", "funpack")
@@ -53,6 +54,9 @@ def positive_control_passed(control):
         and control.get("fixture_dtype") == "int16"
         and control.get("fpack_float_array_oracle_used") is False
         and commands_ok
+        and "-g" in fpack_argv
+        and fpack_argv[fpack_argv.index("-g") + 1 : fpack_argv.index("-g") + 2] == ["-q"]
+        and fpack_argv[fpack_argv.index("-q") + 1 : fpack_argv.index("-q") + 2] == ["0"]
         and "-l" in fitsverify_argv
         and "-C" in funpack_argv
         and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
@@ -61,10 +65,54 @@ def positive_control_passed(control):
     )
 
 
-def threshold_disposition(rows, tier1_stats, tier2_stats, positive_control):
+def negative_control_passed(control):
+    """Independently require a genuinely corrupted candidate to fail only the header gate."""
+    gate = control.get("gate_validation") or {}
+    comparison = gate.get("reconstructed_array_literal_header_comparison") or {}
+    hdu_checks = comparison.get("hdu_checks") or []
+    payloads_unchanged = bool(hdu_checks) and all(
+        check.get("storage_payload_equality") is True for check in hdu_checks
+    )
+    fitsverify = gate.get("fitsverify") or {}
+    mutation = control.get("mutation") or {}
+    before = mutation.get("candidate_before_corruption") or {}
+    after = mutation.get("candidate_after_corruption") or {}
+    return (
+        control.get("status") == "passed"
+        and control.get("ok") is True
+        and control.get("pre_corruption_verifier_exact") is True
+        and mutation.get("applied") is True
+        and mutation.get("keyword") == "OBJECT"
+        and mutation.get("source_identity_unchanged") is True
+        and mutation.get("payload_bytes_touched") is False
+        and before.get("bytes") == after.get("bytes")
+        and isinstance(before.get("sha256"), str)
+        and isinstance(after.get("sha256"), str)
+        and before.get("sha256") != after.get("sha256")
+        and control.get("positive_control_status") == "passed"
+        and gate.get("status") == "failed"
+        and gate.get("identity_matches_measurement_candidate") is True
+        and gate.get("source_identity_matches") is True
+        and gate.get("astropy_verifier_exact") is True
+        and fitsverify.get("status") == "passed"
+        and fitsverify.get("candidate_returncode") == 0
+        and (gate.get("funpack") or {}).get("returncode") == 0
+        and comparison.get("diagnostic_schema") == "tzim-funpack-roundtrip-diagnostics-v2"
+        and comparison.get("diagnostics_complete") is True
+        and comparison.get("ok") is False
+        and comparison.get("hdu_count_equal") is True
+        and comparison.get("attribution") == "candidate_comparison"
+        and comparison.get("failure_class_counts", {}).get("header_only", 0) >= 1
+        and payloads_unchanged
+    )
+
+
+def threshold_disposition(rows, tier1_stats, tier2_stats, positive_control, negative_control):
     blockers = []
     if not positive_control_passed(positive_control):
         blockers.append("external funpack -C positive control did not pass; survey header/payload differences are not attributable")
+    if not negative_control_passed(negative_control):
+        blockers.append("external reference negative control did not fail the gate on an intentionally corrupted literal header")
     if len(rows) != 14:
         blockers.append(f"expected all 14 frozen products, found {len(rows)}")
     tier2_rows = []
@@ -89,8 +137,9 @@ def threshold_disposition(rows, tier1_stats, tier2_stats, positive_control):
         return {
             "status": "not_applied",
             "decision": "threshold not applied",
-            "reason": "positive control or one or more fixed-row/reference-candidate checks remain unresolved",
+            "reason": "an external control or one or more fixed-row/reference-candidate checks remain unresolved",
             "positive_control_status": positive_control.get("status", "missing"),
+            "negative_control_status": negative_control.get("status", "missing"),
             "blockers": blockers,
             "tier2_threshold": {
                 "median_gain_pct_at_least": 8.0,
@@ -143,6 +192,7 @@ def threshold_disposition(rows, tier1_stats, tier2_stats, positive_control):
         "status": "applied",
         "decision": decision,
         "positive_control_status": positive_control.get("status", "missing"),
+        "negative_control_status": negative_control.get("status", "missing"),
         "blockers": [],
         "tier2_threshold": {
             "median_gain_pct_at_least": 8.0,
@@ -172,11 +222,13 @@ def main():
     parser.add_argument("--rows", required=True)
     parser.add_argument("--aggregate", required=True)
     parser.add_argument("--positive-control", required=True)
+    parser.add_argument("--negative-control", required=True)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
     rows = [json.loads(line) for line in Path(args.rows).read_text(encoding="utf-8").splitlines() if line.strip()]
     aggregate = json.loads(Path(args.aggregate).read_text(encoding="utf-8"))
     positive_control = json.loads(Path(args.positive_control).read_text(encoding="utf-8"))
+    negative_control = json.loads(Path(args.negative_control).read_text(encoding="utf-8"))
     ids = {row.get("product_id") for row in rows}
     if len(rows) != 14 or ids != EXPECTED_IDS:
         raise SystemExit(f"raw FITS rows are not the exact 14-product source set: {len(rows)} rows, IDs={sorted(ids)}")
@@ -305,7 +357,7 @@ def main():
         }
 
     reference_hdu_diagnostics = {
-        "comparison_kind": "Astropy reference candidate funpack -C versus exact source",
+        "comparison_kind": "Astropy CompImageHDU reference candidate funpack -C versus exact source",
         **comparison_diagnostics(rows, "reference_candidate_validation", "reconstructed_array_literal_header_comparison"),
     }
     tzim_hdu_diagnostics = {
@@ -340,11 +392,24 @@ def main():
             "max": max(tzim_gains) if tzim_gains else None,
         },
         "external_funpack_C_positive_control": positive_control_summary,
+        "external_reference_negative_control": {
+            "control_id": negative_control.get("control_id"),
+            "status": negative_control.get("status", "missing"),
+            "ok": negative_control_passed(negative_control),
+            "expected_gate_status": "failed",
+            "observed_gate_status": negative_control.get("negative_gate_status"),
+            "fitsverify_status": negative_control.get("negative_fitsverify_status"),
+            "funpack_returncode": negative_control.get("negative_funpack_returncode"),
+            "failure_class_counts": negative_control.get("negative_gate_failure_class_counts", {}),
+            "payload_bytes_touched": (negative_control.get("mutation") or {}).get("payload_bytes_touched"),
+        },
         "reference_candidate_gate": reference_gate,
         "reference_hdu_diagnostics": reference_hdu_diagnostics,
         "tzim_hdu_diagnostics": tzim_hdu_diagnostics,
-        "funpack_checksum_mode": "-C used for reference candidates and any optimized Tzim source/candidate reconstructions; checksum cards are not filtered",
-        "pre_registered_threshold_disposition": threshold_disposition(rows, tier1_stats, tier2_stats, positive_control),
+        "funpack_checksum_mode": "-C used for every available reference-candidate and all 14 Tzim source/candidate reconstructions; checksum cards are not filtered",
+        "pre_registered_threshold_disposition": threshold_disposition(
+            rows, tier1_stats, tier2_stats, positive_control, negative_control
+        ),
         "fitsverify_candidate_nonzero": sum(
             1 for row in rows
             if row.get("tier2_tzim", {}).get("status") == "optimized"

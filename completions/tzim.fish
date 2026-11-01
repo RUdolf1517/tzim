@@ -34,6 +34,7 @@ complete -c tzim -l allow-root-ownership-change -d 'replace files owned by other
 complete -c tzim -l no-fsync -d 'skip fsync before the rename'
 complete -c tzim -s i -l info -d 'what this program is'
 complete -c tzim -l list-formats -d 'the handlers in this build'
+complete -c tzim -l capabilities -d 'versioned JSON build and runtime-policy description'
 complete -c tzim -l check-deps -d 'external programs needed at run time'
 complete -c tzim -s h -l help -d 'the full option list'
 complete -c tzim -s V -l version -d 'the version, one line'
