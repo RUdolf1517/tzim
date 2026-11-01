@@ -478,6 +478,7 @@ $stream.Dispose()
         }
 
         let locked_probe_error = delete_access_probe_error(&destination);
+        let last_probe_error = std::cell::Cell::new(None);
         let attempts = std::cell::Cell::new(0);
         let mut first_error_code = None;
         let result = retry_sharing_violation(
@@ -493,6 +494,9 @@ $stream.Dispose()
                 result
             },
             |error| {
+                if error.raw_os_error() == Some(5) {
+                    last_probe_error.set(delete_access_probe_error(&destination));
+                }
                 let sharing_conflict = is_windows_rename_sharing_conflict(error, &destination);
                 if attempts.get() == 1 && sharing_conflict {
                     let _ = fs::write(&release, b"release");
@@ -527,7 +531,12 @@ $stream.Dispose()
             ),
             "unexpected Windows sharing error: {first_error_code:?}"
         );
-        assert!(result.is_ok(), "rename retry failed: {result:?}");
+        assert!(
+            result.is_ok(),
+            "rename retry failed after {} attempts: {result:?}; initial error={first_error_code:?}, locked probe={locked_probe_error:?}, retry-time probe={:?}",
+            attempts.get(),
+            last_probe_error.get()
+        );
         assert_eq!(
             attempts.get(),
             2,
