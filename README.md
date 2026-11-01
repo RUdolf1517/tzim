@@ -25,6 +25,11 @@ Tzim says why. Verification never reuses the encoder; decoder independence and t
 Metadata is removed only if you type `--strip-metadata`. There is no quality setting, no "visually lossless"
 mode and no automatic fallback to a lossy path, because none of them are in the program.
 
+<p align="center">
+  <img src=".github/terminaltrove/tzim-terminaltrove.gif" alt="Recorded tzim v0.16.0 terminal session optimizing a synthetic PNG">
+</p>
+<p align="center"><sub>A real recorded v0.16.0 session. The synthetic fixture and its reduction are illustrative, not a typical compression-ratio claim.</sub></p>
+
 ```bash
 $ tzim ./photos -r
 photos/beach.png    PNG    1.24 MiB -> 1.11 MiB  -10.5%
