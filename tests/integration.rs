@@ -1465,8 +1465,14 @@ fn store_only_zip_fast_path_preserves_already_optimal_reason_and_exit_code() {
 
     let (code, stdout, stderr) = run(&["stored.zip", "--json"], &ws.path);
     assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("\"status\":\"already_optimal\""), "{stdout}");
-    assert!(stdout.contains("\"reason_code\":\"no_smaller_candidate\""), "{stdout}");
+    assert!(
+        stdout.contains("\"status\":\"already_optimal\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"reason_code\":\"no_smaller_candidate\""),
+        "{stdout}"
+    );
     assert_eq!(std::fs::read(path).unwrap(), archive);
 }
 

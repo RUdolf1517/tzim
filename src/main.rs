@@ -80,7 +80,11 @@ fn finish_report_write(
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => result_code,
         Err(error) => {
             let _ = writeln!(diagnostics, "tzim: cannot write to stdout: {error}");
-            if result_code == 4 { 4 } else { 3 }
+            if result_code == 4 {
+                4
+            } else {
+                3
+            }
         }
     }
 }
@@ -552,11 +556,8 @@ mod report_write_tests {
     fn non_epipe_report_errors_return_three_unless_verification_failed() {
         for code in [0, 1] {
             let mut diagnostics = Vec::new();
-            let result = finish_report_write(
-                Err(io::Error::other("disk full")),
-                code,
-                &mut diagnostics,
-            );
+            let result =
+                finish_report_write(Err(io::Error::other("disk full")), code, &mut diagnostics);
             assert_eq!(result, 3);
             assert!(String::from_utf8(diagnostics)
                 .unwrap()
@@ -569,11 +570,8 @@ mod report_write_tests {
         assert_eq!(earned, 4);
 
         let mut diagnostics = Vec::new();
-        let result = finish_report_write(
-            Err(io::Error::other("disk full")),
-            earned,
-            &mut diagnostics,
-        );
+        let result =
+            finish_report_write(Err(io::Error::other("disk full")), earned, &mut diagnostics);
         assert_eq!(result, 4);
         assert!(String::from_utf8(diagnostics)
             .unwrap()

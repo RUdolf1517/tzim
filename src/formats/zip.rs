@@ -536,7 +536,10 @@ fn store_only_no_gain(archive: &Archive<'_>, opts: &Options) -> bool {
     !opts.strip_metadata
         && !opts.nested
         && !archive.entries.is_empty()
-        && archive.entries.iter().all(|entry| entry.method == METHOD_STORE)
+        && archive
+            .entries
+            .iter()
+            .all(|entry| entry.method == METHOD_STORE)
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,14 +1212,25 @@ mod tests {
     #[test]
     fn store_only_fast_path_is_narrow_and_does_not_write() {
         let archive = test_zip(
-            &[test_entry(b"a.txt", b"stored bytes", METHOD_STORE, 0, b"", 0, None)],
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                None,
+            )],
             b"",
         );
         let parsed = parse_archive(&archive).unwrap();
         let mut opts = options();
         assert!(store_only_no_gain(&parsed, &opts));
         let mut output = Vec::new();
-        assert!(matches!(optimize(&archive, &mut output, &opts).unwrap(), Cand::NoGain));
+        assert!(matches!(
+            optimize(&archive, &mut output, &opts).unwrap(),
+            Cand::NoGain
+        ));
         assert!(output.is_empty());
 
         opts.strip_metadata = true;
@@ -1227,7 +1241,15 @@ mod tests {
 
         let mixed = test_zip(
             &[
-                test_entry(b"mimetype", b"application/test", METHOD_STORE, 0, b"", 0, None),
+                test_entry(
+                    b"mimetype",
+                    b"application/test",
+                    METHOD_STORE,
+                    0,
+                    b"",
+                    0,
+                    None,
+                ),
                 test_entry(
                     b"content.txt",
                     &b"a deflated entry with useful repeated content\n".repeat(64),
@@ -1247,7 +1269,15 @@ mod tests {
     #[test]
     fn store_only_fast_path_keeps_parse_limit_deny_size_and_crc_checks() {
         let valid = test_zip(
-            &[test_entry(b"a.txt", b"stored bytes", METHOD_STORE, 0, b"", 0, None)],
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                0,
+                None,
+            )],
             b"",
         );
         let mut output = Vec::new();
@@ -1307,7 +1337,15 @@ mod tests {
         ));
 
         let wrong_crc = test_zip(
-            &[test_entry(b"a.txt", b"stored bytes", METHOD_STORE, 0, b"", 1, None)],
+            &[test_entry(
+                b"a.txt",
+                b"stored bytes",
+                METHOD_STORE,
+                0,
+                b"",
+                1,
+                None,
+            )],
             b"",
         );
         assert!(matches!(
@@ -1333,7 +1371,10 @@ mod tests {
         let mut strip = options();
         strip.strip_metadata = true;
         let mut stripped = Vec::new();
-        assert!(matches!(optimize(&stored, &mut stripped, &strip).unwrap(), Cand::Written(_)));
+        assert!(matches!(
+            optimize(&stored, &mut stripped, &strip).unwrap(),
+            Cand::Written(_)
+        ));
         verify(&stored, &stripped, &strip).unwrap();
         let parsed = parse_archive(&stripped).unwrap();
         assert!(parsed.comment.is_empty());
@@ -1344,13 +1385,24 @@ mod tests {
         let payload = b"a deflated entry with useful repeated content\n".repeat(64);
         let mixed = test_zip(
             &[
-                test_entry(b"mimetype", b"application/test", METHOD_STORE, 0, b"", 0, None),
+                test_entry(
+                    b"mimetype",
+                    b"application/test",
+                    METHOD_STORE,
+                    0,
+                    b"",
+                    0,
+                    None,
+                ),
                 test_entry(b"content.txt", &payload, METHOD_DEFLATE, 0, b"", 0, None),
             ],
             b"",
         );
         let mut rebuilt = Vec::new();
-        assert!(matches!(optimize(&mixed, &mut rebuilt, &options()).unwrap(), Cand::Written(_)));
+        assert!(matches!(
+            optimize(&mixed, &mut rebuilt, &options()).unwrap(),
+            Cand::Written(_)
+        ));
         assert!(rebuilt.len() < mixed.len());
         verify(&mixed, &rebuilt, &options()).unwrap();
         let parsed = parse_archive(&rebuilt).unwrap();

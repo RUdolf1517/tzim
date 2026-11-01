@@ -332,10 +332,8 @@ mod tests {
     fn windows_sharing_violation_is_the_only_retryable_code() {
         let sharing = io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION);
         let access_denied = io::Error::from_raw_os_error(5);
-        let generic_permission = io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "permission denied",
-        );
+        let generic_permission =
+            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied");
         assert!(is_windows_sharing_violation(&sharing));
         assert!(!is_windows_sharing_violation(&access_denied));
         assert!(!is_windows_sharing_violation(&generic_permission));
@@ -347,7 +345,9 @@ mod tests {
         let result = retry_sharing_violation(|| {
             attempts += 1;
             if attempts < 3 {
-                Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+                Err(io::Error::from_raw_os_error(
+                    WINDOWS_ERROR_SHARING_VIOLATION,
+                ))
             } else {
                 Ok(())
             }
@@ -358,7 +358,9 @@ mod tests {
         attempts = 0;
         let result = retry_sharing_violation(|| {
             attempts += 1;
-            Err(io::Error::from_raw_os_error(WINDOWS_ERROR_SHARING_VIOLATION))
+            Err(io::Error::from_raw_os_error(
+                WINDOWS_ERROR_SHARING_VIOLATION,
+            ))
         });
         assert_eq!(
             result.unwrap_err().raw_os_error(),
@@ -462,7 +464,10 @@ $stream.Dispose()
         assert!(child_status.success(), "PowerShell lock holder failed");
         assert_eq!(first_error_code, Some(WINDOWS_ERROR_SHARING_VIOLATION));
         assert!(result.is_ok(), "rename retry failed: {result:?}");
-        assert_eq!(attempts, 2, "release during the first backoff should allow retry 1");
+        assert_eq!(
+            attempts, 2,
+            "release during the first backoff should allow retry 1"
+        );
         assert_eq!(destination_bytes, b"replacement");
         assert!(!temp_exists);
     }
@@ -478,17 +483,14 @@ $stream.Dispose()
         assert_eq!(attempts, 1);
     }
 
-
     #[test]
     fn post_rename_directory_sync_failures_warn_once_and_keep_success() {
         for (index, message) in ["directory open failed", "directory fsync failed"]
             .into_iter()
             .enumerate()
         {
-            let dir = std::env::temp_dir().join(format!(
-                "tzim-dir-sync-{}-{index}",
-                std::process::id()
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("tzim-dir-sync-{}-{index}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             let dest = dir.join("file.bin");
@@ -516,5 +518,4 @@ $stream.Dispose()
             let _ = fs::remove_dir_all(&dir);
         }
     }
-
 }

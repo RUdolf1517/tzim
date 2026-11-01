@@ -468,7 +468,10 @@ mod tests {
     fn assert_verifier_matches_legacy(a: &[u8], b: &[u8]) {
         let expected = legacy_verify(a, b).map_err(|error| error.to_string());
         let actual = verify(a, b, &opts()).map_err(|error| error.to_string());
-        assert_eq!(actual, expected, "streaming verifier changed the legacy result");
+        assert_eq!(
+            actual, expected,
+            "streaming verifier changed the legacy result"
+        );
     }
 
     #[test]
@@ -694,7 +697,10 @@ mod tests {
         // same length/header/trailer. Verification must still compare every byte.
         let collision_a = build(&[10, 10, 10], 9);
         let collision_b = build(&[11, 8, 11], 9);
-        assert_eq!(inspect(&collision_a).unwrap().adler, inspect(&collision_b).unwrap().adler);
+        assert_eq!(
+            inspect(&collision_a).unwrap().adler,
+            inspect(&collision_b).unwrap().adler
+        );
         assert!(verify(&collision_a, &collision_b, &opts())
             .unwrap_err()
             .to_string()
@@ -817,5 +823,4 @@ mod tests {
             legacy_median.as_secs_f64() / streaming_median.as_secs_f64(),
         );
     }
-
 }

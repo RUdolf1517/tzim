@@ -449,10 +449,8 @@ mod tests {
     #[cfg(feature = "gzip")]
     fn gzip_member(payload: &[u8], level: u32) -> Vec<u8> {
         let mut out = vec![0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 255];
-        let mut encoder = flate2::write::DeflateEncoder::new(
-            Vec::new(),
-            flate2::Compression::new(level),
-        );
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::new(level));
         std::io::Write::write_all(&mut encoder, payload).unwrap();
         out.extend_from_slice(&encoder.finish().unwrap());
         out.extend_from_slice(&crc32fast::hash(payload).to_le_bytes());
@@ -875,7 +873,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("input.gz");
-        let payload = b"A repetitive payload that compresses significantly at level nine.\n".repeat(256);
+        let payload =
+            b"A repetitive payload that compresses significantly at level nine.\n".repeat(256);
         let original = gzip_member(&payload, 0);
         fs::write(&path, &original).unwrap();
         let cfg = config();
@@ -902,11 +901,9 @@ mod tests {
         assert_eq!(outcome.before, original.len() as u64);
         assert_eq!(outcome.after, outcome.before);
         assert_eq!(outcome.saved(), 0);
-        assert_eq!(
-            outcome.guarantee(),
-            crate::report::Guarantee::ByteIdentical
-        );
-        let summary = crate::report::summarize(std::slice::from_ref(&outcome), std::time::Duration::ZERO);
+        assert_eq!(outcome.guarantee(), crate::report::Guarantee::ByteIdentical);
+        let summary =
+            crate::report::summarize(std::slice::from_ref(&outcome), std::time::Duration::ZERO);
         assert_eq!(summary.before, summary.after);
         let mut json = Vec::new();
         crate::report::print_json(
@@ -927,7 +924,11 @@ mod tests {
             "{json}"
         );
         assert_eq!(fs::read(&path).unwrap(), original);
-        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "candidate must be removed");
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "candidate must be removed"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

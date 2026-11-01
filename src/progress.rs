@@ -156,7 +156,10 @@ fn format_rate_fixed_candidate(rate: f64) -> String {
     let (significand, power) = if exponent_bits == 0 {
         (u128::from(fraction), -1074)
     } else {
-        (u128::from((1u64 << 52) | fraction), exponent_bits - 1023 - 52)
+        (
+            u128::from((1u64 << 52) | fraction),
+            exponent_bits - 1023 - 52,
+        )
     };
 
     // Exact rate × 10 is significand × 5 × 2^(power + 1). The progress
@@ -654,7 +657,12 @@ mod tests {
         for rate in rates {
             let expected = format!("  {rate:.1}/s");
             let actual = format_rate_fixed_candidate(rate);
-            assert_eq!(actual, expected, "rate={rate:?}, bits={:#018x}", rate.to_bits());
+            assert_eq!(
+                actual,
+                expected,
+                "rate={rate:?}, bits={:#018x}",
+                rate.to_bits()
+            );
         }
     }
 
