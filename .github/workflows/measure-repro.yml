@@ -39,6 +39,8 @@ on:
       - ".github/scripts/test_measure.py"
       - ".github/scripts/test_pdf_zopfli.py"
       - ".github/workflows/measure-repro.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
 
 permissions:
   contents: read
@@ -63,11 +65,11 @@ jobs:
       checked_out_sha: ${{ steps.identity.outputs.checked_out_sha }}
       gate_result: ${{ steps.gate_outcome.outputs.result }}
     env:
-      REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+      REQUESTED_SHA: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ inputs.sha || github.sha }}
+          ref: ${{ inputs.sha || github.event.pull_request.head.sha || github.sha }}
 
       - name: Record exact run identity
         id: identity
