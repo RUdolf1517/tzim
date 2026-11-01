@@ -9,7 +9,8 @@
 # friends) whether or not it is used, and those are pinned too. `img2pdf` is the
 # scan-derived PDF creator required by fixed #57; its sdist and its setuptools/
 # wheel build tools are hash-pinned, and the build tools are installed before
-# this file with `--no-build-isolation`.
+# this file with `--no-build-isolation`. wheel's packaging>=24 dependency is
+# pinned in both this file and build-requirements.txt.
 
 astropy==8.0.2 \
     --hash=sha256:000d6998bcf4f097257b3776f29f1dafde0967bf1b091edbad95df564eee4eea
@@ -29,10 +30,10 @@ packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
 pikepdf==10.17.0 \
     --hash=sha256:f76e2ac6777b2d2a74a71eb73fa2438734ad453177c66f5a5a246b5e2660336b
-setuptools==75.8.0 \
-    --hash=sha256:e3982f444617239225d675215d51f6ba05f845d4eec313da4418fdbb56fb27e3
-wheel==0.45.1 \
-    --hash=sha256:708e7481cc80179af0e556bbf0cc00b8444c7321e2700b8d8580231d13017248
+setuptools==84.2.1 \
+    --hash=sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2
+wheel==0.48.0 \
+    --hash=sha256:3217dcc807155e45db462d7ef2431f5ddda0d7273b700d05a67b271ceb1287ab
 img2pdf==0.6.1 \
     --hash=sha256:306e279eb832bc159d7d6294b697a9fbd11b4be1f799b14b3b2174fb506af289
 pillow==13.0.0 \
