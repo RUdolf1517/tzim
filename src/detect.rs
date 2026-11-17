@@ -607,7 +607,14 @@ mod tests {
         symlink("real", dir.join("alias")).unwrap();
         let mut files = Vec::new();
         let mut problems = Vec::new();
-        expand_paths(&[dir.clone()], true, true, &mut files, &mut problems, 0);
+        expand_paths(
+            std::slice::from_ref(&dir),
+            true,
+            true,
+            &mut files,
+            &mut problems,
+            0,
+        );
         assert_eq!(files.len(), 1);
         assert!(problems.is_empty());
         let _ = fs::remove_dir_all(dir);
