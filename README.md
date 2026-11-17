@@ -25,7 +25,7 @@ Tzim says why. Verification never reuses the encoder; decoder independence and t
 Metadata is removed only if you type `--strip-metadata`. There is no quality setting, no "visually lossless"
 mode and no automatic fallback to a lossy path, because none of them are in the program.
 Replacement preserves mode and timestamps, but creates a new filesystem object: ACLs, ownership, extended
-attributes, sparse layout and filesystem-specific flags may not survive. See [safety](docs/safety.md#3-what-is-preserved).
+attributes, sparse layout and filesystem-specific flags may not survive. See [safety](docs/safety.md#3-metadata).
 
 <p align="center">
   <img src=".github/terminaltrove/tzim-terminaltrove.gif" alt="Recorded tzim v0.16.0 terminal session optimizing a synthetic PNG">
