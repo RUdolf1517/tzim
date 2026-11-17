@@ -216,10 +216,72 @@ pub fn expand(
     problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
     depth: usize,
 ) {
-    // A depth guard, and it is *the* guard: a symlink cycle under
-    // `--follow-symlinks` is caught here rather than by a visited set of
-    // `(device, inode)` pairs, because the walk holds no such set. The limit is
-    // 64 levels; deeper subtrees are reported as refused.
+    expand_paths(
+        &[path.to_path_buf()],
+        recursive,
+        follow_symlinks,
+        out,
+        problems,
+        depth,
+    );
+}
+
+pub fn expand_paths(
+    paths: &[PathBuf],
+    recursive: bool,
+    follow_symlinks: bool,
+    out: &mut Vec<PathBuf>,
+    problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
+    depth: usize,
+) {
+    let mut visited = std::collections::HashSet::new();
+    for path in paths {
+        expand_inner(
+            path,
+            recursive,
+            follow_symlinks,
+            out,
+            problems,
+            depth,
+            &mut visited,
+        );
+    }
+}
+
+#[cfg(unix)]
+type DirectoryIdentity = (u64, u64);
+#[cfg(not(unix))]
+type DirectoryIdentity = String;
+
+fn directory_identity(path: &Path) -> Option<DirectoryIdentity> {
+    let metadata = fs::metadata(path).ok()?;
+    if !metadata.is_dir() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((metadata.dev(), metadata.ino()))
+    }
+    #[cfg(not(unix))]
+    {
+        fs::canonicalize(path)
+            .ok()
+            .map(|canonical| canonical.to_string_lossy().to_ascii_lowercase())
+    }
+}
+
+fn expand_inner(
+    path: &Path,
+    recursive: bool,
+    follow_symlinks: bool,
+    out: &mut Vec<PathBuf>,
+    problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
+    depth: usize,
+    visited: &mut std::collections::HashSet<DirectoryIdentity>,
+) {
+    // The depth guard remains useful for real directory trees and platforms
+    // where directory identity cannot be resolved.
     if depth > 64 {
         problems.push((
             path.to_path_buf(),
@@ -253,7 +315,15 @@ pub fn expand(
         match fs::metadata(path) {
             Ok(target) => {
                 if target.is_dir() {
-                    expand_dir(path, recursive, follow_symlinks, out, problems, depth);
+                    expand_dir(
+                        path,
+                        recursive,
+                        follow_symlinks,
+                        out,
+                        problems,
+                        depth,
+                        visited,
+                    );
                 } else if target.is_file() {
                     out.push(path.to_path_buf());
                 } else {
@@ -274,7 +344,15 @@ pub fn expand(
     }
 
     if md.is_dir() {
-        expand_dir(path, recursive, follow_symlinks, out, problems, depth);
+        expand_dir(
+            path,
+            recursive,
+            follow_symlinks,
+            out,
+            problems,
+            depth,
+            visited,
+        );
     } else if md.is_file() {
         out.push(path.to_path_buf());
     } else {
@@ -293,6 +371,7 @@ fn expand_dir(
     out: &mut Vec<PathBuf>,
     problems: &mut Vec<(PathBuf, Error, ReasonCode)>,
     depth: usize,
+    visited: &mut std::collections::HashSet<DirectoryIdentity>,
 ) {
     if depth > 64 {
         problems.push((
@@ -301,6 +380,12 @@ fn expand_dir(
             ReasonCode::DirectoryDepthExceeded,
         ));
         return;
+    }
+
+    if let Some(identity) = directory_identity(path) {
+        if !visited.insert(identity) {
+            return;
+        }
     }
 
     let entries = match fs::read_dir(path) {
@@ -347,9 +432,15 @@ fn expand_dir(
             }
             match fs::metadata(&child) {
                 Ok(t) if t.is_file() => out.push(child),
-                Ok(t) if t.is_dir() && recursive => {
-                    expand_dir(&child, recursive, follow_symlinks, out, problems, depth + 1)
-                }
+                Ok(t) if t.is_dir() && recursive => expand_dir(
+                    &child,
+                    recursive,
+                    follow_symlinks,
+                    out,
+                    problems,
+                    depth + 1,
+                    visited,
+                ),
                 Ok(_) => {}
                 Err(e) => problems.push((child, Error::Io(e), ReasonCode::FilesystemError)),
             }
@@ -357,7 +448,15 @@ fn expand_dir(
         }
         if md.is_dir() {
             if recursive {
-                expand_dir(&child, recursive, follow_symlinks, out, problems, depth + 1);
+                expand_dir(
+                    &child,
+                    recursive,
+                    follow_symlinks,
+                    out,
+                    problems,
+                    depth + 1,
+                    visited,
+                );
             }
         } else if md.is_file() {
             out.push(child);
@@ -495,5 +594,22 @@ mod tests {
         assert_eq!(extension(Path::new("a.PNG")), Some("png".into()));
         assert_eq!(extension(Path::new("a.tar.gz")), Some("gz".into()));
         assert_eq!(extension(Path::new("noext")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_walk_visits_a_symlinked_directory_only_once() {
+        use std::os::unix::fs::symlink;
+        let dir = std::env::temp_dir().join(format!("tzim-walk-links-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("real/sub")).unwrap();
+        fs::write(dir.join("real/sub/file.bin"), b"x").unwrap();
+        symlink("real", dir.join("alias")).unwrap();
+        let mut files = Vec::new();
+        let mut problems = Vec::new();
+        expand_paths(&[dir.clone()], true, true, &mut files, &mut problems, 0);
+        assert_eq!(files.len(), 1);
+        assert!(problems.is_empty());
+        let _ = fs::remove_dir_all(dir);
     }
 }

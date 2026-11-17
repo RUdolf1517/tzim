@@ -791,19 +791,10 @@ fn t_fs_13_a_full_disk_is_a_failure_with_nothing_left_behind() {
     drop(filler);
 }
 
-/// T-FS-14. A symlink cycle under `--follow-symlinks` must terminate, and the
-/// run must say what happened.
-///
-/// It terminates because the kernel refuses to resolve a path with more than a
-/// fixed number of symlink hops — `ELOOP`, 40 on Linux and 32 on macOS — and not
-/// because of the 64-level depth guard, which a cycle never reaches: the test
-/// that asserted the guard was the guard failed, and the observation is worth
-/// more than the assumption (`T-FS-16` covers the guard itself, with real
-/// directories). The cycle is an unreadable path, so it is `failed` with exit
-/// `1`, and everything else in the tree is still processed.
+/// T-FS-14. A symlink cycle terminates without revisiting the same directory.
 #[cfg(unix)]
 #[test]
-fn t_fs_14_a_symlink_cycle_terminates_and_is_reported() {
+fn t_fs_14_a_symlink_cycle_terminates_without_revisiting() {
     let ws = Workspace::new("cycle");
     // A file with no handler, so nothing in this test depends on a rewrite.
     ws.write("tree/notes.txt", b"not an image");
@@ -812,15 +803,7 @@ fn t_fs_14_a_symlink_cycle_terminates_and_is_reported() {
     std::os::unix::fs::symlink(".", ws.path.join("tree/self")).unwrap();
 
     let (code, stdout, stderr) = run(&["tree", "-r", "--follow-symlinks"], &ws.path);
-    assert_eq!(code, 1, "stdout={stdout} stderr={stderr}");
-    assert!(
-        stdout.contains("symbolic links"),
-        "the reason must name the loop: {stdout}"
-    );
-    assert!(
-        stdout.contains("failed"),
-        "a path the kernel refuses to resolve is a failure, not a silent skip: {stdout}"
-    );
+    assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
     assert_eq!(
         std::fs::read(ws.file("tree/notes.txt")).unwrap(),
         b"not an image"

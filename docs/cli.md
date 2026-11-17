@@ -62,13 +62,10 @@ With `--follow-symlinks`:
 
 - a symlink to a regular file is resolved and the **target** is optimized;
 - symlinked directories are descended;
-- a cycle is never *recognised* as a cycle: the walk keeps no visited set of `(device, inode)` pairs. What
-  stops it in practice is the kernel, which refuses to resolve a path with more than a fixed number of symlink
-  hops (ELOOP — 40 on Linux, 32 on macOS). That path is reported `failed: Too many levels of symbolic links`,
-  the run exits `1`, and every other file is still processed. The **depth limit of 64 directories** is the
-  second guard: it is what stops a tree of real directories deeper than 64 levels
-  (`directory nesting deeper than 64 levels; refused`, status `skipped`, exit `0`) and what protects the stack,
-  and a link cycle effectively never reaches it. Both were measured rather than assumed — see `T-FS-14` and
+- directory identities are tracked during a scan, so each target directory is traversed once even when
+  multiple symlink paths reach it. The **depth limit of 64 directories** protects the stack and stops real
+  directory trees deeper than 64 levels (`directory nesting deeper than 64 levels; refused`, status `skipped`,
+  exit `0`). See `T-FS-14` and
   `T-FS-16` in [testing §2](testing.md#2-traceability);
 - broken links are reported as failures.
 
@@ -102,7 +99,7 @@ reproducible and diffable.
 | `--max-pixels <N>` | `100000000` | skip images with more pixels (PNG and JPEG; TIFF is bounded by `--max-size` and by the single strip it decodes at a time) |
 | `--max-uncompressed <BYTES>` | `8589934592` (8 GiB) | refuse archives that expand beyond this |
 | `--max-ratio <N>` | `1000` | refuse archives whose compression ratio exceeds N:1 |
-| `--memory-budget <BYTES>` | derived from the ceilings: `6 × --max-size + 8 × --max-pixels + --max-uncompressed + 128 MiB` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
+| `--memory-budget <BYTES>` | derived from the ceilings: `6 × --max-size + 8 × --max-pixels + 4 × --max-uncompressed + 128 MiB` | skip a file whose worst-case cost would exceed this; charged before the file is read, so a file that cannot fit is a line of output instead of the OOM killer. The budget is **per file**, so `--jobs` files can be charged at once: compare `--jobs × --memory-budget` with the memory the machine has — see [safety §7.1](safety.md#71-memory--an-enforced-budget) |
 | `--formats <LIST>` | all handlers enabled by this build's default policy (baseline JPEG when `jpeg-v1` is compiled; FITS still needs `--fits-tile`) | only process the named formats (`png`, `gzip`, `zip`, `ico`, `jpeg`, `tiff`, `zlib`, `fits`, `flac`, `pdf` when compiled); it is an allowlist, so `--formats png` excludes JPEG even in the default build |
 | `--fits-tile` | off | FITS: rewrite an uncompressed image HDU as a tile-compressed binary table (`GZIP_1` for integers, `GZIP_2` for floats, quantisation off, one tile per row, every other HDU copied verbatim). In an interactive single-file TTY run, the candidate is fully verified before a default-No confirmation; elsewhere this flag is the explicit non-interactive opt-in. The handler is compiled in only with the `fits` cargo feature, so a `default` build answers `unsupported` — see §4.12 of [guarantees](guarantees.md) |
 | `--strip-metadata` | off | remove a fixed list of embedded metadata (text, comments, timestamps, Exif); not lossless — see [guarantees §2.7](guarantees.md#27-g4--metadata-removed-on-request) |

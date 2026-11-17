@@ -26,16 +26,14 @@ pub fn scan(args: &Args) -> Scan {
     let mut expanded: Vec<PathBuf> = Vec::new();
     let mut problems: Vec<(PathBuf, Error, ReasonCode)> = Vec::new();
 
-    for path in &args.paths {
-        detect::expand(
-            path,
-            args.recursive,
-            args.follow_symlinks,
-            &mut expanded,
-            &mut problems,
-            0,
-        );
-    }
+    detect::expand_paths(
+        &args.paths,
+        args.recursive,
+        args.follow_symlinks,
+        &mut expanded,
+        &mut problems,
+        0,
+    );
 
     let mut seen_files: HashSet<Identity> = HashSet::new();
     let mut files = Vec::new();

@@ -66,8 +66,9 @@ impl Config {
 /// `6 × --max-size` covers the input/candidate and the largest linear
 /// per-format scratch term: TIFF strips, PDF rewrite/name copies, or FLAC's
 /// bounded frame index plus copied metadata; `8 × --max-pixels` covers a PNG's
-/// two RGBA buffers; `--max-uncompressed` is a ZIP entry; and 128 MiB bounds
-/// PDF parser collections and decoded streams, as well as FLAC frame/PCM
+/// two RGBA buffers; four times `--max-uncompressed` covers ZIP nested input,
+/// candidate and verification buffers; 128 MiB bounds PDF parser collections
+/// and decoded streams, as well as FLAC frame/PCM
 /// working buffers. The sum is an upper bound on [`worst_case_bytes`] for every
 /// handler, under any `len ≤ --max-size`. It is
 /// deliberately not a claim about how much RAM the machine has: that is what
@@ -76,7 +77,7 @@ pub fn derived_memory_budget(max_size: u64, max_pixels: u64, max_uncompressed: u
     max_size
         .saturating_mul(6)
         .saturating_add(max_pixels.saturating_mul(8))
-        .saturating_add(max_uncompressed)
+        .saturating_add(max_uncompressed.saturating_mul(4))
         .saturating_add(PDF_PARSER_RESERVE_BYTES)
 }
 
@@ -119,6 +120,7 @@ pub fn worst_case_bytes(
     pixels: Option<u64>,
     max_pixels: u64,
     max_uncompressed: u64,
+    nested: bool,
 ) -> u64 {
     let base = len.saturating_mul(2);
     let pixels = pixels.unwrap_or(max_pixels).min(max_pixels);
@@ -145,6 +147,9 @@ pub fn worst_case_bytes(
         _ => 0,
     };
     let container = match format {
+        // In nested mode, an original child plus its candidate may coexist
+        // during optimization, and both are reinflated during verification.
+        Some(detect::Format::Zip) if nested => max_uncompressed.saturating_mul(4),
         Some(detect::Format::Zip) => max_uncompressed,
         _ => 0,
     };
@@ -328,6 +333,7 @@ where
         probe.pixels,
         cfg.max_pixels,
         cfg.max_uncompressed,
+        cfg.nested,
     );
     if cost > cfg.memory_budget {
         outcome.reason_code = Some(ReasonCode::MemoryBudgetExceeded);
@@ -732,7 +738,7 @@ mod tests {
 
         // The input and the candidate read back for verification.
         assert_eq!(
-            worst_case_bytes(1000, None, None, max_pixels, max_uncompressed),
+            worst_case_bytes(1000, None, None, max_pixels, max_uncompressed, false),
             2000
         );
 
@@ -744,14 +750,15 @@ mod tests {
                 Some(detect::Format::Png),
                 Some(4_000_000),
                 max_pixels,
-                0
+                0,
+                false
             ),
             2000 + 8 * 4_000_000
         );
         // Without them, `--max-pixels` is the bound — the ceiling the program
         // already refuses to exceed.
         assert_eq!(
-            worst_case_bytes(1000, Some(detect::Format::Png), None, max_pixels, 0),
+            worst_case_bytes(1000, Some(detect::Format::Png), None, max_pixels, 0, false),
             2000 + 8 * max_pixels
         );
         // A header cannot raise the ceiling: a lying IHDR is still clamped.
@@ -761,7 +768,8 @@ mod tests {
                 Some(detect::Format::Png),
                 Some(u64::MAX),
                 max_pixels,
-                0
+                0,
+                false
             ),
             2000 + 8 * max_pixels
         );
@@ -773,47 +781,87 @@ mod tests {
                 Some(detect::Format::Jpeg),
                 Some(1_000_000),
                 max_pixels,
-                0
+                0,
+                false
             ),
             20 + 7 * 1_000_000
         );
 
         // A TIFF strip is bounded by the file, not by a pixel count.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Tiff), None, max_pixels, 0),
+            worst_case_bytes(500, Some(detect::Format::Tiff), None, max_pixels, 0, false),
             1000 + 4 * 500
         );
 
-        // A container is charged its decompression ceiling: the one term that a
-        // file length cannot bound.
+        // ZIP charges one expansion ceiling normally, or four when nested
+        // processing and verification can overlap their buffers.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Zip), None, max_pixels, 4096),
+            worst_case_bytes(
+                500,
+                Some(detect::Format::Zip),
+                None,
+                max_pixels,
+                4096,
+                false
+            ),
             1000 + 4096
+        );
+        assert_eq!(
+            worst_case_bytes(500, Some(detect::Format::Zip), None, max_pixels, 4096, true),
+            1000 + 4 * 4096
         );
 
         // gzip and zlib stream in 64 KiB blocks; nothing is materialised.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Gzip), None, max_pixels, 4096),
+            worst_case_bytes(
+                500,
+                Some(detect::Format::Gzip),
+                None,
+                max_pixels,
+                4096,
+                false
+            ),
             1000
         );
 
         // PDF adds bounded object/xref planning and stream-patch scratch.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Pdf), None, max_pixels, 4096),
+            worst_case_bytes(
+                500,
+                Some(detect::Format::Pdf),
+                None,
+                max_pixels,
+                4096,
+                false
+            ),
             3000 + PDF_PARSER_RESERVE_BYTES
         );
 
         // FLAC holds a frame-start index and copied metadata bounded by the
         // input size, plus bounded per-frame/PCM working buffers.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Flac), None, max_pixels, 4096),
+            worst_case_bytes(
+                500,
+                Some(detect::Format::Flac),
+                None,
+                max_pixels,
+                4096,
+                false
+            ),
             3000 + FLAC_WORKING_RESERVE_BYTES
         );
 
         // FITS holds the file, its candidate and two tile-sized buffers; a tile
         // is a row of the array, so the file bounds both of them.
         assert_eq!(
-            worst_case_bytes(500, Some(detect::Format::Fits), None, max_pixels, 4096),
+            worst_case_bytes(
+                500,
+                Some(detect::Format::Fits),
+                None,
+                max_pixels,
+                4096,
+                false
+            ),
             2000
         );
 
@@ -824,7 +872,8 @@ mod tests {
                 Some(detect::Format::Tiff),
                 Some(u64::MAX),
                 u64::MAX,
-                u64::MAX
+                u64::MAX,
+                false
             ),
             u64::MAX
         );
@@ -847,7 +896,14 @@ mod tests {
             detect::Format::Flac,
             detect::Format::Pdf,
         ] {
-            let cost = worst_case_bytes(max_size, Some(format), None, max_pixels, max_uncompressed);
+            let cost = worst_case_bytes(
+                max_size,
+                Some(format),
+                None,
+                max_pixels,
+                max_uncompressed,
+                false,
+            );
             assert!(
                 cost <= budget,
                 "{format:?} at the limits costs {cost}, above the derived {budget}"
@@ -856,7 +912,7 @@ mod tests {
         // Assert the exact derived formula: the per-format file terms plus fixed parser reserve.
         assert_eq!(
             budget,
-            6 * max_size + 8 * max_pixels + max_uncompressed + PDF_PARSER_RESERVE_BYTES
+            6 * max_size + 8 * max_pixels + 4 * max_uncompressed + PDF_PARSER_RESERVE_BYTES
         );
     }
 

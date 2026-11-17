@@ -517,7 +517,10 @@ fn check_limits(archive: &Archive<'_>, opts: &Options) -> Result<()> {
             opts.max_uncompressed
         )));
     }
-    if compressed > 0 && uncompressed / compressed.max(1) > opts.max_ratio {
+    // Compare the exact ratio without integer-division rounding. Saturating
+    // multiplication is safe here: an overflow means the true ratio exceeds
+    // any representable configured threshold.
+    if compressed > 0 && ratio_exceeded(uncompressed, compressed, opts.max_ratio) {
         return Err(Error::limit(format!(
             "zip: compression ratio {}:1 exceeds --max-ratio ({}:1); refusing a possible bomb",
             uncompressed / compressed.max(1),
@@ -525,6 +528,10 @@ fn check_limits(archive: &Archive<'_>, opts: &Options) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+fn ratio_exceeded(uncompressed: u64, compressed: u64, limit: u64) -> bool {
+    compressed > 0 && uncompressed > limit.saturating_mul(compressed)
 }
 
 /// A non-empty STORE-only archive cannot gain from recompression. Keep this
@@ -808,9 +815,20 @@ fn rebuild(d: &[u8], a: &Archive<'_>, opts: &Options) -> Result<Option<Vec<u8>>>
 
 /// Decompresses a DEFLATE entry completely and validates its checksum.
 fn inflate_entry(compressed: &[u8], e: &Entry<'_>) -> Result<Vec<u8>> {
-    let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+    const MAX_ENTRY_INFLATE: u64 = 8 * 1024 * 1024 * 1024;
+    if u64::from(e.uncomp_size) > MAX_ENTRY_INFLATE {
+        return Err(Error::limit(
+            "zip: entry exceeds the 8 GiB in-memory inflate cap",
+        ));
+    }
+    let decoder = flate2::read::DeflateDecoder::new(compressed);
     let mut out = Vec::with_capacity(e.uncomp_size as usize);
-    decoder.read_to_end(&mut out)?;
+    decoder.take(MAX_ENTRY_INFLATE + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_ENTRY_INFLATE {
+        return Err(Error::limit(
+            "zip: entry exceeds the 8 GiB in-memory inflate cap",
+        ));
+    }
     if out.len() as u64 != e.uncomp_size as u64 || crc32fast::hash(&out) != e.crc {
         return Err(Error::parse(format!(
             "zip: entry `{}` fails its checksum; the archive is corrupt",
@@ -1046,9 +1064,15 @@ fn verify_nested_change(
 }
 
 fn inflate_raw(compressed: &[u8]) -> io::Result<Vec<u8>> {
-    let mut decoder = flate2::read::DeflateDecoder::new(compressed);
+    const MAX_NESTED_VERIFY: u64 = 8 * 1024 * 1024 * 1024;
+    let decoder = flate2::read::DeflateDecoder::new(compressed);
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
+    decoder.take(MAX_NESTED_VERIFY + 1).read_to_end(&mut out)?;
+    if out.len() as u64 > MAX_NESTED_VERIFY {
+        return Err(io::Error::other(
+            "nested ZIP entry exceeds 8 GiB verification cap",
+        ));
+    }
     Ok(out)
 }
 
@@ -1352,6 +1376,13 @@ mod tests {
             optimize(&wrong_crc, &mut output, &options()),
             Err(Error::Parse(message)) if message.contains("stored entry CRC mismatch")
         ));
+    }
+
+    #[test]
+    fn ratio_limit_does_not_round_down_fractional_excess() {
+        assert!(ratio_exceeded(109, 10, 10));
+        assert!(!ratio_exceeded(109, 10, 11));
+        assert!(!ratio_exceeded(1, 0, 0));
     }
 
     #[test]

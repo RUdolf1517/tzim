@@ -214,7 +214,7 @@ are charged in addition to the input and candidate; the implementation table and
 | a decoded TIFF strip | `4 × len` | `len` |
 | PDF parser and rewrite scratch | `4 × len + 128 MiB` | `4 × len + 128 MiB` (the fixed term bounds the capped parser collections and decoded xref/`/ObjStm` buffers) |
 | FLAC frame-start index and copied metadata, plus bounded frame/PCM buffers | `4 × len + 8 MiB` | `4 × len + 8 MiB` |
-| a decompressed ZIP entry | `--max-uncompressed`, 8 GiB by default | `--max-uncompressed` |
+| ZIP entries and nested verification buffers | `--max-uncompressed` normally; `4 × --max-uncompressed` with `--nested` | one or four expansion ceilings respectively |
 
 The PNG and JPEG charges include verification. For JPEG, `7 × pixels` remains the #51 accounting term and
 includes the independent `jpeg-decoder` frame: each side is decoded, CRC-32 hashed and dropped before the other
@@ -231,7 +231,7 @@ an error, and the file is untouched.
 The default is derived from the other ceilings:
 
 ```
---memory-budget = 6 × --max-size + 8 × --max-pixels + --max-uncompressed + 128 MiB
+--memory-budget = 6 × --max-size + 8 × --max-pixels + 4 × --max-uncompressed + 128 MiB
 ```
 
 which is an upper bound on every row above, so the defaults never skip a file that `--max-size`,
