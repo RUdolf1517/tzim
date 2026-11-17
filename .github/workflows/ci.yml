@@ -677,6 +677,27 @@ jobs:
         shell: bash
         run: bash .github/scripts/test-install.sh
 
+      - name: Wait for assets of the latest release
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$(uname -s)/$(uname -m)" in
+            Linux/x86_64) asset=tzim-x86_64-unknown-linux-musl.tar.gz ;;
+            Darwin/arm64) asset=tzim-aarch64-apple-darwin.tar.gz ;;
+            *) echo "no release asset name for this runner" >&2; exit 1 ;;
+          esac
+          base=https://github.com/RUdolf1517/tzim/releases/latest/download
+          for attempt in $(seq 1 60); do
+            if curl -fsSI "$base/SHA256SUMS" >/dev/null && curl -fsSI "$base/$asset" >/dev/null; then
+              echo "latest release assets are available"
+              exit 0
+            fi
+            echo "waiting for $asset and SHA256SUMS (attempt $attempt/60)"
+            sleep 10
+          done
+          echo "latest release assets did not become available within 10 minutes" >&2
+          exit 1
+
       - name: Install the published release into a temporary directory
         id: install
         continue-on-error: true
