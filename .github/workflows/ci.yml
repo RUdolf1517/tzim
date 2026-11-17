@@ -677,6 +677,33 @@ jobs:
         shell: bash
         run: bash .github/scripts/test-install.sh
 
+      - name: Wait for assets of the latest release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$(uname -s)/$(uname -m)" in
+            Linux/x86_64) asset=tzim-x86_64-unknown-linux-musl.tar.gz ;;
+            Darwin/arm64) asset=tzim-aarch64-apple-darwin.tar.gz ;;
+            *) echo "no release asset name for this runner" >&2; exit 1 ;;
+          esac
+          for attempt in $(seq 1 90); do
+            release="$(gh api repos/RUdolf1517/tzim/releases/latest 2>/dev/null || true)"
+            tag="$(printf '%s' "$release" | jq -r '.tag_name // empty')"
+            if [ -n "$tag" ] && printf '%s' "$release" | jq -e --arg asset "$asset" \
+                '([.assets[].name] | index($asset) != null) and ([.assets[].name] | index("SHA256SUMS") != null)' >/dev/null; then
+              echo "TZIM_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+              echo "TZIM_RELEASE_VERSION=${tag#v}" >> "$GITHUB_ENV"
+              echo "assets for $tag are available"
+              exit 0
+            fi
+            echo "waiting for $asset and SHA256SUMS on the latest release (attempt $attempt/90)"
+            sleep 10
+          done
+          echo "latest release assets did not become available within 15 minutes" >&2
+          exit 1
+
       - name: Install the published release into a temporary directory
         id: install
         continue-on-error: true
@@ -685,9 +712,10 @@ jobs:
           set -o pipefail
           dir="${RUNNER_TEMP}/tzim-install"
           rm -rf "$dir"
-          # The latest release, not this branch's build: the point is that the
-          # script and the artifacts agree today.
-          TZIM_INSTALL_DIR="$dir" sh ./install.sh 2>&1 | tee /tmp/tzim-install.log
+          # Pin the exact release whose assets were checked above. During a new
+          # release, /latest/download can still resolve the previous release.
+          TZIM_VERSION="$TZIM_RELEASE_VERSION" TZIM_INSTALL_DIR="$dir" \
+            sh ./install.sh 2>&1 | tee /tmp/tzim-install.log
           "$dir/tzim" --version | tee -a /tmp/tzim-install.log
           "$dir/tzim" --list-formats | tee -a /tmp/tzim-install.log
 
@@ -711,7 +739,7 @@ jobs:
             *) echo "no asset name for this runner"; exit 1 ;;
           esac
 
-          base="https://github.com/RUdolf1517/tzim/releases/latest/download"
+          base="https://github.com/RUdolf1517/tzim/releases/download/${TZIM_RELEASE_TAG}"
           curl -fsSL "$base/$asset" -o "$work/serve/$asset"
           curl -fsSL "$base/SHA256SUMS" -o "$work/serve/SHA256SUMS"
           printf 'x' >> "$work/serve/$asset"
@@ -738,8 +766,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           {
-            cat /tmp/tzim-install.log 2>/dev/null
-            cat "${RUNNER_TEMP}/tzim-corrupt/log" 2>/dev/null
+            cat /tmp/tzim-install.log 2>/dev/null || true
+            cat "${RUNNER_TEMP}/tzim-corrupt/log" 2>/dev/null || true
           } > /tmp/tzim-installer.log
           bash .github/scripts/ci-report.sh /tmp/tzim-installer.log installer
 
