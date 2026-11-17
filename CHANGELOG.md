@@ -11,6 +11,14 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-11-17
+
+### Fixed
+
+- Corrected the safety documentation link in the README and removed a Clippy warning from the symlink traversal test.
+- Changed the lockfile workflow to verify committed dependencies without pushing directly to branches; updated the lockfile.
+- Updated the ZIP measurement check to allow compatible dependency patch-version updates.
+
 ## [0.16.1] - 2026-11-01
 
 ### Performance and verification

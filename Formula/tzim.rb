@@ -14,7 +14,7 @@
 class Tzim < Formula
   desc "Lossless file optimizer: shrink the file, never the information"
   homepage "https://github.com/RUdolf1517/tzim"
-  version "0.16.1"
+  version "0.16.2"
   license "MIT"
 
   livecheck do
@@ -27,22 +27,22 @@ class Tzim < Formula
   # formula that silently guessed a binary would be worse.
   on_macos do
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.1/tzim-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.2/tzim-aarch64-apple-darwin.tar.gz"
       sha256 "5cdfd2e7c80d54fe0005013f4883e9c7853cad069fa9ba72d50e5d69d0d7e280"
     end
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.1/tzim-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.2/tzim-x86_64-apple-darwin.tar.gz"
       sha256 "6a4d92cafbc2e263a31a62a4160670333dfdb2840c5ae5dd7e89d9edc39e4b42"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.1/tzim-x86_64-unknown-linux-musl.tar.gz"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.2/tzim-x86_64-unknown-linux-musl.tar.gz"
       sha256 "fbfcffba21cf2537d1827ddae1339035e2145000afa878b7cdec8cbeeffd9d59"
     end
     on_arm do
-      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.1/tzim-aarch64-unknown-linux-musl.tar.gz"
+      url "https://github.com/RUdolf1517/tzim/releases/download/v0.16.2/tzim-aarch64-unknown-linux-musl.tar.gz"
       sha256 "228e0e59f3de74404d63a4374fb0b704841b793f20801d40af45dc99cab560eb"
     end
   end
@@ -50,7 +50,7 @@ class Tzim < Formula
   # Archives from v0.11.0 onwards ship the manual page and the three
   # completions next to the binary, so the formula installs the same
   # documentation the .deb, the .rpm and the repository carry. The guards keep
-  # older pinned archives installable; the v0.16.1 archives include all of these.
+  # older pinned archives installable; the v0.16.2 archives include all of these.
   def install
     bin.install "tzim"
     man1.install "man/tzim.1" if File.exist?("man/tzim.1")
