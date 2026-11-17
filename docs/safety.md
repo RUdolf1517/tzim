@@ -211,7 +211,7 @@ are charged in addition to the input and candidate; the implementation table and
 | the candidate, read back for verification | up to the same | `len` |
 | a decoded PNG image, both sides | `8 × pixels` | the `IHDR` count when the header carries it, `--max-pixels` otherwise |
 | a decoded JPEG image, both sides | `7 × pixels` | `--max-pixels` |
-| a decoded TIFF strip | `4 × len` | `len` |
+| TIFF rewrite and decoded strips | `2 × len + 2 × --max-uncompressed` | geometry and the total expansion ceiling are checked before inflation |
 | PDF parser and rewrite scratch | `4 × len + 128 MiB` | `4 × len + 128 MiB` (the fixed term bounds the capped parser collections and decoded xref/`/ObjStm` buffers) |
 | FLAC frame-start index and copied metadata, plus bounded frame/PCM buffers | `4 × len + 8 MiB` | `4 × len + 8 MiB` |
 | ZIP entries and nested verification buffers | `--max-uncompressed` normally; `4 × --max-uncompressed` with `--nested` | one or four expansion ceilings respectively |

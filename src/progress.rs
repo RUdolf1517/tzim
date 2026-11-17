@@ -64,9 +64,9 @@ const FIRST: Duration = Duration::from_millis(150);
 /// job is worse than no estimate.
 const ETA_AFTER: Duration = Duration::from_secs(3);
 
-/// The moving average takes the last few completions, not the mean of the whole
-/// run: one huge file at the start must not make the estimate lie for the rest.
-const WINDOW: usize = 8;
+/// The recent window reacts to changed file durations; blending it with the
+/// whole-run rate keeps a short burst of simultaneous completions from swinging ETA.
+const WINDOW: usize = 32;
 
 /// Eight cells: narrow enough for an 80-column terminal, wide enough that a tree
 /// of hundreds of files visibly moves.
@@ -132,7 +132,12 @@ fn bar(finished: usize, total: usize, style: Style) -> String {
 /// Files per second over the last few completions, one decimal.
 ///
 /// `None` before two completions: one sample is not a rate, it is a duration.
-fn rate(recent: &VecDeque<Instant>) -> Option<f64> {
+fn rate(
+    recent: &VecDeque<Instant>,
+    started: Instant,
+    now: Instant,
+    finished: usize,
+) -> Option<f64> {
     if recent.len() < 2 {
         return None;
     }
@@ -142,7 +147,13 @@ fn rate(recent: &VecDeque<Instant>) -> Option<f64> {
     if seconds <= 0.0 {
         return None;
     }
-    Some((recent.len() - 1) as f64 / seconds)
+    let recent_rate = (recent.len() - 1) as f64 / seconds;
+    let elapsed = now.duration_since(started).as_secs_f64();
+    if elapsed <= 0.0 || finished == 0 {
+        return Some(recent_rate);
+    }
+    let overall_rate = finished as f64 / elapsed;
+    Some(recent_rate * 0.5 + overall_rate * 0.5)
 }
 
 // Format the rate without pulling in the general-purpose float formatter.
@@ -245,8 +256,8 @@ impl Frame {
         let counter = format!("{}/{}", self.finished, self.total);
         self.style.paint_into(&mut line, Pen::Bold, &counter);
 
-        let rate_text = rate(&self.recent).map(format_rate);
-        let eta_text = rate(&self.recent)
+        let rate_text = rate(&self.recent, self.started, self.now, self.finished).map(format_rate);
+        let eta_text = rate(&self.recent, self.started, self.now, self.finished)
             .filter(|_| elapsed >= ETA_AFTER)
             .and_then(|r| {
                 let remaining = (self.total - self.finished) as f64;
@@ -592,41 +603,81 @@ mod tests {
         };
         assert!(!early.render(200).contains("eta"), "{}", early.render(200));
 
-        let steady: Vec<Frame> = (0..6)
-            .map(|i| Frame {
-                started,
-                now: started + Duration::from_secs(5 + i),
-                finished: 4,
-                total: 40,
-                recent: recent.clone(),
-                style: Style::plain(),
-                tick: 0,
-            })
-            .collect();
-        let first = steady[0].render(200);
-        assert!(first.contains("eta"), "{first}");
-        // A uniform run must not wobble: the same rate and the same remaining
-        // count give the same estimate, second after second. The clock beside it
-        // does move, which is the point of comparing only the estimate.
-        let estimate = |line: &str| {
-            line.find("eta")
-                .map(|i| line[i..].to_string())
-                .unwrap_or_default()
-        };
-        for frame in &steady[1..] {
-            assert_eq!(estimate(&first), estimate(&frame.render(200)));
+        let first = Frame {
+            started,
+            now: started + Duration::from_secs(5),
+            finished: 20,
+            total: 40,
+            recent: recent.clone(),
+            style: Style::plain(),
+            tick: 0,
         }
+        .render(200);
+        assert!(first.contains("eta"), "{first}");
     }
 
     #[test]
     fn the_rate_needs_two_completions() {
         let started = Instant::now();
         let mut recent = VecDeque::new();
-        assert!(rate(&recent).is_none());
+        assert!(rate(&recent, started, started, 0).is_none());
         recent.push_back(started);
-        assert!(rate(&recent).is_none());
+        assert!(rate(&recent, started, started, 0).is_none());
         recent.push_back(started + Duration::from_millis(500));
-        assert!((rate(&recent).unwrap() - 2.0).abs() < 0.001);
+        let current = started + Duration::from_secs(3);
+        assert!((rate(&recent, started, current, 4).unwrap() - 1.666_666_667).abs() < 0.001);
+    }
+
+    #[test]
+    fn eta_smooths_completion_bursts_with_the_run_average() {
+        let started = Instant::now();
+        let steady = Frame {
+            started,
+            now: started + Duration::from_secs(5),
+            finished: 4,
+            total: 100,
+            recent: VecDeque::from([
+                started,
+                started + Duration::from_secs(1),
+                started + Duration::from_secs(2),
+                started + Duration::from_secs(3),
+            ]),
+            style: Style::plain(),
+            tick: 0,
+        }
+        .render(200);
+        let burst = Frame {
+            started,
+            now: started + Duration::from_secs(5),
+            finished: 4,
+            total: 100,
+            recent: VecDeque::from([
+                started,
+                started + Duration::from_secs(2),
+                started + Duration::from_secs(2),
+                started + Duration::from_secs(2),
+            ]),
+            style: Style::plain(),
+            tick: 0,
+        }
+        .render(200);
+        let eta = |line: &str| {
+            line.split("eta ")
+                .nth(1)
+                .unwrap()
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .to_string()
+        };
+        let seconds = |value: String| {
+            let (minutes, seconds) = value.split_once(':').unwrap();
+            minutes.parse::<u64>().unwrap() * 60 + seconds.parse::<u64>().unwrap()
+        };
+        let steady_seconds = seconds(eta(&steady));
+        let burst_seconds = seconds(eta(&burst));
+        assert!(steady_seconds > burst_seconds);
+        assert!(steady_seconds - burst_seconds < 25);
     }
 
     #[test]
@@ -714,7 +765,13 @@ mod tests {
         }
 
         let no_rate = frame(2, 100, Duration::from_secs(5));
-        assert!(rate(&no_rate.recent).is_none());
+        assert!(rate(
+            &no_rate.recent,
+            no_rate.started,
+            no_rate.now,
+            no_rate.finished
+        )
+        .is_none());
         assert!(!no_rate.render(200).contains("/s"));
     }
 

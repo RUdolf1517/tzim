@@ -127,7 +127,7 @@ OPTIONS:
         --max-size <BYTES>     skip larger files (default: 2147483648)
         --max-pixels <N>       skip images with more pixels (default: 100000000)
         --max-uncompressed <BYTES>
-                               refuse archives that expand beyond this (default: 8589934592)
+                               cap ZIP expansion and decoded TIFF strips (default: 8589934592)
         --max-ratio <N>        refuse archives with a ratio above N:1 (default: 1000)
         --memory-budget <BYTES>
                                skip a file whose worst case would exceed this

@@ -11,6 +11,16 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-11-18
+
+### Fixed
+
+- Smoothed progress ETA across recent completions and whole-run throughput to reduce jumps during concurrent batches.
+- Capped TIFF and FITS decompression by image geometry; TIFF also enforces `--max-uncompressed` before reading expanded data into memory.
+- Checked TIFF geometry arithmetic and accounted for bounded strip decoding in the memory budget.
+- Reused PNG scanline buffers to avoid repeated allocations.
+- Excluded handoff review material from the published crate package.
+
 ## [0.16.2] - 2026-11-17
 
 ### Fixed
