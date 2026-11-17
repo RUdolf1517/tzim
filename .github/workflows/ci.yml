@@ -733,13 +733,14 @@ jobs:
 
       - name: Publish failure log
         if: steps.install.outcome == 'failure' || steps.corrupt.outcome == 'failure'
+        continue-on-error: true
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           {
-            cat /tmp/tzim-install.log 2>/dev/null
-            cat "${RUNNER_TEMP}/tzim-corrupt/log" 2>/dev/null
+            cat /tmp/tzim-install.log 2>/dev/null || true
+            cat "${RUNNER_TEMP}/tzim-corrupt/log" 2>/dev/null || true
           } > /tmp/tzim-installer.log
           bash .github/scripts/ci-report.sh /tmp/tzim-installer.log installer
 
