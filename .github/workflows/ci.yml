@@ -626,13 +626,13 @@ jobs:
               package for package in metadata["packages"]
               if package["id"] in members and package["name"] == "tzim"
           ]
-          if len(root) != 1 or root[0]["version"] != "0.16.2":
-              raise SystemExit(f"expected root package tzim 0.16.2, got {root!r}")
+          if len(root) != 1 or root[0]["version"] != "0.16.3":
+              raise SystemExit(f"expected root package tzim 0.16.3, got {root!r}")
           print(f"cargo metadata --locked root package: {root[0]['name']} {root[0]['version']}")
           PY
 
           cargo package --locked
-          archive=target/package/tzim-0.16.2.crate
+          archive=target/package/tzim-0.16.3.crate
           test -f "$archive"
           ls -l "$archive"
           package_root="$RUNNER_TEMP/tzim-package"
@@ -640,12 +640,12 @@ jobs:
           rm -rf "$package_root" "$target_dir"
           mkdir -p "$package_root"
           tar -xzf "$archive" -C "$package_root"
-          package_manifest="$package_root/tzim-0.16.2/Cargo.toml"
+          package_manifest="$package_root/tzim-0.16.3/Cargo.toml"
           CARGO_TARGET_DIR="$target_dir" cargo build --locked \
             --manifest-path "$package_manifest" --bin tzim
           version="$("$target_dir/debug/tzim" --version)"
           printf 'packaged binary version: %s\n' "$version"
-          test "$version" = 'tzim 0.16.2'
+          test "$version" = 'tzim 0.16.3'
 
       - name: Publish failure log
         if: steps.package.outcome == 'failure'

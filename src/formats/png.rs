@@ -304,9 +304,12 @@ impl Read for Chained<'_> {
 /// inverses, so a different filter choice changes bytes, not content.
 struct Refilter<R: Read> {
     inner: R,
-    row_bytes: usize,
     bpp: usize,
     prev: Vec<u8>,
+    raw: Vec<u8>,
+    cur: Vec<u8>,
+    best: Vec<u8>,
+    scratch: Vec<u8>,
     out: Vec<u8>,
     pos: usize,
     done: bool,
@@ -316,9 +319,12 @@ impl<R: Read> Refilter<R> {
     fn new(inner: R, row_bytes: usize, bpp: usize) -> Self {
         Refilter {
             inner,
-            row_bytes,
             bpp,
             prev: vec![0u8; row_bytes],
+            raw: vec![0u8; row_bytes + 1],
+            cur: vec![0u8; row_bytes],
+            best: vec![0u8; row_bytes],
+            scratch: vec![0u8; row_bytes],
             out: Vec::new(),
             pos: 0,
             done: false,
@@ -329,7 +335,7 @@ impl<R: Read> Refilter<R> {
         self.out.clear();
         self.pos = 0;
 
-        let mut raw = vec![0u8; self.row_bytes + 1];
+        let raw = &mut self.raw;
         let mut filled = 0;
         while filled < raw.len() {
             match self.inner.read(&mut raw[filled..]) {
@@ -351,26 +357,29 @@ impl<R: Read> Refilter<R> {
         }
 
         let filter = raw[0];
-        let mut cur = vec![0u8; self.row_bytes];
-        unfilter(filter, &raw[1..], &self.prev, self.bpp, &mut cur)?;
+        unfilter(filter, &raw[1..], &self.prev, self.bpp, &mut self.cur)?;
 
         let mut best_cost = u64::MAX;
         let mut best_filter = 0u8;
-        let mut best = vec![0u8; self.row_bytes];
-        let mut scratch = vec![0u8; self.row_bytes];
         for candidate in 0..5u8 {
-            filter_row(candidate, &cur, &self.prev, self.bpp, &mut scratch);
-            let cost = cost_of(&scratch);
+            filter_row(
+                candidate,
+                &self.cur,
+                &self.prev,
+                self.bpp,
+                &mut self.scratch,
+            );
+            let cost = cost_of(&self.scratch);
             if cost < best_cost {
                 best_cost = cost;
                 best_filter = candidate;
-                best.copy_from_slice(&scratch);
+                self.best.copy_from_slice(&self.scratch);
             }
         }
 
         self.out.push(best_filter);
-        self.out.extend_from_slice(&best);
-        self.prev = cur;
+        self.out.extend_from_slice(&self.best);
+        std::mem::swap(&mut self.prev, &mut self.cur);
         Ok(())
     }
 }

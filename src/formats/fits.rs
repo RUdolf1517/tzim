@@ -807,7 +807,7 @@ fn gzip_member(payload: &[u8]) -> Result<Vec<u8>> {
 ///
 /// The declared length is a bound, not an equality: a heap may pad between tiles,
 /// so trailing bytes inside a row's declared length are legal and ignored.
-fn gunzip_member(member: &[u8]) -> Result<Vec<u8>> {
+fn gunzip_member(member: &[u8], limit: usize) -> Result<Vec<u8>> {
     // Ten bytes of header, at least one byte of DEFLATE, eight of trailer.
     if member.len() < 19 {
         return Err(Error::parse(
@@ -819,9 +819,14 @@ fn gunzip_member(member: &[u8]) -> Result<Vec<u8>> {
             "fits: a tile does not begin with a gzip member header",
         ));
     }
-    let mut decoder = flate2::read::GzDecoder::new(member);
+    let decoder = flate2::read::GzDecoder::new(member);
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out)?;
+    decoder
+        .take(limit.saturating_add(1) as u64)
+        .read_to_end(&mut out)?;
+    if out.len() > limit {
+        return Err(Error::limit("fits: a tile exceeds its row geometry"));
+    }
     let trailer = &member[member.len() - 8..];
     let crc = u32::from_le_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
     let size = u32::from_le_bytes([trailer[4], trailer[5], trailer[6], trailer[7]]);
@@ -1343,7 +1348,7 @@ fn check_tiled(a: &Hdu, original: &[u8], b: &Hdu, candidate: &[u8]) -> Result<()
                 "fits: a heap descriptor points outside the heap",
             ));
         }
-        let tile = gunzip_member(&heap[offset..offset + length])
+        let tile = gunzip_member(&heap[offset..offset + length], tile_bytes)
             .map_err(|e| Error::verify(format!("fits: a tile does not inflate: {e}")))?;
         if tile.len() != tile_bytes {
             return Err(Error::verify(format!(
@@ -1471,6 +1476,13 @@ mod tests {
             fits_tile,
             allow: super::super::Allow::default(),
         }
+    }
+
+    #[test]
+    fn gunzip_member_stops_at_the_row_geometry_limit() {
+        let source = vec![b'x'; 1024 * 1024];
+        let compressed = gzip_member(&source).unwrap();
+        assert!(gunzip_member(&compressed, 128).is_err());
     }
 
     /// Fixture bytes that compress: the pattern repeats every four bytes, so a

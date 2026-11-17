@@ -17,7 +17,7 @@ These hold for every format and are tested as properties, not as anecdotes.
 | ID | Invariant | How it is tested |
 | --- | --- | --- |
 | I1 | The original is never modified unless the candidate passes all checks | failure tests read the original back and compare it byte for byte; `commit_failure_keeps_original_size_and_byte_identical_outcome` injects a post-verification, pre-rename failure, but other stages are not all injectable |
-| I2 | A candidate is only used if strictly smaller | fixtures whose best candidate is larger (`already_optimal_zip_is_left_alone`, `tiff_already_deflated_small_file_is_left_alone`, `ico_with_only_bitmaps_is_already_optimal`); a candidate of **exactly** equal size has no test, and currently fails — see B1 in the 0.11.0 audit and issue #26 |
+| I2 | A candidate is only used if smaller, except equal-size metadata removal when requested | larger candidates are rejected; `equal_size_is_accepted_only_when_stripping` pins the shared size rule, and format tests cover requested metadata removal |
 | I3 | No metadata is removed | per-format inventory comparison, including unknown/private chunks and extra fields |
 | I4 | No lossy or converting transformation exists in the codebase | review gate; no such handler may exist, so there is nothing to test |
 | I5 | Concurrent modification aborts the operation | **no test.** The `(device, inode, length, mtime)` re-check in `replace.rs` is exercised only by its unit test `snapshot_roundtrip_detects_changes`; nothing modifies a file mid-run |

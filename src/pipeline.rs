@@ -101,7 +101,7 @@ fn budget_or_derived(args: &Args) -> u64 {
 /// | the candidate, read back for verification | `len` | a candidate is never larger |
 /// | a decoded PNG | `8 × pixels` | two RGBA buffers, one per side |
 /// | a decoded JPEG | `7 × pixels` | the coefficient planes plus one decoded frame — the independent decoder hashes one side at a time (§2.6) |
-/// | a decoded TIFF strip | `4 × len` | the strip is bounded by the file, and `--max-size` bounds that |
+/// | TIFF rewrite and decoded strips | `2 × len + 2 × --max-uncompressed` | candidate scratch plus geometry-checked, capped strip expansion |
 /// | two FITS tile buffers | `2 × len` | the file and its candidate (`2 × len`) plus the row a tile holds and the gzip member written from it; a tile is a row of the array, so the file bounds each |
 /// | PDF parser and rewrite scratch | `4 × len + 128 MiB` | copied names, compressed stream replacements, temporary xref rewrite, capped parser collections and bounded xref/`/ObjStm` decode buffers |
 /// | FLAC frame index and copied metadata | `4 × len + 8 MiB` | at most 24 bytes per minimum-size frame (≤ `3 × len`), up to one file of retained metadata, plus bounded frame/PCM buffers |
@@ -127,7 +127,9 @@ pub fn worst_case_bytes(
     let image = match format {
         Some(detect::Format::Png) => pixels.saturating_mul(8),
         Some(detect::Format::Jpeg) => pixels.saturating_mul(7),
-        Some(detect::Format::Tiff) => len.saturating_mul(4),
+        Some(detect::Format::Tiff) => len
+            .saturating_mul(2)
+            .saturating_add(max_uncompressed.saturating_mul(2)),
         // The file, its candidate, and two tile-sized buffers — the row a tile
         // holds and the gzip member written from it. A tile is a row of the
         // array, so the file bounds each of them.
@@ -787,10 +789,10 @@ mod tests {
             20 + 7 * 1_000_000
         );
 
-        // A TIFF strip is bounded by the file, not by a pixel count.
+        // TIFF rewrite scratch and decoded strips are bounded separately.
         assert_eq!(
             worst_case_bytes(500, Some(detect::Format::Tiff), None, max_pixels, 0, false),
-            1000 + 4 * 500
+            2000
         );
 
         // ZIP charges one expansion ceiling normally, or four when nested

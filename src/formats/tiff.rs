@@ -532,13 +532,17 @@ fn ensure_nothing_else(tiff: &Tiff<'_>, offsets: &[u32], counts: &[u32]) -> Resu
 // Compression
 // ---------------------------------------------------------------------------
 
-fn inflate(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = flate2::read::ZlibDecoder::new(data);
+fn inflate(data: &[u8], limit: usize) -> Result<Vec<u8>> {
+    let decoder = flate2::read::ZlibDecoder::new(data);
     let mut out = Vec::new();
-    decoder
+    let mut limited = decoder.take(limit.saturating_add(1) as u64);
+    limited
         .read_to_end(&mut out)
         .map_err(|e| Error::parse(format!("tiff: a Deflate strip does not decode: {e}")))?;
-    if decoder.total_in() != data.len() as u64 {
+    if out.len() > limit {
+        return Err(Error::limit("tiff: a Deflate strip exceeds its geometry"));
+    }
+    if limited.get_ref().total_in() != data.len() as u64 {
         return Err(Error::parse(
             "tiff: trailing bytes after a Deflate strip; the file is corrupt",
         ));
@@ -593,10 +597,11 @@ fn adler32(data: &[u8]) -> u32 {
 }
 
 /// The decoded bytes of a strip, whatever its compression.
-fn decode_strip(data: &[u8], compression: u16) -> Result<Vec<u8>> {
+fn decode_strip(data: &[u8], compression: u16, limit: usize) -> Result<Vec<u8>> {
     match compression {
-        COMPRESSION_NONE => Ok(data.to_vec()),
-        _ => inflate(data),
+        COMPRESSION_NONE if data.len() <= limit => Ok(data.to_vec()),
+        COMPRESSION_NONE => Err(Error::limit("tiff: a strip exceeds its geometry")),
+        _ => inflate(data, limit),
     }
 }
 
@@ -798,9 +803,17 @@ pub fn optimize(input: &[u8], out: &mut dyn Write, opts: &Options) -> Result<Can
     let expected = expected_strip_lengths(&tiff)?;
     let mut strips: Vec<Vec<u8>> = Vec::with_capacity(plan.strips.len());
     let mut any_encoded = false;
+    let expansion_limit = usize::try_from(opts.max_uncompressed).unwrap_or(usize::MAX);
+    let mut expanded = 0usize;
 
     for (index, strip) in plan.strips.iter().enumerate() {
-        let decoded = decode_strip(strip, plan.compression)?;
+        let strip_limit = expected[index]
+            .unwrap_or(usize::MAX)
+            .min(expansion_limit.saturating_sub(expanded));
+        let decoded = decode_strip(strip, plan.compression, strip_limit)?;
+        expanded = expanded
+            .checked_add(decoded.len())
+            .ok_or_else(|| Error::limit("tiff: total strip expansion overflows"))?;
         if let Some(Some(want)) = expected.get(index) {
             if decoded.len() != *want {
                 return Err(Error::refused(format!(
@@ -850,14 +863,22 @@ fn expected_strip_lengths(tiff: &Tiff<'_>) -> Result<Vec<Option<usize>>> {
     let rows_per_strip = tiff.scalar(TAG_ROWS_PER_STRIP, Some(length as u32))? as usize;
 
     let bits_per_pixel: usize = if bits.len() == 1 {
-        bits[0] as usize * samples
+        (bits[0] as usize)
+            .checked_mul(samples)
+            .ok_or_else(|| Error::limit("tiff: image geometry overflows"))?
     } else {
-        bits.iter().map(|b| *b as usize).sum()
+        bits.iter().try_fold(0usize, |sum, b| {
+            sum.checked_add(*b as usize)
+                .ok_or_else(|| Error::limit("tiff: image geometry overflows"))
+        })?
     };
     if bits_per_pixel == 0 || rows_per_strip == 0 || samples == 0 {
         return Err(Error::parse("tiff: degenerate image geometry"));
     }
-    let row_bytes = (width * bits_per_pixel).div_ceil(8);
+    let row_bits = width
+        .checked_mul(bits_per_pixel)
+        .ok_or_else(|| Error::limit("tiff: image geometry overflows"))?;
+    let row_bytes = row_bits.div_ceil(8);
     let strip_count = tiff
         .numbers(
             tiff.entry(TAG_STRIP_OFFSETS)
@@ -867,13 +888,18 @@ fn expected_strip_lengths(tiff: &Tiff<'_>) -> Result<Vec<Option<usize>>> {
 
     let mut out = Vec::with_capacity(strip_count);
     for index in 0..strip_count {
-        let first_row = index * rows_per_strip;
+        let first_row = index
+            .checked_mul(rows_per_strip)
+            .ok_or_else(|| Error::limit("tiff: strip geometry overflows"))?;
         if first_row >= length {
             out.push(None);
             continue;
         }
         let rows = rows_per_strip.min(length - first_row);
-        out.push(Some(rows * row_bytes));
+        out.push(Some(
+            rows.checked_mul(row_bytes)
+                .ok_or_else(|| Error::limit("tiff: strip geometry overflows"))?,
+        ));
     }
     Ok(out)
 }
@@ -959,16 +985,35 @@ pub fn verify(original: &[u8], candidate: &[u8], opts: &Options) -> Result<()> {
     if plan_a.strips.len() != plan_b.strips.len() {
         return Err(Error::verify("tiff: the strip count changed"));
     }
+    let expected_a = expected_strip_lengths(&before)
+        .map_err(|e| Error::verify(format!("original geometry: {e}")))?;
+    let expected_b = expected_strip_lengths(&after)
+        .map_err(|e| Error::verify(format!("candidate geometry: {e}")))?;
+    let ceiling = usize::try_from(opts.max_uncompressed).unwrap_or(usize::MAX);
+    let mut expanded_a = 0usize;
+    let mut expanded_b = 0usize;
     for (index, (sa, sb)) in plan_a.strips.iter().zip(plan_b.strips.iter()).enumerate() {
-        let da = decode_strip(sa, plan_a.compression)
+        let limit_a = expected_a[index]
+            .unwrap_or(usize::MAX)
+            .min(ceiling.saturating_sub(expanded_a));
+        let limit_b = expected_b[index]
+            .unwrap_or(usize::MAX)
+            .min(ceiling.saturating_sub(expanded_b));
+        let da = decode_strip(sa, plan_a.compression, limit_a)
             .map_err(|e| Error::verify(format!("original strip {index}: {e}")))?;
-        let db = decode_strip(sb, plan_b.compression)
+        let db = decode_strip(sb, plan_b.compression, limit_b)
             .map_err(|e| Error::verify(format!("candidate strip {index}: {e}")))?;
         if da != db {
             return Err(Error::verify(format!(
                 "tiff: strip {index} decodes to different bytes"
             )));
         }
+        expanded_a = expanded_a
+            .checked_add(da.len())
+            .ok_or_else(|| Error::limit("tiff: original strip expansion overflows"))?;
+        expanded_b = expanded_b
+            .checked_add(db.len())
+            .ok_or_else(|| Error::limit("tiff: candidate strip expansion overflows"))?;
     }
     Ok(())
 }
@@ -985,6 +1030,15 @@ fn after_strip_count(tiff: &Tiff<'_>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inflate_stops_at_the_declared_geometry_limit() {
+        let source = vec![b'x'; 1024 * 1024];
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(&source).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(inflate(&compressed, 128).is_err());
+    }
 
     #[test]
     fn type_sizes_are_known() {
