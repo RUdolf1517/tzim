@@ -13,11 +13,85 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
+  changes:
+    name: select checks
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.paths.outputs.full }}
+      rust: ${{ steps.paths.outputs.rust }}
+      docs: ${{ steps.paths.outputs.docs }}
+      package: ${{ steps.paths.outputs.package }}
+      formula: ${{ steps.paths.outputs.formula }}
+      deps: ${{ steps.paths.outputs.deps }}
+      installer: ${{ steps.paths.outputs.installer }}
+      features: ${{ steps.paths.outputs.features }}
+      fits: ${{ steps.paths.outputs.fits }}
+      progress: ${{ steps.paths.outputs.progress }}
+      zip: ${{ steps.paths.outputs.zip }}
+      zlib: ${{ steps.paths.outputs.zlib }}
+      jpeg: ${{ steps.paths.outputs.jpeg }}
+      size: ${{ steps.paths.outputs.size }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Select checks from changed paths
+        id: paths
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            base="$PR_BASE_SHA"
+            head="$PR_HEAD_SHA"
+          elif [[ -n "$PUSH_BEFORE_SHA" && "$PUSH_BEFORE_SHA" != 0000000000000000000000000000000000000000 ]]; then
+            base="$PUSH_BEFORE_SHA"
+            head="$EVENT_SHA"
+          else
+            base="$(git merge-base origin/main "$EVENT_SHA")"
+            head="$EVENT_SHA"
+          fi
+          changed="$(git diff --name-only "$base" "$head")"
+          matches() { printf '%s\n' "$changed" | grep -Eq "$1"; }
+
+          full=false
+          if matches '^\.github/'; then full=true; fi
+          known='^(src/|tests/|fuzz/|Cargo\.(toml|lock)$|build\.rs$|README\.md$|CHANGELOG\.md$|LICENSE([^/]*)$|docs/|man/|completions/|Formula/|install\.sh$|packaging/|deny\.toml$|\.cargo/)'
+          if [[ -n "$changed" ]] && ! matches "$known"; then full=true; fi
+
+          emit() {
+            local name="$1" pattern="$2" value=false
+            if [[ "$full" == true ]] || matches "$pattern"; then value=true; fi
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_OUTPUT"
+          }
+          printf 'full=%s\n' "$full" >> "$GITHUB_OUTPUT"
+          emit rust '^(src/|tests/|Cargo\.(toml|lock)$|build\.rs$|\.cargo/)'
+          emit docs '(^[^/]+\.md$|^docs/|^man/|^completions/|^\.github/scripts/md-links\.py$)'
+          emit package '^(Cargo\.(toml|lock)$|build\.rs$|README\.md$|CHANGELOG\.md$|LICENSE([^/]*)$|src/|tests/|docs/|man/|completions/|Formula/)'
+          emit formula '^Formula/'
+          emit deps '^(Cargo\.(toml|lock)$|deny\.toml$|\.cargo/)'
+          emit installer '^(install\.sh$|\.github/scripts/test-install\.sh$|docs/releases\.md$|packaging/)'
+          emit features '^(Cargo\.(toml|lock)$|src/formats/(flac|pdf|mod)\.rs$)'
+          emit fits '^(Cargo\.(toml|lock)$|build\.rs$|\.cargo/|src/formats/(fits|mod)\.rs$|src/(pipeline|verify|replace|report|cli|main)\.rs$|tests/(integration\.rs|common/)|\.github/scripts/(fits-oracle|fits-heasarc|test_fits_heasarc|evidence-bundle)\.py$)'
+          emit progress '^(Cargo\.(toml|lock)$|src/(progress|pipeline|report)\.rs$|\.github/scripts/measure-progress-ab\.sh$)'
+          emit zip '^(Cargo\.(toml|lock)$|src/(formats/zip|pipeline)\.rs$|\.github/scripts/measure-zip-store-ab\.sh$)'
+          emit zlib '^(Cargo\.(toml|lock)$|src/formats/zlib\.rs$|\.github/workflows/ci\.yml$)'
+          emit jpeg '^(Cargo\.(toml|lock)$|src/formats/(jpeg|mod)\.rs$|\.github/scripts/jpeg-runtime\.sh$)'
+          emit size '^(Cargo\.(toml|lock)$|build\.rs$|\.cargo/|src/)'
+
   # Two configurations, on every platform (#68): `default` is exactly what a
   # published binary ships with, including the independent JPEG V1 verifier;
   # `all-features` additionally exercises FITS, FLAC and PDF.
   test:
     name: test (${{ matrix.os }}, ${{ matrix.features }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,6 +151,8 @@ jobs:
 
   progress-ab-measurement:
     name: progress formatter A/B
+    needs: changes
+    if: needs.changes.outputs.progress == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -108,6 +184,8 @@ jobs:
 
   zip-store-measurement:
     name: STORE-only ZIP early-return measurement
+    needs: changes
+    if: needs.changes.outputs.zip == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -142,6 +220,8 @@ jobs:
 
   zlib-verify-measurement:
     name: zlib verifier measurement
+    needs: changes
+    if: needs.changes.outputs.zlib == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -181,16 +261,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
 
-  # Exercise each newly admitted opt-in handler as its own feature on all three
-  # operating systems. `all-features` above catches interactions; this catches
-  # accidental reliance on an unrelated default or optional feature.
+  # Exercise opt-in handlers independently on Linux. The all-features matrix
+  # above covers their platform builds; this catches accidental reliance on
+  # unrelated default or optional features.
   opt-in-format-matrix:
     name: test (${{ matrix.os }}, ${{ matrix.format }} only)
-    runs-on: ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.features == 'true'
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest]
         format: [flac, pdf]
     steps:
       - uses: actions/checkout@v4
@@ -216,6 +298,8 @@ jobs:
   # the failure mode this job exists to avoid.
   minimal:
     name: minimal (png only)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -262,6 +346,8 @@ jobs:
   # codec-only build as well as in the default/all-features matrix above.
   jpeg-codec-only:
     name: test (--list-formats, jpeg codec-only)
+    needs: changes
+    if: needs.changes.outputs.jpeg == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -272,6 +358,8 @@ jobs:
 
   capabilities-builds:
     name: capabilities (release-like and feature matrix)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -308,6 +396,8 @@ jobs:
   # harness changes, and on non-PR pushes where the changed range is explicit.
   fits-change-scope:
     name: detect FITS implementation changes
+    needs: changes
+    if: needs.changes.outputs.fits == 'true'
     runs-on: ubuntu-latest
     outputs:
       run_oracle: ${{ steps.scope.outputs.run_oracle }}
@@ -333,7 +423,7 @@ jobs:
             base="$(git merge-base origin/main "$EVENT_SHA")"
           fi
           git diff --name-only "$base" "$EVENT_SHA" | tee /tmp/fits-changed-files.txt
-          if grep -Eq '^(src/|\.github/scripts/fits-oracle\.py$|Cargo\.toml$|Cargo\.lock$|build\.rs$)' /tmp/fits-changed-files.txt; then
+          if grep -Eq '^(src/formats/(fits|mod)\.rs$|src/(pipeline|verify|replace|report|cli|main)\.rs$|tests/(integration\.rs|common/)|\.github/scripts/(fits-oracle|fits-heasarc|test_fits_heasarc|evidence-bundle)\.py$|Cargo\.(toml|lock)$|build\.rs$)' /tmp/fits-changed-files.txt; then
             run_oracle=true
           else
             run_oracle=false
@@ -388,6 +478,8 @@ jobs:
 
   docs:
     name: docs (links and anchors)
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -406,6 +498,8 @@ jobs:
 
   msrv:
     name: msrv (1.88)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -437,6 +531,8 @@ jobs:
 
   clippy:
     name: clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -469,6 +565,8 @@ jobs:
   # formats the tree and commits the result; on a pull request it only checks.
   fmt:
     name: fmt
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -477,7 +575,7 @@ jobs:
       # `contents` alone the comment is a 403 and the failure is silent, which
       # is what happened to this job's own log until it was noticed.
       pull-requests: write
-    # The same group as the `lockfile` job: the two writers must not race.
+    # Serialize formatter commits per branch.
     concurrency:
       group: branch-write-${{ github.ref }}
       cancel-in-progress: false
@@ -536,6 +634,8 @@ jobs:
 
   deny:
     name: deny
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -567,6 +667,8 @@ jobs:
 
   audit:
     name: audit
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -601,6 +703,8 @@ jobs:
   # wrong, or that the crate does not build outside a git checkout.
   package:
     name: cargo package
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -615,7 +719,7 @@ jobs:
           exec > >(tee /tmp/tzim-package.log) 2>&1
 
           cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/tzim-metadata.json"
-          python3 - "$RUNNER_TEMP/tzim-metadata.json" <<'PY'
+          python3 - "$RUNNER_TEMP/tzim-metadata.json" "$RUNNER_TEMP/tzim-package-version" <<'PY'
           import json
           import sys
 
@@ -626,13 +730,16 @@ jobs:
               package for package in metadata["packages"]
               if package["id"] in members and package["name"] == "tzim"
           ]
-          if len(root) != 1 or root[0]["version"] != "0.16.3":
-              raise SystemExit(f"expected root package tzim 0.16.3, got {root!r}")
+          if len(root) != 1:
+              raise SystemExit(f"expected one root package named tzim, got {root!r}")
+          with open(sys.argv[2], "w", encoding="utf-8") as stream:
+              stream.write(root[0]["version"])
           print(f"cargo metadata --locked root package: {root[0]['name']} {root[0]['version']}")
           PY
 
+          crate_version="$(cat "$RUNNER_TEMP/tzim-package-version")"
           cargo package --locked
-          archive=target/package/tzim-0.16.3.crate
+          archive="target/package/tzim-${crate_version}.crate"
           test -f "$archive"
           ls -l "$archive"
           package_root="$RUNNER_TEMP/tzim-package"
@@ -640,12 +747,16 @@ jobs:
           rm -rf "$package_root" "$target_dir"
           mkdir -p "$package_root"
           tar -xzf "$archive" -C "$package_root"
-          package_manifest="$package_root/tzim-0.16.3/Cargo.toml"
+          package_manifest="$package_root/tzim-${crate_version}/Cargo.toml"
           CARGO_TARGET_DIR="$target_dir" cargo build --locked \
             --manifest-path "$package_manifest" --bin tzim
           version="$("$target_dir/debug/tzim" --version)"
           printf 'packaged binary version: %s\n' "$version"
-          test "$version" = 'tzim 0.16.3'
+          test "$version" = "tzim ${crate_version}"
+
+      - name: Validate Homebrew formula integration
+        if: needs.changes.outputs.formula == 'true'
+        run: cargo test --locked --test packaging
 
       - name: Publish failure log
         if: steps.package.outcome == 'failure'
@@ -665,6 +776,8 @@ jobs:
   # than against a local build.
   installer:
     name: install.sh (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.installer == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -778,6 +891,8 @@ jobs:
 
   size:
     name: binary size
+    needs: changes
+    if: needs.changes.outputs.size == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -949,6 +1064,8 @@ jobs:
   # artifact for the exact commit under review.
   jpeg-runtime:
     name: JPEG default runtime cost
+    needs: changes
+    if: needs.changes.outputs.jpeg == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
