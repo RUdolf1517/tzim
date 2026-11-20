@@ -216,10 +216,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # The hashes are also an asset, but an asset cannot be read from the
-          # release page. Keeping one copy in the notes is what makes
-          # "copy the SHA-256 into the formula" a one-minute job, and a second
-          # run replaces the block instead of stacking another one.
+          # Show the hashes on the release page. A rerun replaces the block.
           gh release view "$TAG" --repo "$REPO" --json body --jq .body > body.md
           if grep -q '^### SHA-256$' body.md; then
             sed -i '/^### SHA-256$/,$d' body.md
@@ -233,3 +230,30 @@ jobs:
             echo '```'
           } > notes.md
           gh release edit "$TAG" --repo "$REPO" --notes-file notes.md
+
+      - run: cp artifacts/SHA256SUMS "$RUNNER_TEMP/tzim-SHA256SUMS"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Update the Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          if [[ "$TAG" != "$latest" ]]; then
+            exit 0
+          fi
+          python3 packaging/update-homebrew.py "$TAG" "$RUNNER_TEMP/tzim-SHA256SUMS"
+          if git diff --quiet -- Formula/tzim.rb; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/tzim.rb
+          git commit -m "Update Homebrew formula to $TAG"
+          git pull --rebase
+          git push

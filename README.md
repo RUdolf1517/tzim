@@ -51,6 +51,8 @@ brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim && brew install RUdo
 cargo install tzim --locked                                                          # Rust 1.88+
 ```
 
+After installing through Homebrew, run `brew update && brew upgrade` to upgrade tzim when a new stable release is available.
+
 Linux (x86_64 and ARM64), macOS (Apple silicon and Intel). The install script checks the archive against the
 release's `SHA256SUMS` and refuses to install anything that does not match — and so should you, if you install
 by hand.

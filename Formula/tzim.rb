@@ -50,7 +50,7 @@ class Tzim < Formula
   # Archives from v0.11.0 onwards ship the manual page and the three
   # completions next to the binary, so the formula installs the same
   # documentation the .deb, the .rpm and the repository carry. The guards keep
-  # older pinned archives installable; the v0.16.3 archives include all of these.
+  # older pinned archives installable.
   def install
     bin.install "tzim"
     man1.install "man/tzim.1" if File.exist?("man/tzim.1")
