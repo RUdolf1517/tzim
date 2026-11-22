@@ -11,6 +11,22 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ## [Unreleased]
 
+### Release tooling
+
+- Added a manual-dispatch `publish-crates` workflow. It publishes one existing release tag to crates.io with
+  Trusted Publishing (no stored registry token), defaults to `cargo publish --dry-run`, refuses a tag whose
+  `Cargo.toml` version differs or a version crates.io already has, and verifies the result with a clean
+  `cargo install` before reporting success. The release process in `docs/releases.md` documents the one-time
+  trusted-publisher setup and the two runs (dry run, then publish).
+
+### Documentation
+
+- Added [building.md](docs/building.md): the exact `cargo build` and `cargo install` commands for the three
+  non-default handlers (`fits`, `flac`, `pdf`), feature-only builds, the run-time switch each handler needs,
+  how to confirm the result with `--list-formats` and `--capabilities`, and why `--all-features` is a test
+  configuration rather than a binary to ship. README, CONTRIBUTING and the formats, CLI, dependencies,
+  releases and size-budget pages now point to it instead of naming a feature without the command.
+
 ## [0.16.3] - 2026-11-18
 
 ### Fixed

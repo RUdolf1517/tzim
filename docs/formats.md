@@ -51,6 +51,12 @@ on sizes and counts, so a few magic bytes in a random file cannot cause a large 
 | FLAC (opt-in) | #79 | **implemented in this unreleased branch behind the non-default `flac` feature; fixed-corpus evidence recorded, full format admission remains separate** | Re-encode supported audio with flacenc; verify exact PCM, STREAMINFO and remapped seekpoints with independent Claxon; metadata is retained unless explicitly stripped | At exact SHA `5967e318951f9c3945f0c256c3095b347483e234`, 23/30 valid rows optimized; all 23 passed external `flac`/`metaflac`, PCM, and STREAMINFO-MD5 checks. Saved 744,570 bytes; whole-corpus and optimized-only denominators are distinguished in [status](measurement-status.md) | high for the measured subset; broader format admission/review remains open | [§4.9](guarantees.md#49-flac--frame-re-encoding-79-non-default-opt-in) |
 | PDF (opt-in) | #57 / #80 | **implemented in this unreleased branch behind the non-default `pdf` feature; #57 threshold applied and refused** | Recompress only smaller eligible FlateDecode streams; preserve object IDs/order, xref semantics, object streams and all non-target bytes; no repacking | At exact SHA `5967e318951f9c3945f0c256c3095b347483e234`, 18/21 fixed outputs were accepted; the original accepted-subset `faithful_pct` median was 0.00034127460376596526%, below the 1% refusal bar. Permitted-qpdf and forbidden-repack distributions are published in [PDF audit §13](pdf-audit.md#13-pr-84-exact-head-57-rerun-at-5967e31); the qpdf/MuPDF checks passed | high for the narrow implementation; the threshold result does not revoke the separate owner-authorized non-default #80 implementation | [§4.11](guarantees.md#411-pdf--flatedecode-recompression-80-non-default-opt-in) |
 
+FITS, FLAC and PDF are present in this repository but are not in the default cargo feature set, so a released
+binary skips them with `this build has no <format> handler`. A build includes a handler only when its feature
+is named: `fits`, `flac` or `pdf`. For FITS, compiling the handler is not consent to transform: `--fits-tile`
+is still required per run. Exact commands, feature-only builds and the `--list-formats` / `--capabilities`
+check are in [building.md](building.md).
+
 ### ZIP-based formats covered by the ZIP handler
 
 `.zip`, `.jar`, `.war`, `.ear`, `.apk`, `.aab`, `.docx`, `.xlsx`, `.pptx`, `.odt`, `.ods`, `.odp`, `.epub`,

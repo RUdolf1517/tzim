@@ -34,6 +34,19 @@ cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 ```
 
+`cargo build` and `cargo test` use the default feature set — the one a published binary ships. The opt-in
+handlers are not in it, and each is built and tested separately:
+
+```sh
+cargo build --locked --features flac        # or pdf, or fits
+cargo test --locked --all-features          # all handlers, including fuzz-api
+cargo test --locked --no-default-features --features flac --lib
+```
+
+`--all-features` is for tests, not for a binary: it also enables `fuzz-api`. Exact recipes for adding one
+handler, building a handler-only binary, installing with features and reading `--list-formats` afterwards are
+in [docs/building.md](docs/building.md).
+
 If your environment cannot run `cargo` (this project is partly written in one that cannot), the `fmt` and
 `lockfile` jobs in CI will run `cargo fmt` and resolve `Cargo.lock` for you and commit the result to your
 branch — see [docs/testing.md §4.2](docs/testing.md#42-the-two-jobs-that-write-to-the-branch).

@@ -49,7 +49,12 @@ tried, and left byte-for-byte untouched.
 curl -fsSL https://raw.githubusercontent.com/RUdolf1517/tzim/main/install.sh | sh   # binary, no Rust
 brew tap RUdolf1517/tzim https://github.com/RUdolf1517/tzim && brew install RUdolf1517/tzim/tzim
 cargo install tzim --locked                                                          # Rust 1.88+
+cargo install tzim --locked --features "fits,flac,pdf"                               # + FITS, FLAC and PDF
 ```
+
+The prebuilt channels install the default handlers. FITS, FLAC and PDF are compiled only when their cargo
+feature is named, so adding them requires the cargo command; [docs/building.md](docs/building.md) has the
+per-handler and feature-only recipes.
 
 After installing through Homebrew, run `brew update && brew upgrade` to upgrade tzim when a new stable release is available.
 
@@ -174,6 +179,12 @@ it the handler only says why it did nothing, because turning an `IMAGE` HDU into
 every reader that indexes `NAXIS1`. The `fits` cargo feature is the code: it is not in `default`, so a build
 that wants FITS is `cargo build --release --features fits`, and [size-budget §3](docs/size-budget.md#3-feature-matrix)
 measures what it costs: **+36 KiB**, which is enough to break the byte-exact gate on the default build. `--list-formats` names FITS only when the feature is compiled in.
+
+FLAC and PDF have the same compile-time switch and no run-time one: `cargo build --release --features flac` and
+`cargo build --release --features pdf` add each handler to the default set, and `--features "fits,flac,pdf"`
+adds all three. Once compiled, FLAC and PDF are processed without a flag; `--formats` can narrow a run.
+Building, installing and checking the result are in [docs/building.md](docs/building.md).
+
 FITS remains an opt-in implementation, not full format admission or a stability claim. At exact source SHA `c69d25e377215031dee2f2245afc967604423ae9`, fixed run [41215985536](https://github.com/RUdolf1517/tzim/actions/runs/41215985536) passed all 14 reference-candidate `funpack -C` round trips. The exact comparator found 20/20 HDUs equal through the literal `END` card, with zero inserted, dropped, or changed cards and zero storage-payload mismatches; the positive and negative controls passed. `fitsverify -l` reported 10 clean passes and 4 passes with inherited source warnings. The unchanged #59 rule was **applied** for opt-in `--fits-tile`; Tier 1 is empty/not evaluated, and Tzim skipped all 14 products unchanged. This does not claim full FITS admission or change the ROSAT permission/no-payload-publication boundary. The earlier padded-comparator 0/14 findings remain historical, not candidate-content verdicts; see the [exact report](https://github.com/RUdolf1517/tzim/pull/91#issuecomment-6545587417), [FITS audit](docs/fits-audit.md#15-current-exact-sha-rerun-at-c69d25e), and [measurement status](docs/measurement-status.md). No source repair or FITS-byte upload occurred.
 
 ## Why tzim
@@ -241,6 +252,7 @@ they are everywhere else ([docs/cli.md §10](docs/cli.md#10-colour-and-progress)
 | [cli](docs/cli.md) | Flags, exit codes, JSON schema, colour and progress, CLI conformance |
 | [safety](docs/safety.md) | Replacement algorithm, atomicity, failure modes |
 | [dependencies](docs/dependencies.md) | Every dependency and why it exists |
+| [building](docs/building.md) | Feature flags, builds and installs with the opt-in handlers, and what each build contains |
 | [size budget](docs/size-budget.md) | How small the binary is, and what each feature costs |
 | [testing](docs/testing.md) | Test strategy, real-file corpus, fuzzing, CI |
 | [benchmarks](docs/benchmarks.md) | Measured ratios, timings and memory against the alternatives |
