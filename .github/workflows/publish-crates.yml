@@ -1,0 +1,182 @@
+name: publish-crates
+
+# Publishes one existing release tag to crates.io. This is deliberately not
+# triggered by a release or a tag push: uploading a crate version is
+# irreversible, so a person starts it and the default is a dry run.
+#
+# Authentication is crates.io Trusted Publishing: the job exchanges a GitHub
+# OIDC token for a short-lived crates.io token, so no long-lived registry token
+# is stored in the repository. The crate must already exist on crates.io (it
+# does), and the trusted publisher must name this workflow file and the
+# `crates-io` environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: existing release tag to publish, for example v0.16.3
+        required: true
+      publish:
+        description: upload to crates.io; leave false for a dry run
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+
+concurrency:
+  group: publish-crates
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: crates-io
+      url: https://crates.io/crates/tzim
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+          # The crate is built from the tag, not from a branch: publishing needs
+          # the exact bytes the release workflow already verified.
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Validate the tag and the manifest version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag }}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::expected a release tag such as v0.16.3, got '$tag'"
+            exit 1
+          fi
+          git fetch --force --tags origin
+          if [[ "$(git rev-parse "$tag^{commit}")" != "$(git rev-parse HEAD)" ]]; then
+            echo "::error::the requested tag '$tag' does not point at the checked-out commit"
+            exit 1
+          fi
+          version="${tag#v}"
+          manifest="$(python3 - <<'PY'
+          import tomllib
+          with open("Cargo.toml", "rb") as stream:
+              print(tomllib.load(stream)["package"]["version"])
+          PY
+          )"
+          if [[ "$manifest" != "$version" ]]; then
+            echo "::error::Cargo.toml says '$manifest' but the tag says '$version'"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "## crates.io publication"
+            echo
+            echo "- tag: \`$tag\`"
+            echo "- version: \`$version\`"
+            echo "- source: the tag, checked out at \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refuse a version crates.io already has
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: tzim-publish-workflow (https://github.com/RUdolf1517/tzim)' \
+            "https://crates.io/api/v1/crates/tzim/$version")"
+          case "$status" in
+            404) echo "crates.io has no tzim $version yet" ;;
+            200)
+              echo "::error::tzim $version is already published; crates.io versions are immutable"
+              exit 1
+              ;;
+            *)
+              echo "::error::unexpected crates.io response $status"
+              exit 1
+              ;;
+          esac
+
+      # Always package and verify before any upload. On a tag whose `cargo
+      # package` job was green this repeats the same check from the exact
+      # source, and it is what makes the `publish: false` run useful.
+      - name: Dry run
+        shell: bash
+        run: cargo publish --locked --dry-run
+
+      - name: Authenticate with crates.io
+        if: ${{ inputs.publish }}
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish
+        if: ${{ inputs.publish }}
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked
+
+      - name: Verify the published crate
+        if: ${{ inputs.publish }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          status=""
+          for attempt in $(seq 1 30); do
+            status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H 'User-Agent: tzim-publish-workflow (https://github.com/RUdolf1517/tzim)' \
+              "https://crates.io/api/v1/crates/tzim/$version")"
+            [[ "$status" == "200" ]] && break
+            echo "crates.io has not indexed $version yet (attempt $attempt/30); waiting"
+            sleep 10
+          done
+          if [[ "$status" != "200" ]]; then
+            echo "::error::crates.io never reported tzim $version"
+            exit 1
+          fi
+
+          # The API is one source of truth; a fresh install is the other. The
+          # sparse index can trail the API by a few seconds, so retry the
+          # lookup rather than turning propagation into a red build.
+          root="$RUNNER_TEMP/tzim-installed"
+          for attempt in 1 2 3; do
+            if cargo install --locked --force --version "$version" --root "$root" tzim; then
+              break
+            fi
+            if [[ "$attempt" == "3" ]]; then
+              echo "::error::tzim $version is on the API but a clean cargo install failed"
+              exit 1
+            fi
+            echo "cargo install has not seen $version yet (attempt $attempt/3); waiting"
+            sleep 20
+          done
+          installed="$root/bin/tzim"
+          reported="$("$installed" --version)"
+          printf 'installed: %s\n' "$reported"
+          test "$reported" = "tzim $version"
+          "$installed" --list-formats
+          {
+            echo "- mode: published"
+            echo "- crates.io: https://crates.io/crates/tzim/$version"
+            echo "- clean install: \`$reported\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record a dry run
+        if: ${{ !inputs.publish }}
+        shell: bash
+        run: |
+          echo "- mode: **dry run**, nothing uploaded" >> "$GITHUB_STEP_SUMMARY"
+          echo "Dry run passed; re-run with publish=true to upload." >> "$GITHUB_STEP_SUMMARY"
