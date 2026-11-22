@@ -2,6 +2,10 @@ name: lockfile
 
 on:
   pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/lockfile.yml
   workflow_dispatch:
 
 permissions:
