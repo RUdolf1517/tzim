@@ -13,11 +13,13 @@ Planned releases are described in [docs/roadmap.md](docs/roadmap.md); the packag
 
 ### Release tooling
 
-- Added a manual-dispatch `publish-crates` workflow. It publishes one existing release tag to crates.io with
-  Trusted Publishing (no stored registry token), defaults to `cargo publish --dry-run`, refuses a tag whose
-  `Cargo.toml` version differs or a version crates.io already has, and verifies the result with a clean
-  `cargo install` before reporting success. The release process in `docs/releases.md` documents the one-time
-  trusted-publisher setup and the two runs (dry run, then publish).
+- Added a `publish-crates` workflow. Publishing a stable GitHub release now uploads that release tag to
+  crates.io automatically with Trusted Publishing (no stored registry token); a tag push alone still uploads
+  nothing, and a prerelease is skipped. The workflow checks the tag against `Cargo.toml`, runs
+  `cargo publish --locked --dry-run`, treats a version crates.io already has as verify-only rather than an
+  error, and verifies the result with a clean `cargo install`. A manual dispatch remains for a dry run or an
+  older tag. The release process in `docs/releases.md` documents the one-time trusted-publisher setup and
+  both paths.
 
 ### Documentation
 

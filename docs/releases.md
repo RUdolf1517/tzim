@@ -173,11 +173,12 @@ files before anything is touched.
   bundle from the exact Windows asset SHA-256 and includes it in the release checksums.
 - **No AUR, Snap, Flatpak, Chocolatey or Nix packages.** Each is a second source of truth about how the
   binary is built and packaged, and this project would rather have fewer of them than stale ones.
-- **No automatic crates.io publishing.** `tzim` is published on
-  [crates.io](https://crates.io/crates/tzim) and installs with `cargo install tzim --locked`. A release or a
-  tag push never uploads a crate; publishing a later version is a manual `workflow_dispatch` of
-  `.github/workflows/publish-crates.yml`, which uploads one exact tag with crates.io Trusted Publishing. CI
-  continues to package and build the crate on every pull request.
+- **crates.io publication follows a published GitHub release.** `tzim` is published on
+  [crates.io](https://crates.io/crates/tzim) and installs with `cargo install tzim --locked`. A tag push
+  alone never uploads a crate; publishing a stable GitHub release runs
+  `.github/workflows/publish-crates.yml` for its tag and uploads it with crates.io Trusted Publishing. The
+  workflow skips a version crates.io already has. A manual dispatch remains for a dry run or an older tag.
+  CI continues to package and build the crate on every pull request.
 - **No Homebrew bottle, no distro repository.** The tap builds nothing: it unpacks the published tarball,
   so the bytes are the ones in `SHA256SUMS`.
 - **No automatic updates and no telemetry.** The binary opens no sockets.
@@ -233,10 +234,11 @@ files before anything is touched.
 3. **Review, then publish.** The release owner reviews the draft and its evidence, including any non-green
    gate result under the existing release policy. Publishing is not implied by a successful artifact upload
    or by the bundle's internal self-check.
-4. **Let the published-release workflow produce the binaries.** Publishing triggers
+4. **Let the published-release workflows do their work.** Publishing triggers
    `.github/workflows/release.yml`, which builds the three archives and two Linux packages, smoke-tests each
-   binary (`--version`, `--list-formats`), and uploads the artifacts with `SHA256SUMS`. Do not upload
-   binaries or checksums by hand.
+   binary (`--version`, `--list-formats`), and uploads the artifacts with `SHA256SUMS`; it also triggers
+   `.github/workflows/publish-crates.yml`, which publishes the crate ([§5.1](#51-publishing-the-crate-to-cratesio)).
+   Do not upload binaries, checksums or crate versions by hand.
 5. **Verify the published assets.** Download the actual binaries and `SHA256SUMS` from the published
    Release, run `sha256sum -c SHA256SUMS`, and check the expected version and format list from the downloaded
    executable. The workflow's pre-upload smoke tests do not replace verifying the assets users will download.
@@ -252,25 +254,29 @@ release assets are never uploaded by hand.
 
 ### 5.1 Publishing the crate to crates.io
 
-The GitHub release and the crate are separate: the release workflow never uploads to crates.io. The
-manual-dispatch `publish-crates` workflow performs that upload for one existing tag.
+The GitHub release and the crate are separate artifacts, but no longer separate manual steps: publishing a
+stable GitHub release runs `.github/workflows/publish-crates.yml` for its tag. A tag push alone does nothing,
+a prerelease is skipped, and a manual dispatch remains available for a dry run or an older tag. The `release`
+workflow builds the archives and `publish-crates` uploads the crate independently; neither waits for the
+other.
 
 One-time setup on crates.io: open the crate's **Settings → Trusted Publishing** and add a GitHub publisher
 with repository `RUdolf1517/tzim`, workflow `publish-crates.yml` and environment `crates-io`. No registry
 token is stored in the repository.
 
-Then, from the default branch:
+Then:
 
-1. Actions → `publish-crates` → Run workflow with `tag` set to the existing release tag (for example
-   `v0.16.3`) and `publish` left `false`. The run checks that the tag points at the checked-out commit, that
-   `Cargo.toml` names the same version, that crates.io does not already have it, and then runs
-   `cargo publish --locked --dry-run`. Nothing is uploaded.
-2. Run it again with `publish` set to `true`. The job exchanges the GitHub OIDC token for a short-lived
+1. Publish the GitHub release as §5 steps 1–3 describe. The `publish-crates` run starts automatically for the
+   release tag. It checks that the tag points at the checked-out commit and that `Cargo.toml` names the same
+   version, runs `cargo publish --locked --dry-run`, exchanges the GitHub OIDC token for a short-lived
    crates.io token, publishes the exact tag, waits for the version to appear on the crates.io API, installs
    it from crates.io with `cargo install --locked --version <version>` and checks `--version` and
    `--list-formats`.
+2. For a dry run or an older tag: Actions → `publish-crates` → Run workflow. `tag` is the existing release
+   tag (for example `v0.16.3`) and `publish` defaults to `false`, so the same checks and the dry run happen
+   without an upload. Set `publish` to `true` only when that older tag should be uploaded.
 3. Open the crate page and record the published version in this document in a follow-up.
 
-The workflow refuses a version that already exists: crates.io versions are immutable, so a re-run after a
-successful upload must be a dry run rather than a second upload. The crate must already exist on crates.io
+A version that already exists is not uploaded again: the workflow reports it and verifies the published
+crate instead, so a re-run after a successful release is harmless. The crate must already exist on crates.io
 before trusted publishing can be configured; that initial upload is the one manual exception.
