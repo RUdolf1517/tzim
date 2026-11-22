@@ -207,10 +207,13 @@ writer and a verifier cost when the codec is already in the tree. The guess in i
 measurement is 36 864 bytes, and the guess is recorded here rather than quietly replaced.
 
 In this historical matrix, rows above `default` were the narrowing path and rows below it were the widening
-path (`jpeg-v1`, `fits`, and both together). #82 moves `jpeg-v1` into the current default; only `fits` remains
-an optional feature and a run-time opt-in. The current CI matrix and measured deltas are retained in the
-source-SHA-specific `binary size` report and `size-<source SHA>` artifact, not inferred from these historical
-values.
+path (`jpeg-v1`, `fits`, and both together). #82 moves `jpeg-v1` into the current default. The current
+non-default handler features are `fits`, `flac` and `pdf`; `jpeg` remains a narrower codec-only gate below
+`jpeg-v1`. Of those three, only FITS is also a run-time opt-in (`--fits-tile`), while FLAC and PDF run as soon
+as they are compiled. This historical table predates the last two and does not contain them. The current CI
+matrix and measured deltas are retained in the source-SHA-specific `binary size` report and
+`size-<source SHA>` artifact, not inferred from these historical values. Build recipes for the opt-in
+features are in [building §2](building.md#2-add-a-handler-to-the-published-feature-set).
 
 The historical deltas at `opt-level = 3` for this crate were 8, 49, 16, 65, 32 and 98 KiB — the profile
 change made visible inside each handler, because the codecs are already compiled for speed.
@@ -232,7 +235,17 @@ cargo build --release --no-default-features --features png,gzip,zip,ico
 
 # the published binary
 cargo build --release
+
+# the published feature set plus one or all of the non-default handlers
+cargo build --release --features flac
+cargo build --release --features "fits,flac,pdf"
+
+# one non-default handler and nothing else
+cargo build --release --no-default-features --features flac
 ```
+
+The exact handler-to-feature mapping, the run-time switch for each handler and what `--list-formats` should
+report afterwards are in [building.md](building.md).
 
 ## 4. Measurement procedure
 

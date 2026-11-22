@@ -118,6 +118,10 @@ reproducible and diffable.
 | `-h, --help` | — | the full text of §2; exits `0` |
 | `-V, --version` | — | one line, `tzim <version>`; exits `0` |
 
+A handler exists here only if the build compiled it: FITS, FLAC and PDF are non-default cargo features, so
+`--formats flac` in a default build is a usage error rather than a silent no-op. The build commands and what
+each feature contains are in [building.md](building.md).
+
 ### FITS tile confirmation
 
 `--fits-tile` remains the only confirmation-enabled transformation. For one direct regular-file path on a TTY,

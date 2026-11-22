@@ -105,7 +105,9 @@ Every direct dependency remains behind a feature: a build with
 `--no-default-features --features png` compiles `png`, `flate2` and `crc32fast`, and nothing else. There is no
 unconditional crate any more — the progress line, which used to be one (§2.9), is drawn by
 `src/progress.rs` again. Under #82 the release default includes `jpeg-v1`; only deliberately narrowed builds
-without that feature omit the independent JPEG verifier.
+without that feature omit the independent JPEG verifier. Selecting the non-default `flac` dependency set, or
+enabling `pdf` and `fits` (which add no crate), is a matter of naming their features
+([building.md](building.md)); none of them is pulled into the default build.
 
 The JPEG, ICO, TIFF, zlib, PDF and FITS handlers add no format-specific dependency; PDF uses the existing
 `flate2` zlib path, and FITS uses `flate2` plus `crc32fast`. Historically, **v0.4, v0.6, v0.7, v0.9 and

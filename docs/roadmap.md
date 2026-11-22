@@ -348,8 +348,8 @@ evidence for the later release-candidate SHA. Final release-gate evidence must b
 
 The v0.15.0 format implementations remain bounded subsets, not full-format admissions or universal stability claims.
 FITS stays out of the default feature set and requires both `--features fits` and `--fits-tile`; FLAC and PDF stay
-separate non-default opt-in features. Baseline JPEG is the supported sequential subset only; progressive JPEG is
-not claimed.
+separate non-default opt-in features. Build commands for all three are in [building.md](building.md). Baseline JPEG
+is the supported sequential subset only; progressive JPEG is not claimed.
 
 | Candidate | State | Why / remaining boundary |
 | --- | --- | --- |
